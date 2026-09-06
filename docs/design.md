@@ -21,8 +21,9 @@ Design the complete solution and divide implementation into reasonably sized PRs
 - **Accepted:** differential-to-full topology, conditional on native support. [Primary-source verification](research/native-differentials-retention-locks.md) satisfies that condition: each native incremental can use the same full manifest, and reconstruction needs that full plus the chosen differential. Real-system qualification is still required.
 - **Accepted:** PG18, primary capture, failover-ready sidecars; test CNPG-managed tablespaces and separate WAL volumes. Older majors and standby capture are outside the first release.
 - **Accepted:** honest asynchronous WAL archive/RPO semantics and the proposed healthy-operation timeout profile.
-- **Under discussion:** the owner prefers a repository-wide deletion lock during restore, with a Kubernetes Warning event when it blocks retention. The earlier external/read-only manual-pause recommendation is not an accepted decision. Settle cross-cluster/read-only participation and crashed-restore safety before READY.
-- **Under discussion:** recovery-window/minimum-full retention versus pgBackRest's documented expiration policies; gather the factual comparison before finalizing the API/defaults.
+- **Accepted:** repository-wide deletion protection during restore. Uncertain/crashed recovery keeps deletion paused and emits a Kubernetes Warning event; use a small conservative mechanism, not an elaborate lease/recovery framework. Cross-cluster/read-only participation still needs a plain-language scope decision and a verified protocol before READY.
+- **Accepted:** configurable recovery window plus independent minimum-full safety floor, with WAL retained for the required recovery coverage. Deletion is off until configured; examples use 14 days and two full backups. No independent aggressive WAL-expiration knob initially.
+- **Accepted:** a requested differential succeeds as a differential or fails. **No full fallback**, including missing WAL summaries; unexpected full-sized storage use is unacceptable. Every backup type has last-success and failure metrics plus operator-facing alerts.
 - **Accepted:** automatically publish versioned releases and qualified images; never deploy to a production environment. Production use belongs to consuming teams, not this project's execution plan.
 - **Accepted:** all rights reserved for original project work, not Apache-2.0 or another open-source license. Third-party components keep their own licenses/notice requirements; publishing source/images does not grant a general project license to consuming teams.
 
@@ -77,7 +78,7 @@ Proposed first supported backup modes:
 
 Do not initially expose arbitrarily long incremental-to-incremental chains. Metadata records parents from day one, so deeper chains are a future product decision, not a repository redesign. Native PostgreSQL may send entire non-relation files or choose full representations of relation files; differential does not mean every byte is deduplicated.
 
-Enable `summarize_wal`; size `wal_summary_keep_time` to cover the age of the reference full plus operational slack. Remote WAL retention does not preserve local WAL summaries. Missing summaries, a missing parent, incompatible identity/checksum state, or promotion during capture must produce an explicit failure or a clearly reported fallback to full. Recommended default: fail a requested differential rather than silently perform a much larger full backup; permit an explicit fallback policy if approved. Require a new full after major upgrade or checksum-state change; initially also after a timeline transition unless cross-timeline differential behavior is specifically proven.
+Enable `summarize_wal`; size `wal_summary_keep_time` to cover the age of the reference full plus operational slack. Remote WAL retention does not preserve local WAL summaries. Missing summaries, a missing parent, incompatible identity/checksum state, or promotion during capture must fail the requested differential explicitly. **Never fall back to full, even with a warning or an opt-in fallback setting in this initial product.** The owner rejected that storage expansion. A full backup runs only when explicitly requested/scheduled as full; report failed differentials through status, Warning events and the metrics below. Require a new full after major upgrade or checksum-state change; initially also after a timeline transition unless cross-timeline differential behavior is specifically proven.
 
 ### Capture path
 
@@ -145,7 +146,7 @@ Workspace initially uses ordinary copies rather than depending on reflinks or ha
 
 ## 6. Retention: preserve recoverability, fail closed
 
-Recommend a recovery-window setting plus a minimum full-backup count safety floor, with no automatic deletion until configured. [pgBackRest's time retention already preserves a window anchor and dependencies](research/native-differentials-retention-locks.md); this proposal adopts similar conservative reasoning with a smaller configuration surface, not a claim of superior recovery safety. Exact policy/defaults remain a product decision.
+Recommend a recovery-window setting plus a minimum full-backup count safety floor, with no automatic deletion until configured. [pgBackRest's time retention already preserves a window anchor and dependencies](research/native-differentials-retention-locks.md); this proposal adopts similar conservative reasoning with a smaller configuration surface, not a claim of superior recovery safety. The owner approved the window/floor policy, deletion disabled until configured, examples using 14 days/two full backups, and no independent aggressive WAL-expiration knob.
 
 For window cutoff C:
 
@@ -167,13 +168,24 @@ Recommend one namespaced repository configuration CRD, analogous in role (not wi
 Configuration surface should include:
 
 - S3 connection/auth/CA/Secret references and stable repository identity.
-- Full/differential mode as CNPG per-backup parameters; explicit differential fallback policy.
+- Full/differential mode as CNPG per-backup parameters; differential failures never change the requested type to full.
 - Recovery source repository and optional backup ID; standard CNPG recovery targets.
 - Retention window/minimum roots, enable/dry-run and interval.
 - Workspace and CPU/memory/ephemeral-storage settings, rate limit and small concurrency bounds.
 - Gzip on/off or a small validated level range; no compressor plugin framework.
 
 Start with Linux, PG18 and the approved CNPG/Kubernetes pair. The owner approved primary-only base backups initially; replicas still receive sidecars for failover. Standby backup support is a separate compatibility decision because native incrementals depend on restartpoints and promotion behavior. CNPG-managed tablespaces and separate WAL volumes are in the agreed initial scope and must pass recovery tests. Unsupported layouts must fail preflight rather than be silently omitted; difficulty implementing an agreed layout is not permission to drop it.
+
+### Backup observability — required with each backup feature
+
+Expose per-repository, per-backup-type Prometheus metrics; `backup_type` has only `full` and `differential` values. Repository/cluster identity must be unambiguous without backup IDs, timestamps, object keys or error strings as labels.
+
+- `cnpg_backup_last_success_timestamp_seconds`: timestamp of the last durably committed successful backup of that type. Failed attempts/retries must not advance it. Reconcile it with authoritative committed backup metadata after restart; if history is unavailable, report no known success rather than fabricate a fresh timestamp. Never-successful/unknown history must be distinguishable from a recent success.
+- `cnpg_backup_failures_total`: failed terminal backup attempts of that requested type, not every individual S3/subprocess retry. Ordinary Prometheus counter-reset semantics apply; do not build a durable metrics ledger. Define retry/reconciliation counting precisely before implementation.
+- Actionable CNPG failure status, redacted diagnostics and a rate-limited Warning event for failed backups. Warning events complement metrics/status, not replace them.
+- Ship example alerts for backup failures and overdue/missing successful backups **separately by type**, with thresholds matching the configured full/differential schedules. A recent differential must not hide an overdue full, or vice versa. Disabled/unscheduled types should not generate misleading freshness alerts. Keep WAL-archive lag/failure alerts separate.
+
+Add metrics and regressions when each backup mode lands; do not defer observability until the final operations PR. Inject missing summaries and prove failure leaves both success timestamps unchanged, reports the differential failure and never launches a replacement full backup. This bans fallback, not PostgreSQL's native choice to include full representations of some files inside a legitimate differential; workspace limits still apply to actual output.
 
 ## 8. Security and maintainability
 

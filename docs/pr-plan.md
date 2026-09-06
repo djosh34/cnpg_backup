@@ -112,6 +112,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 - SIGTERM, OOM/process death, full workspace, missing credentials and timeout after commit give correct status/idempotent retry behavior.
 - Workload writes continue during capture; fixtures with supported tablespaces are not silently omitted.
 - An interrupted full is never chosen as a differential parent or retention replacement.
+- Ship per-type last-success timestamp and failed-backup counters with full backups, using the metric contract in design.md. Failed attempts do not refresh success; failures surface in status and Warning events. Test freshness/failure alerts rather than defer basic observability to PR J.
 
 **Depends on:** PR E; approved native engine/staging and recovery semantics.
 **Not included:** production-ready release before end-to-end recovery exists.
@@ -141,14 +142,14 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 
 **Requirements**
 - Select an eligible full root and preserve its exact manifest; invoke native incremental capture and record direct full parent.
-- Validate WAL summary availability/configuration, PG identity/checksum/timeline restrictions and explicit fallback policy.
+- Validate WAL summary availability/configuration and PG identity/checksum/timeline restrictions. A requested differential fails on invalid prerequisites; never run a replacement full backup or offer a fallback setting. Extend per-type last-success/failure metrics and alerts.
 - Download/verify full+differential, combine and verify synthetic full, then reuse CNPG PITR path.
 - Report required workspace and actual transfer sizes; never quietly change a requested mode.
 
 **Acceptance**
 - Multiple differentials reference one full; restoring a selected differential succeeds after deleting an unrelated intervening differential.
 - Update/delete/truncate/drop/recreate fixtures restore correctly; largely unchanged fixture shows reduced transfer.
-- Missing full, missing summaries, checksum changes, promotion and cancellation fail/fallback exactly as documented.
+- Missing full, missing summaries, checksum changes, promotion and cancellation fail explicitly. Tests prove no replacement full command/upload starts, no success timestamp advances, and failure status/Warning events and the requested-type failure counter are emitted as defined.
 - Full+differential+WAL recovers around a sentinel target beyond the differential's bundled-WAL coverage; metadata survives process/Kubernetes object loss. Add these cases and missing-summary/parent faults to the real-system campaign and the deterministic regression corpus.
 
 **Depends on:** PR G; approved backup mode/chain policy.
@@ -178,7 +179,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Goal:** the supported deployment can be operated and patched without hidden dependencies or excessive resource use.
 
 **Requirements**
-- Complete status/metrics/alerts for archive lag/failure, backup freshness, restore, retention and workspace pressure; bounded metric cardinality.
+- Complete status/metrics/alerts for archive lag/failure, backup freshness, restore, retention and workspace pressure; bounded metric cardinality. Full/differential last-success timestamps and failed-backup counters already ship in PR F/H; verify per-type stale/never-successful backup alerts and schedule-aware thresholds. Uncertain/crashed restores keep deletion paused with Warning events; use a small conservative mechanism, not a general lease-recovery framework.
 - Install/upgrade manifests, examples, resource controls, credential/CA rotation, TLS/RBAC/network hardening and backup/restore runbooks.
 - SBOM, linked-Go and final-image vulnerability checks, Checkmarx integration where available, artifact signing/provenance and dependency-update procedure.
 - Retain old backup fixtures for format/version regression testing; explain native PG libraries in the dependency exception. Complete CI permissions/timeouts/artifact controls and reusable candidate/previous-release image-digest selection per testing.md; test workflows use no model/API credentials.
