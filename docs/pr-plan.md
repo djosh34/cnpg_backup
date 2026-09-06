@@ -124,7 +124,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Requirements**
 - S3-only catalog resolution, eligible-backup/timeline selection, secure extraction and verification, custom WAL directory handling, restore-job integration.
 - Respect CNPG recovery targets and PostgreSQL replay semantics; explicit backup selection where target inference is unsupported.
-- Source archive read versus target archive write identity separation, the finalized repository-wide deletion protection and cross-cluster/read-only reader contract and capacity preflight.
+- Source archive read versus target archive write identity separation, automatic repository-wide deletion protection for plugin-managed restores (including cross-cluster restores; arbitrary external S3 readers are out of scope) and capacity preflight.
 - Introduce manually dispatched, reusable recovery workflow calling the same local harness. It can run the currently implemented full/PITR scenarios with seed, exact image digest and bounded duration, retaining failure evidence. It must not yet claim differential/retention qualification.
 
 **Acceptance**
