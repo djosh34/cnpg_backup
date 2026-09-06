@@ -15,6 +15,19 @@ Design the complete solution and divide implementation into reasonably sized PRs
 - Full and space-efficient physical backups, compressed WAL archiving, scheduling through CNPG, automatic dependency-safe retention, restore and PITR are all in the planned product. No claim of complete Barman/pgBackRest feature parity.
 - Small initial database, but no whole-database RAM buffering or unbounded concurrency. Measure scaling rather than assume that small test fixtures demonstrate it.
 
+### Owner decisions from the final grill
+
+- **Accepted:** PostgreSQL native utilities and their temporary-disk cost, specifically to reduce implementation risk and version drift.
+- **Accepted:** differential-to-full topology, conditional on native support. [Primary-source verification](research/native-differentials-retention-locks.md) satisfies that condition: each native incremental can use the same full manifest, and reconstruction needs that full plus the chosen differential. Real-system qualification is still required.
+- **Accepted:** PG18, primary capture, failover-ready sidecars; test CNPG-managed tablespaces and separate WAL volumes. Older majors and standby capture are outside the first release.
+- **Accepted:** honest asynchronous WAL archive/RPO semantics and the proposed healthy-operation timeout profile.
+- **Under discussion:** the owner prefers a repository-wide deletion lock during restore, with a Kubernetes Warning event when it blocks retention. The earlier external/read-only manual-pause recommendation is not an accepted decision. Settle cross-cluster/read-only participation and crashed-restore safety before READY.
+- **Under discussion:** recovery-window/minimum-full retention versus pgBackRest's documented expiration policies; gather the factual comparison before finalizing the API/defaults.
+- **Accepted:** automatically publish versioned releases and qualified images; never deploy to a production environment. Production use belongs to consuming teams, not this project's execution plan.
+- **Accepted:** all rights reserved for original project work, not Apache-2.0 or another open-source license. Third-party components keep their own licenses/notice requirements; publishing source/images does not grant a general project license to consuming teams.
+
+These answers resolve product directions, not untested algorithms. The design remains IN PROGRESS until the remaining decisions and technical verification are complete.
+
 ## 2. Proposed architecture
 
 ```text
@@ -53,7 +66,7 @@ These are provisional package seams. Prefer concrete implementations and a few s
 
 ## 3. Backup engine: native increments, bounded chains
 
-**Recommendation:** use PG18 `pg_basebackup`, `pg_combinebackup`, and `pg_verifybackup`. This is the strongest justification for the permitted PostgreSQL-tool exception: PostgreSQL owns changing-block discovery and physical reconstruction rather than this project copying those internals.
+**Owner-approved engine direction:** use PG18 `pg_basebackup`, `pg_combinebackup`, and `pg_verifybackup`. This is the strongest justification for the permitted PostgreSQL-tool exception: PostgreSQL owns changing-block discovery and physical reconstruction rather than this project copying those internals.
 
 Native incremental backup exists from PG17. That makes PG17 a plausible later addition, not a tested compatibility promise. Use utilities matching the supported server major and maintain the image as part of this project's releases.
 
@@ -106,7 +119,7 @@ Immutable data keys plus commit-last publication avoid a central database and mu
 
 **Storage correctness gate:** documented S3/SDK behavior plus MinIO tests for atomic create/no-clobber, multipart completion, conditional publication, list/read consistency and ambiguous timeout outcomes. HEAD-then-PUT is not atomic and ETag is not generally a content checksum. Prefer portable standard operations over provider-specific features; validate required capabilities and fail clearly on unsupported endpoints. Widely used SDK code reduces protocol ownership but does not replace our publication/retention tests. No Dell evidence is required.
 
-**KISS topology recommendation for the final design grill:** one writer CNPG cluster per repository; restored clusters write to a new repository. Serialize backup/retention mutations under that owner; verify WAL no-clobber across failover and stale attempts. Do not promise cross-cluster multi-writer support or build a distributed lock service. For external/read-only restores, prefer a documented, acknowledged retention pause for the duration of recovery over automatic distributed reader leases. If that simple contract cannot be made safe, surface the concrete conflict before adding machinery. Missing/uncertain coordination must stop deletion, not relax safety.
+**Coordination decision in progress:** retain the proposed one-writer-cluster-per-repository boundary; restored clusters archive separately. The owner requests a repository-wide deletion lock while restoring and a Kubernetes Warning event when it blocks retention. Determine the smallest safe protocol before READY: acquire/acknowledge protection before selecting/downloading inputs, quiesce already-running deletes, and protect all required data through PostgreSQL's final source-WAL use—not merely through the bootstrap download job. Settle cross-cluster/read-only participation, durable ownership, stale deleters and interrupted recovery. A process mutex or unacknowledged S3 marker is not a sufficient protocol. Uncertain/crashed recovery must not silently lose protection via a TTL. Do not build a general distributed lock service; missing/uncertain coordination stops deletion.
 
 Never allow independent bucket lifecycle expiration of live backup/WAL objects. An age-only lifecycle rule cannot understand backup dependencies. Abandoned multipart cleanup and independently retained object versions are separate administrative policies.
 
@@ -132,15 +145,15 @@ Workspace initially uses ordinary copies rather than depending on reflinks or ha
 
 ## 6. Retention: preserve recoverability, fail closed
 
-Recommend a recovery-window setting plus a minimum full-backup count safety floor, with no automatic deletion until configured. Exact defaults are a product decision.
+Recommend a recovery-window setting plus a minimum full-backup count safety floor, with no automatic deletion until configured. [pgBackRest's time retention already preserves a window anchor and dependencies](research/native-differentials-retention-locks.md); this proposal adopts similar conservative reasoning with a smaller configuration surface, not a claim of superior recovery safety. Exact policy/defaults remain a product decision.
 
 For window cutoff C:
 
 1. Select restorable backups/timeline paths needed for targets in the promised window, including an anchor backup completed before the cutoff where available.
-2. Retain the transitive parent closure of every retained differential. Retain minimum full roots and data protected by the approved active-operation/retention-pause contract.
+2. Retain the transitive parent closure of every retained differential. Retain minimum full roots and data protected by the finalized restore/deletion coordination contract.
 3. Retain WAL from the earliest required start/redo position across those backups and supported timeline paths; retain timeline history conservatively. Never delete by wall-clock object age or compare filenames lexicographically across timelines.
 4. Produce an explainable deterministic keep/delete plan. Revalidate and coordinate before execution. Unknown metadata, missing parents, active operations, list errors or uncertain timeline requirements stop destructive work.
-5. Remove expiration eligibility/commit visibility before payload deletion under the approved coordination protocol. Interrupted deletion must be repeatable without exposing an incomplete backup as selectable. Protect active readers using the approved simple contract: coordinated local operations and acknowledged retention pause for external/read-only recovery. Do not assume a read-only client can create a remote pin; do not add automatic cross-cluster leases without a demonstrated need.
+5. Remove expiration eligibility/commit visibility before payload deletion under the approved coordination protocol. Interrupted deletion must be repeatable without exposing an incomplete backup as selectable. Protect active readers using the finalized repository-wide deletion-lock protocol. Cross-cluster participation and crash cleanup remain prelaunch decisions; do not assume a read-only client can create a remote pin or that lock expiry proves a reader stopped.
 6. Prune only WAL proven unnecessary, after dependency updates succeed. Never delete the last usable backup merely because successful backups stopped arriving.
 
 Example: full F is 10 days old, differential D is 1 day old, window is 7 days. F cannot be removed just because it is older than the window: D needs it. Keep any additional anchor/WAL needed to cover the beginning of the window. If the only eligible anchor is missing, report a shortened/broken recovery window rather than claim the setting was met.
@@ -160,7 +173,7 @@ Configuration surface should include:
 - Workspace and CPU/memory/ephemeral-storage settings, rate limit and small concurrency bounds.
 - Gzip on/off or a small validated level range; no compressor plugin framework.
 
-Start with Linux, PG18 and the approved CNPG/Kubernetes pair. Recommend primary-only base backups initially; replicas still receive sidecars for failover. Standby backup support is a separate compatibility decision because native incrementals depend on restartpoints and promotion behavior. Tablespaces and separate WAL volumes must either pass recovery tests or be explicitly rejected before backup, never silently omitted.
+Start with Linux, PG18 and the approved CNPG/Kubernetes pair. The owner approved primary-only base backups initially; replicas still receive sidecars for failover. Standby backup support is a separate compatibility decision because native incrementals depend on restartpoints and promotion behavior. CNPG-managed tablespaces and separate WAL volumes are in the agreed initial scope and must pass recovery tests. Unsupported layouts must fail preflight rather than be silently omitted; difficulty implementing an agreed layout is not permission to drop it.
 
 ## 8. Security and maintainability
 

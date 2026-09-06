@@ -22,3 +22,7 @@ Local planning assets:
 - [Domain glossary](CONTEXT.md)
 
 Unresolved decisions remain open in GitHub. Planned PR issues are not opened pull requests or evidence of completed implementation.
+
+## License
+
+**All rights reserved** for original project work. This is not an open-source license grant. Third-party components retain their own licenses and required notices.

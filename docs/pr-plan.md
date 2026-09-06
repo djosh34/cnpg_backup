@@ -46,7 +46,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Requirements**
 - Versioned repository identity, original PG manifests, immutable artifact metadata, commit-last publication and operation idempotency.
 - Validated full/differential parent graph, standalone S3 catalog enumeration and explicit rejection of unsupported schemas.
-- Implement the simplest approved one-writer-cluster coordination/no-clobber contract, including failover/stale work and retention-pause acknowledgment for external/read-only restore. Do not build a distributed lock/reader-lease service for unsupported multi-writer topologies.
+- Implement the simplest approved one-writer-cluster coordination/no-clobber contract, including failover/stale work and the repository-wide restore/deletion admission protocol finalized before READY. Do not build a distributed lock/reader-lease service for unsupported multi-writer topologies.
 - Add deterministic simulation of the actual production modules at storage/operation seams: controlled completion order, persisted fake state across restarts, seeded trace, independent oracle and bounded replay.
 - Interrupted uploads remain unselectable; orphan cleanup is conservative and bounded.
 
@@ -123,7 +123,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Requirements**
 - S3-only catalog resolution, eligible-backup/timeline selection, secure extraction and verification, custom WAL directory handling, restore-job integration.
 - Respect CNPG recovery targets and PostgreSQL replay semantics; explicit backup selection where target inference is unsupported.
-- Source archive read versus target archive write identity separation, the approved retention-pause/reader contract and capacity preflight.
+- Source archive read versus target archive write identity separation, the finalized repository-wide deletion protection and cross-cluster/read-only reader contract and capacity preflight.
 - Introduce manually dispatched, reusable recovery workflow calling the same local harness. It can run the currently implemented full/PITR scenarios with seed, exact image digest and bounded duration, retaining failure evidence. It must not yet claim differential/retention qualification.
 
 **Acceptance**
@@ -168,7 +168,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 - Property tests over backup/timeline graphs preserve every kept restore plan and its required WAL.
 - Full older than the retention cutoff survives while a retained differential depends on it; last usable full survives prolonged backup failure.
 - Retention racing backup, restore and manager failover remains safe under approved topology, including cross-cluster restore policy.
-- Kill at every deletion step and retry; restores inside the window still pass, expired selections fail clearly and no incomplete backup is selectable. Extend the manual campaign and independent DST oracle with backup/retention/restore interleavings and failed pause acknowledgment.
+- Kill at every deletion step and retry; restores inside the window still pass, expired selections fail clearly and no incomplete backup is selectable. Extend the manual campaign and independent DST oracle with backup/retention/restore interleavings and failed protection acknowledgment. Prove protection covers post-bootstrap WAL replay and crashed/paused recovery, drains in-flight deletion before admission and emits a Warning event when retention is blocked.
 
 **Depends on:** PR H; approved retention semantics/coordination.
 **Not included:** reference-counting chunk GC or remote synthetic full compaction.
@@ -206,7 +206,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 - All supported full/differential/PITR and retention scenarios pass with recovered SQL assertions, not only successful process exits.
 - No injected crash boundary produces false archive acknowledgment, committed-but-incomplete backup or deletion of an active dependency.
 - MinIO evidence, subject/harness SHAs and image digests, seeds/event traces, scenario counts, resource measurements, restore timings, alert/runbook drills and upgrade results are attached to the release checklist. Replay a saved failure; preserve its minimized regression.
-- Production release is blocked on failing, skipped or unexecuted mandatory scenarios. A 120-minute timer or green rerun that hides a flake is not qualification. Use the same reusable workflow to test new candidates and already released image digests; complete the delivery/release endpoint agreed during the final design grill without another approval ceremony.
+- Production release is blocked on failing, skipped or unexecuted mandatory scenarios. A 120-minute timer or green rerun that hides a flake is not qualification. Use the same reusable workflow to test new candidates and already released image digests; automatically publish versioned releases and qualified images without another approval ceremony or production deployment. Original project work remains all rights reserved; preserve third-party licenses/notices.
 
 **Depends on:** PR J; approved release gates.
 **Not included:** claiming Dell certification, a general-purpose chaos framework, unbounded or non-diagnostic retry loops or calling real distributed execution fully deterministic.
