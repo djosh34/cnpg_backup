@@ -10,8 +10,8 @@ python3 hack/bootstrap.py
 export PATH="$CNPG_BUILD_CACHE/go/bin:$PATH" CGO_ENABLED=0 GOTOOLCHAIN=local
 export GOOS=linux GOARCH=amd64 GOAMD64=v1 GOEXPERIMENT='' GOFLAGS='' GOWORK=off
 mkdir -p .work/tmp artifacts/fast
-export GOTMPDIR="$PWD/.work/tmp"
-[[ -z $(gofmt -l cmd hack/*/*.go) ]] || { echo 'gofmt required' >&2; exit 1; }
+export GOTMPDIR="$PWD/.work/tmp" TMPDIR="$PWD/.work/tmp"
+[[ -z $(gofmt -l cmd internal hack/*/*.go) ]] || { echo 'gofmt required' >&2; exit 1; }
 go vet ./... 2>&1 | tee artifacts/fast/vet.log
 go test -count=1 -timeout=120s ./... 2>&1 | tee artifacts/fast/unit.log
 python3 -m unittest discover -s hack -p 'test_*.py' 2>&1 | tee artifacts/fast/harness-unit.log
@@ -21,9 +21,13 @@ python3 --version > artifacts/fast/build-host.txt
 uname -a >> artifacts/fast/build-host.txt
 if command -v dpkg-deb >/dev/null; then dpkg-deb --version >> artifacts/fast/build-host.txt; fi
 cp build/inputs.lock.json artifacts/fast/
-cp build/out/{go-linked.json,go-modules.json,go-version.txt,version.txt,manager-files.json,pg18-files.json} artifacts/fast/
+cp build/out/{go-linked.json,go-modules.json,go-version.txt,version.txt,manager-files.json,pg18-files.json,go-dependency-scopes.json,go-production-packages.json,go-tests-packages.json,go-executable-packages.json} artifacts/fast/
 cp build/out/pg18/usr/share/cnpg-backup/{native-files.json,native-packages.json} artifacts/fast/
 if [[ $profile = integration ]]; then
+  mkdir -p artifacts/s3
+  CNPG_S3_INTEGRATION=1 CNPG_S3_MINIO_BINARY="$CNPG_BUILD_CACHE/downloads/minio" \
+    go test -json -count=1 -timeout=600s -run '^TestMinIOPrimitives$' ./internal/s3store \
+    | tee artifacts/s3/minio-primitives.jsonl
   for arg in "$@"; do
     if [[ $arg = --images ]]; then
       python3 hack/images.py
