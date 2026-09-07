@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djosh34/cnpg_backup/hack/miniofixture"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -112,7 +113,7 @@ func TestMinIOPrimitives(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	if e = readyStore.core.MakeBucket(ctx, c.Bucket, minio.MakeBucketOptions{Region: c.Region}); e != nil {
+	if e = miniofixture.CreateBucket(ctx, readyStore.core, c.Bucket, c.Region); e != nil {
 		t.Fatal("SETUP MakeBucket failed before product assertions:", setupError(e))
 	}
 	for _, signature := range []string{"v2", "v4"} {

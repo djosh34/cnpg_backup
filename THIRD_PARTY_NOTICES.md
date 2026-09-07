@@ -3,10 +3,20 @@
 Original project work is all rights reserved; this is not a project license.
 
 - Go 1.27.1 standard library/runtime: Go authors, BSD-style license. Builds copy
-  the toolchain's LICENSE and PATENTS into both image roots. No external Go
-  modules are currently linked into the executable; the production S3 package
-  and its tests now use the modules below. Generated `go-linked.json` and
-  `go-version.txt` describe the actual executable, not merely go.mod.
+  the toolchain's LICENSE and PATENTS into both image roots. Generated
+  `go-linked.json` and `go-version.txt` describe the actual executable, not merely
+  go.mod. `hack/godeps.py` inventories executable, production and test scopes
+  separately and copies unmodified production module notices, including nested
+  package licenses, into `notices/go-modules` in both image roots.
+- CNPG-I v0.6.0 (Apache-2.0), gRPC-Go (Apache-2.0), protobuf-go and Go extended
+  libraries (BSD-style), and Google generated RPC bindings (Apache-2.0) supply
+  the CNPG wire and local control services. The generated runtime inventory is
+  authoritative for the transitive linked subset; dependency test libraries
+  are not shipped.
+- Kubernetes API/apimachinery/client-go v0.35.8 (Apache-2.0) supply typed Pod/Job
+  objects, resource quantities and the uncached API client. Their actually linked
+  dependency closure and notices are included by the same generated inventory;
+  fake clients, Ginkgo/Gomega and JSON-patch regression tooling are test-only.
 - minio-go/v7 v7.3.0 (ce0e323c55c64964e6ad820ef0c6f5b286446aae):
   Copyright MinIO, Inc., Apache-2.0. Its unmodified LICENSE and NOTICE, and
   transitive production-package module license/notice texts, are copied to

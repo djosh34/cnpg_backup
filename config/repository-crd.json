@@ -1,0 +1,615 @@
+{
+  "apiVersion": "apiextensions.k8s.io/v1",
+  "kind": "CustomResourceDefinition",
+  "metadata": {
+    "name": "repositories.backup.cnpg-backup.djosh34.github.io"
+  },
+  "spec": {
+    "group": "backup.cnpg-backup.djosh34.github.io",
+    "scope": "Namespaced",
+    "names": {
+      "plural": "repositories",
+      "singular": "repository",
+      "kind": "Repository"
+    },
+    "versions": [
+      {
+        "name": "v1alpha1",
+        "served": true,
+        "storage": true,
+        "subresources": {
+          "status": {}
+        },
+        "schema": {
+          "openAPIV3Schema": {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object"
+              },
+              "spec": {
+                "type": "object",
+                "properties": {
+                  "repositoryID": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "x-kubernetes-validations": [
+                      {
+                        "rule": "self == oldSelf",
+                        "message": "storage identity is immutable; create a new Repository"
+                      }
+                    ]
+                  },
+                  "s3": {
+                    "type": "object",
+                    "properties": {
+                      "endpoint": {
+                        "type": "string",
+                        "minLength": 9,
+                        "maxLength": 2048,
+                        "pattern": "^https://[^/@?#]+/?$",
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "self == oldSelf",
+                            "message": "storage identity is immutable; create a new Repository"
+                          }
+                        ]
+                      },
+                      "bucket": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 63,
+                        "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$",
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "self == oldSelf",
+                            "message": "storage identity is immutable; create a new Repository"
+                          }
+                        ]
+                      },
+                      "prefix": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^([\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*[\\x20-\\x22\\x24\\x26-\\x2d\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e][\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*|\\.{3,})(/([\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*[\\x20-\\x22\\x24\\x26-\\x2d\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e][\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*|\\.{3,}))*$",
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "self == oldSelf",
+                            "message": "storage identity is immutable; create a new Repository"
+                          }
+                        ]
+                      },
+                      "signature": {
+                        "type": "string",
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "self == oldSelf",
+                            "message": "storage identity is immutable; create a new Repository"
+                          }
+                        ],
+                        "default": "v4",
+                        "enum": [
+                          "v2",
+                          "v4"
+                        ]
+                      },
+                      "addressing": {
+                        "type": "string",
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "self == oldSelf",
+                            "message": "storage identity is immutable; create a new Repository"
+                          }
+                        ],
+                        "default": "path",
+                        "enum": [
+                          "path"
+                        ]
+                      },
+                      "region": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "self == oldSelf",
+                            "message": "storage identity is immutable; create a new Repository"
+                          }
+                        ],
+                        "default": "us-east-1"
+                      },
+                      "encryption": {
+                        "type": "string",
+                        "default": "bucket-default",
+                        "enum": [
+                          "bucket-default"
+                        ]
+                      },
+                      "accessKeySecret": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                          },
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[-._a-zA-Z0-9]+$"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "key"
+                        ]
+                      },
+                      "secretKeySecret": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                          },
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[-._a-zA-Z0-9]+$"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "key"
+                        ]
+                      },
+                      "sessionTokenSecret": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                          },
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[-._a-zA-Z0-9]+$"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "key"
+                        ]
+                      },
+                      "caConfigMap": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                          },
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[-._a-zA-Z0-9]+$"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "key"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "endpoint",
+                      "bucket",
+                      "prefix",
+                      "accessKeySecret",
+                      "secretKeySecret"
+                    ],
+                    "x-kubernetes-validations": [
+                      {
+                        "rule": "self.signature != 'v2' || !has(self.sessionTokenSecret)",
+                        "message": "SigV2 cannot use a session token"
+                      }
+                    ]
+                  },
+                  "compression": {
+                    "type": "string",
+                    "default": "gzip",
+                    "enum": [
+                      "none",
+                      "gzip"
+                    ]
+                  },
+                  "workspace": {
+                    "type": "object",
+                    "properties": {
+                      "storageClassName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253
+                      },
+                      "size": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 32,
+                        "default": "256Gi"
+                      }
+                    },
+                    "required": [
+                      "storageClassName"
+                    ]
+                  },
+                  "native": {
+                    "type": "object",
+                    "properties": {
+                      "maxBackupBytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 34359738368,
+                        "minimum": 1,
+                        "maximum": 1099511627776
+                      },
+                      "maxBootstrapWALBytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 8589934592,
+                        "minimum": 1,
+                        "maximum": 274877906944
+                      },
+                      "maxRestoredBytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 34359738368,
+                        "minimum": 1,
+                        "maximum": 1099511627776
+                      },
+                      "maxReferenceAge": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1h') && duration(self) <= duration('720h')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "192h"
+                      },
+                      "captureTimeout": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1m') && duration(self) <= duration('6h')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "6h"
+                      }
+                    },
+                    "default": {
+                      "maxBackupBytes": 34359738368,
+                      "maxBootstrapWALBytes": 8589934592,
+                      "maxRestoredBytes": 34359738368,
+                      "maxReferenceAge": "192h",
+                      "captureTimeout": "6h"
+                    },
+                    "x-kubernetes-validations": [
+                      {
+                        "rule": "self.maxBootstrapWALBytes <= self.maxBackupBytes",
+                        "message": "bootstrap WAL is included in the raw backup budget"
+                      }
+                    ]
+                  },
+                  "io": {
+                    "type": "object",
+                    "properties": {
+                      "connectTimeout": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1s') && duration(self) <= duration('60s')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "10s"
+                      },
+                      "metadataTimeout": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1s') && duration(self) <= duration('120s')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "30s"
+                      },
+                      "dataRequestTimeout": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('10s') && duration(self) <= duration('1h')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "15m"
+                      },
+                      "operationTimeout": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1m') && duration(self) <= duration('168h')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "24h"
+                      },
+                      "walUploadTimeout": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('10s') && duration(self) <= duration('15m')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "120s"
+                      },
+                      "artifactUploads": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 2,
+                        "minimum": 1,
+                        "maximum": 2
+                      },
+                      "partWorkers": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 2,
+                        "minimum": 1,
+                        "maximum": 2
+                      },
+                      "walUploads": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 2,
+                        "minimum": 1,
+                        "maximum": 2
+                      }
+                    },
+                    "default": {
+                      "connectTimeout": "10s",
+                      "metadataTimeout": "30s",
+                      "dataRequestTimeout": "15m",
+                      "operationTimeout": "24h",
+                      "walUploadTimeout": "120s",
+                      "artifactUploads": 2,
+                      "partWorkers": 2,
+                      "walUploads": 2
+                    }
+                  },
+                  "retention": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "dryRun": {
+                        "type": "boolean",
+                        "default": true
+                      },
+                      "window": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1h') && duration(self) <= duration('87600h')",
+                            "message": "duration outside supported range"
+                          }
+                        ]
+                      },
+                      "minimumFulls": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 2,
+                        "minimum": 1,
+                        "maximum": 100
+                      },
+                      "interval": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('5m') && duration(self) <= duration('24h')",
+                            "message": "duration outside supported range"
+                          }
+                        ],
+                        "default": "1h"
+                      }
+                    },
+                    "default": {
+                      "enabled": false,
+                      "dryRun": true,
+                      "minimumFulls": 2,
+                      "interval": "1h"
+                    },
+                    "x-kubernetes-validations": [
+                      {
+                        "rule": "!self.enabled || has(self.window)",
+                        "message": "enabling retention requires a window"
+                      }
+                    ]
+                  },
+                  "resources": {
+                    "type": "object",
+                    "properties": {
+                      "requests": {
+                        "type": "object",
+                        "properties": {
+                          "cpu": {
+                            "type": "string",
+                            "default": "100m"
+                          },
+                          "memory": {
+                            "type": "string",
+                            "default": "256Mi"
+                          }
+                        },
+                        "default": {
+                          "cpu": "100m",
+                          "memory": "256Mi"
+                        }
+                      },
+                      "limits": {
+                        "type": "object",
+                        "properties": {
+                          "cpu": {
+                            "type": "string",
+                            "default": "2"
+                          },
+                          "memory": {
+                            "type": "string",
+                            "default": "3Gi"
+                          }
+                        },
+                        "default": {
+                          "cpu": "2",
+                          "memory": "3Gi"
+                        }
+                      }
+                    },
+                    "default": {
+                      "requests": {
+                        "cpu": "100m",
+                        "memory": "256Mi"
+                      },
+                      "limits": {
+                        "cpu": "2",
+                        "memory": "3Gi"
+                      }
+                    }
+                  },
+                  "backupFreshness": {
+                    "type": "object",
+                    "properties": {
+                      "fullMaxAge": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1m') && duration(self) <= duration('87600h')",
+                            "message": "duration outside supported range"
+                          }
+                        ]
+                      },
+                      "differentialMaxAge": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "x-kubernetes-validations": [
+                          {
+                            "rule": "duration(self) >= duration('1m') && duration(self) <= duration('87600h')",
+                            "message": "duration outside supported range"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "repositoryID",
+                  "s3",
+                  "workspace"
+                ]
+              },
+              "status": {
+                "type": "object",
+                "properties": {
+                  "observedGeneration": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "configurationHash": {
+                    "type": "string"
+                  },
+                  "lastWarningTime": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "True",
+                            "False",
+                            "Unknown"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "lastTransitionTime": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "observedGeneration": {
+                          "type": "integer",
+                          "format": "int64"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "status",
+                        "reason",
+                        "message",
+                        "lastTransitionTime"
+                      ]
+                    },
+                    "x-kubernetes-list-type": "map",
+                    "x-kubernetes-list-map-keys": [
+                      "type"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "spec"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
