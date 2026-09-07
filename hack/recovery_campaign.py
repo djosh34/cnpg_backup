@@ -88,8 +88,8 @@ class Manifest:
         self.data['remaining_mandatory'] = [s for s, result in self.data['scenarios'].items() if result['status'] != 'passed']
         atomic_json(self.directory / 'manifest.json', self.data)
 
-    def event(self, name, **facts):
-        event = {'event': name, 'epoch': time.time(), **facts}
+    def event(self, event_name, **facts):
+        event = {'event': event_name, 'epoch': time.time(), **facts}
         text = h.redact_diagnostics(json.dumps(event))
         if text == '<REDACTED>':
             text = json.dumps({'event': 'redacted-event', 'epoch': event['epoch']})
@@ -158,6 +158,22 @@ def collect():
                            '-o', 'wide', '--request-timeout=8s', check=False, timeout=10), 64000)
             except Exception:
                 pass
+    # Only the bounded, nonsecret product operation envelope, never ConfigMap
+    # inventories or Secret projections. Needed to distinguish observer loss
+    # from materialization/guard failure on the first failed run.
+    try:
+        clusters = json.loads(h.kube('get', 'clusters', '-n', TARGET, '-o', 'json', '--request-timeout=8s', timeout=10))['items']
+        end = time.monotonic() + 30
+        for cluster in clusters[:64]:
+            if time.monotonic() >= end:
+                break
+            name = cluster['metadata']['name']
+            if re.fullmatch(r'g-[0-9]{3}', name):
+                text = h.kube('get', 'configmap', name + '-cb-recovery', '-n', TARGET,
+                              '-o', 'jsonpath={.data.operation\\.json}', '--request-timeout=8s', check=False, timeout=10)
+                h.save_log(name + '-operation.json', text, 128 << 10)
+    except Exception:
+        pass
     h.NS = SOURCE
     try:
         h.save_log('node-resources.log', h.run('docker', 'stats', '--no-stream', '--format', '{{json .}}', NAME + '-control-plane', check=False, timeout=15), 64000)

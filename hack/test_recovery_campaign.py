@@ -18,6 +18,15 @@ class CampaignTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.subject_image(good, 'pg18')
 
+    def test_real_fresh_target_event_accepts_named_cluster_fact(self):
+        from recovery_cases import Campaign
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = c.Manifest(Path(tmp), {'profile': 'smoke'}, ['one'])
+            Campaign(None, manifest).event('fresh-target', name='g-001', pod='g-001-recovery', pvc_uids=['fresh'])
+            event = json.loads((Path(tmp) / 'events.jsonl').read_text())
+            self.assertEqual(event['event'], 'fresh-target')
+            self.assertEqual(event['name'], 'g-001')
+
     def test_missing_or_running_mandatory_is_not_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = c.Manifest(Path(tmp), {'profile': 'smoke'}, ['one', 'two'])

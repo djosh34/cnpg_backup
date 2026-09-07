@@ -77,8 +77,8 @@ class Campaign:
         self.journal = []
         self.next_pv = 0
 
-    def event(self, name, **facts):
-        self.m.event(name, **facts)
+    def event(self, event_name, **facts):
+        self.m.event(event_name, **facts)
 
     def sql(self, namespace, pod, query, container='postgres'):
         return h.kube('exec', '-n', namespace, pod, '-c', container, '--', 'psql', '-XAtq',
