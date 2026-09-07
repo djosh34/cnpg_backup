@@ -51,11 +51,15 @@ func controlAt(ctx context.Context, directory string) (captureControl, error) {
 	if e != nil {
 		return captureControl{}, e
 	}
-	if e = validateControl(string(b)); e != nil {
+	return parseCaptureControl(string(b))
+}
+
+func parseCaptureControl(output string) (captureControl, error) {
+	if e := validateControl(output); e != nil {
 		return captureControl{}, e
 	}
 	fields := map[string]string{}
-	for _, line := range strings.Split(string(b), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		p := strings.SplitN(line, ":", 2)
 		if len(p) == 2 {
 			fields[strings.TrimSpace(p[0])] = strings.TrimSpace(p[1])
@@ -464,7 +468,9 @@ func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, er
 		if e = validateTablespaceMap(cm.TablespaceMap, cm.Tablespaces, c.Connection); e != nil {
 			return nil, e
 		}
-	} else if _, e := os.Stat(filepath.Join(metaDir, "tablespace_map")); !os.IsNotExist(e) {
+	} else if b, e := os.ReadFile(filepath.Join(metaDir, "tablespace_map")); (e != nil && !os.IsNotExist(e)) || len(b) != 0 {
+		// PG18 emits an empty map for a cluster without user tablespaces.
+		// Preserve/verify those original bytes, but reject any unmanaged mapping.
 		return nil, ErrInput
 	}
 	captured, e := controlAt(ctx, metaDir)
@@ -521,20 +527,9 @@ func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, er
 // VerifyWAL never asks pg_verifybackup to invoke system(). Every accepted range
 // is passed directly to the matching parser, even in a shell-free image.
 func VerifyWAL(ctx context.Context, directory string, ranges []repository.WALRange) error {
-	if len(ranges) != 1 {
-		return ErrInput
-	}
-	for _, r := range ranges {
-		a, e := repository.ParseLSN(r.StartLSN)
-		b, e2 := repository.ParseLSN(r.EndLSN)
-		if e != nil || e2 != nil || r.Timeline == 0 || a >= b {
-			return ErrInput
-		}
-		if _, e = runTool(ctx, []string{"LANG=C", "LC_ALL=C"}, "pg_waldump", "--quiet", "--path="+directory, "--timeline="+strconv.FormatUint(uint64(r.Timeline), 10), "--start="+r.StartLSN, "--end="+r.EndLSN); e != nil {
-			return e
-		}
-	}
-	return nil
+	return verifyRestoreWAL(ctx, directory, ranges, func(ctx context.Context, tool string, args ...string) ([]byte, error) {
+		return runTool(ctx, []string{"LANG=C", "LC_ALL=C"}, tool, args...)
+	})
 }
 func fileHash(ctx context.Context, f *os.File) (string, error) {
 	h := sha256.New()
