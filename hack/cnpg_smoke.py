@@ -77,16 +77,54 @@ def image_digest(flavor):
     return ref
 
 
+def loop_diagnostics(label):
+    # Kernel loop allocation is host-wide, but /dev nodes are container-local.
+    # Preserve both views before provisioning and on the original failure.
+    text = run('docker', 'exec', NAME + '-control-plane', 'sh', '-c',
+               'ls -l /dev/loop*; losetup --list; '
+               'for p in /sys/class/block/loop*/dev; do echo "$p $(cat "$p")"; done; '
+               'findmnt -t ext4; df -h /var/local', check=False)
+    (OUT / ('loops-' + label + '.log')).write_text(text[-128000:])
+
+
+def provision_filesystem(path):
+    # mount -o loop relies on container udev creating new loop device nodes.
+    # kind has no such udev. Ask the kernel for a free minor, expose its actual
+    # sysfs major/minor, then explicitly attach and mount. Never guess a minor,
+    # detach a foreign loop, or fall back to an unbounded directory.
+    script = r'''set -eu
+path="$1"
+truncate -s 1G "$path.img"
+mkfs.ext4 -q -F "$path.img"
+mkdir "$path"
+device=$(losetup --find)
+if [ ! -b "$device" ]; then
+    numbers=$(cat "/sys/class/block/${device##*/}/dev")
+    mknod "$device" b "${numbers%:*}" "${numbers#*:}"
+fi
+loop=$(losetup --find --show "$path.img")
+echo "FINITE_FS backing=$path.img device=$loop"
+mount "$loop" "$path"
+findmnt -n -o SOURCE,FSTYPE,SIZE --target "$path"
+'''
+    return run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec', script, 'finite-fs', path)
+
+
 def bounded_workspaces():
     # Test orchestration only. kind's default local-path directories have no hard
     # capacity limit, so they MUST NOT masquerade as bounded native workspace.
     # Each test workspace is an independent ext4 filesystem on a sparse 1Gi disk.
     apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'cnpg-backup-bounded'},
            'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
+    loop_diagnostics('before')
     for i in range(12):
         path = f'/var/local/cnpg-backup-work-{i}'
-        run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec',
-            f'truncate -s 1G {path}.img; mkfs.ext4 -q -F {path}.img; mkdir {path}; mount -o loop {path}.img {path}')
+        try:
+            evidence = provision_filesystem(path)
+            (OUT / f'finite-fs-{i}.log').write_text(evidence)
+        except Exception:
+            loop_diagnostics(f'failure-{i}')
+            raise
         apply({'apiVersion': 'v1', 'kind': 'PersistentVolume', 'metadata': {'name': f'cnpg-backup-work-{i}'},
                'spec': {'capacity': {'storage': '1Gi'}, 'accessModes': ['ReadWriteOnce'], 'volumeMode': 'Filesystem',
                         'storageClassName': 'cnpg-backup-bounded', 'persistentVolumeReclaimPolicy': 'Retain', 'local': {'path': path},
@@ -229,6 +267,12 @@ def main():
             (OUT / 'events.log').write_text(kube('get', 'events', '-A', '--sort-by=.metadata.creationTimestamp', check=False)[-256000:])
             for namespace, name in [('cnpg-system', 'cnpg-backup'), ('cnpg-system', 'cnpg-controller-manager')]:
                 (OUT / (name + '.log')).write_text(kube('logs', '-n', namespace, 'deployment/' + name, '--all-containers', '--tail=500', check=False)[-256000:])
+            loop_diagnostics('final')
+            # Only detach loops backed by this disposable node's own files.
+            run('docker', 'exec', NAME + '-control-plane', 'sh', '-c',
+                'for p in /var/local/cnpg-backup-work-*.img; do '
+                'umount "${p%.img}" 2>/dev/null; '
+                'losetup -j "$p" -O NAME --noheadings | xargs -r losetup -d; done', check=False)
             run(WORK / 'kind-linux-amd64', 'delete', 'cluster', '--name', NAME, check=False)
 
 
