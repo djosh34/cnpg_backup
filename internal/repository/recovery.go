@@ -107,6 +107,11 @@ func (h *Hold) Resolve(ctx context.Context, catalog *Catalog, template Plan, nam
 		if e != nil {
 			return Plan{}, e
 		}
+		// Promotion preserves an incomplete old-timeline file under a distinct
+		// auxiliary name. It proves neither complete WAL nor timeline ancestry.
+		if strings.HasSuffix(name, ".partial") {
+			continue
+		}
 		timelines[t] = true
 		if strings.HasSuffix(name, ".history") {
 			historyNames[t] = true

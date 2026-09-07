@@ -17,14 +17,15 @@ func TestUntrustedTLSCannotAcknowledgeOrBecomeAbsence(t *testing.T) {
 	}
 	defer bad.Close()
 	w.Store = bad
-	name := "000000010000000000000001"
-	e = w.Archive(context.Background(), name, source(t, bytes.Repeat([]byte{1}, 1<<20)))
-	if !s3store.Is(e, s3store.TLS) {
-		t.Fatal("untrusted upload", e)
-	}
-	root, _ := local(t)
-	if e = w.Restore(context.Background(), name, root, name); !s3store.Is(e, s3store.TLS) {
-		t.Fatal("untrusted restore became missing", e)
+	for _, name := range []string{"000000010000000000000001", "000000010000000000000001.partial"} {
+		e = w.Archive(context.Background(), name, source(t, bytes.Repeat([]byte{1}, 1<<20)))
+		if !s3store.Is(e, s3store.TLS) {
+			t.Fatal("untrusted upload", e)
+		}
+		root, _ := local(t)
+		if e = w.Restore(context.Background(), name, root, name); !s3store.Is(e, s3store.TLS) {
+			t.Fatal("untrusted restore became missing", e)
+		}
 	}
 }
 

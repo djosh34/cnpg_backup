@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/djosh34/cnpg_backup/internal/repository"
 	"github.com/djosh34/cnpg_backup/internal/s3store"
@@ -42,6 +43,11 @@ type Files struct {
 	Compression string
 }
 
+// Native promotion renames (does not truncate) a physical segment to .partial.
+// This size rule grants no complete-WAL coverage; the suffix stays in its key.
+// Call only after repository filename validation.
+func segmentSized(name string) bool { return len(name) == 24 || strings.HasSuffix(name, ".partial") }
+
 // Limits validates the original PG filename using the repository's actual
 // segment size. History and backup-history files are independently bounded.
 func (w Files) Limits(name string) (key string, rawMax int64, err error) {
@@ -53,7 +59,7 @@ func (w Files) Limits(name string) (key string, rawMax int64, err error) {
 		return "", 0, ErrInvalid
 	}
 	rawMax = 1 << 20
-	if len(name) == 24 {
+	if segmentSized(name) {
 		rawMax = w.Repository.Identity().WALSegmentBytes
 	}
 	return
@@ -106,7 +112,7 @@ func (w Files) Archive(ctx context.Context, name string, source *os.File) error 
 	if e != nil {
 		return ErrLocal
 	}
-	if !st.Mode().IsRegular() || st.Size() < 1 || st.Size() > max || len(name) == 24 && st.Size() != max {
+	if !st.Mode().IsRegular() || st.Size() < 1 || st.Size() > max || segmentSized(name) && st.Size() != max {
 		return ErrInvalid
 	}
 	spool, e := spoolFile(w.Workspace, "wal-upload-*")
@@ -185,7 +191,7 @@ func (w Files) metadata(name string, info s3store.Info) (s3store.Integrity, erro
 		return s3store.Integrity{}, ErrExpired
 	}
 	raw, e := strconv.ParseInt(m["cnpg-raw-bytes"], 10, 64)
-	if e != nil || strconv.FormatInt(raw, 10) != m["cnpg-raw-bytes"] || raw < 1 || raw > max || len(name) == 24 && raw != max || info.Size < 1 || info.Size > max+(1<<20) || m["cnpg-format"] != "wal-v1" || m["cnpg-system-id"] != w.Repository.Identity().SystemIdentifier || !hashValid(m["cnpg-raw-sha256"]) || !hashValid(m["cnpg-stored-sha256"]) || (m["cnpg-compression"] != "none" && m["cnpg-compression"] != "gzip") {
+	if e != nil || strconv.FormatInt(raw, 10) != m["cnpg-raw-bytes"] || raw < 1 || raw > max || segmentSized(name) && raw != max || info.Size < 1 || info.Size > max+(1<<20) || m["cnpg-format"] != "wal-v1" || m["cnpg-system-id"] != w.Repository.Identity().SystemIdentifier || !hashValid(m["cnpg-raw-sha256"]) || !hashValid(m["cnpg-stored-sha256"]) || (m["cnpg-compression"] != "none" && m["cnpg-compression"] != "gzip") {
 		return s3store.Integrity{}, ErrCorrupt
 	}
 	return s3store.Integrity{Size: raw, SHA256: m["cnpg-raw-sha256"]}, nil

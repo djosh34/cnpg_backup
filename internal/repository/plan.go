@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 )
 
-var walRE = regexp.MustCompile(`^([0-9A-F]{24}|[0-9A-F]{8}\.history|[0-9A-F]{24}\.[0-9A-F]{8}\.backup)$`)
+var walRE = regexp.MustCompile(`^([0-9A-F]{24}(\.partial)?|[0-9A-F]{8}\.history|[0-9A-F]{24}\.[0-9A-F]{8}\.backup)$`)
 
 // ValidWALFilename checks grammar before any filesystem/native/storage I/O.
 // ValidateWALName adds arithmetic once actual physical segment size is known.

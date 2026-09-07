@@ -84,6 +84,32 @@ func TestMinIOWAL(t *testing.T) {
 					t.Fatal("history raw oracle")
 				}
 			}
+			// Promotion auxiliaries coexist with the complete filename and use
+			// the same durable conditional contract under both actual signers.
+			for i, compression := range []string{"none", "gzip"} {
+				partial := []string{name + ".partial", "000000010000000000000002.partial"}[i]
+				w.Compression = compression
+				if e = w.Archive(ctx, partial, source(t, other)); e != nil {
+					t.Fatal("PRODUCT partial archive", e)
+				}
+				w.Compression = "none"
+				if e = w.Archive(ctx, partial, source(t, other)); e != nil {
+					t.Fatal("PRODUCT partial identical retry", e)
+				}
+				if e = w.Archive(ctx, partial, src); e != ErrConflict {
+					t.Fatal("PRODUCT partial conflicting retry", e)
+				}
+				if e = w.Restore(ctx, partial, root, partial); e != nil {
+					t.Fatal(e)
+				}
+				got, readErr := os.ReadFile(filepath.Join(dir, partial))
+				if readErr != nil || !bytes.Equal(got, other) {
+					t.Fatal("partial independent byte oracle", readErr)
+				}
+			}
+			if e = w.Restore(ctx, "000000010000000000000002", root, "RECOVERYXLOG"); !s3store.Is(e, s3store.NotFound) {
+				t.Fatal("partial substituted for absent full filename", e)
+			}
 			if e = w.Restore(ctx, "00000003.history", root, "RECOVERYHISTORY"); !s3store.Is(e, s3store.NotFound) {
 				t.Fatal("PRODUCT authenticated absence", e)
 			}
@@ -102,6 +128,9 @@ func TestMinIOWAL(t *testing.T) {
 			}
 			if e = owner.Close(ctx); e != nil {
 				t.Fatal(e)
+			}
+			if e = w.Restore(ctx, name+".partial", root, name+".partial"); e != nil {
+				t.Fatal("full retirement affected distinct partial", e)
 			}
 			if e = w.Archive(ctx, name, src); e != ErrExpired {
 				t.Fatal("PRODUCT retired slot recreated", e)

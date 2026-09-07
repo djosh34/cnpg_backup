@@ -558,9 +558,73 @@ class Campaign:
         segment = self.sql(TARGET, primary, 'SELECT pg_walfile_name(pg_switch_wal())')
         key = 'smoke/v1/' + state['repository_id'] + '/wal/' + segment[:8] + '/' + segment
         h.wait(lambda: key in self.inventory('smoke/v1/' + state['repository_id'] + '/wal/'), 'new lineage archive', 120)
+        if state.get('expect_promotion_partial'):
+            self.verify_promotion_archive(state, primary, segment)
         assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == before, 'destination write changed source archive'
         self.retire_target(state)
         return state
+
+    def verify_promotion_archive(self, state, primary, full):
+        """Fresh product promotion bytes, not historical/synthetic fixture replay."""
+        plan = state['plan']['plan']
+        assert plan['target']['kind'] == 'immediate' and not plan['required_archive']
+        size = plan['source']['wal_segment_bytes']
+        selected = plan['chain'][-1]
+        end = lsn(selected['bundled_wal_end_lsn'])
+        assert end % size, 'partial fixture must promote inside the bundled segment'
+        number = (end - 1) // size
+        per_log = (1 << 32) // size
+        old = f"{selected['timeline']:08X}{number // per_log:08X}{number % per_log:08X}"
+        partial = old + '.partial'
+        expected = state['plan']['bundled'][old]
+        assert expected['Size'] == size
+        assert re.fullmatch('[0-9A-F]{24}', full) and int(full[:8], 16) > selected['timeline'], 'new lineage witness is not a complete new-TLI WAL filename'
+        prefix = 'smoke/v1/' + state['repository_id'] + '/wal/'
+        assert state['repository_id'] != SOURCE_ID
+        names = self.inventory(prefix)
+        assert prefix + old[:8] + '/' + old not in names, 'promotion manufactured an old complete WAL slot'
+        assert prefix + partial[:8] + '/' + partial in names, 'promotion partial not durably stored in new repository'
+        directory = WORK / (state['name'] + '-promotion-archive')
+        directory.mkdir(mode=0o700)
+        observations = []
+        for name in (partial, full):
+            key = prefix + name[:8] + '/' + name
+            payload, headers = directory / name, directory / (name + '.headers')
+            d = self.wal.directory
+            h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
+                  '--max-filesize', str(size + (1 << 20)), '--config', d / 'curl-private.conf',
+                  '--cacert', d / 'ca.crt', '--dump-header', headers, '--output', payload,
+                  'https://localhost:19000/test-bucket/' + key)
+            metadata = {k.lower().strip(): v.strip() for line in headers.read_text().splitlines()
+                        if ':' in line for k, v in [line.split(':', 1)]}
+            stored = payload.read_bytes()
+            assert metadata['x-amz-meta-cnpg-format'] == 'wal-v1'
+            assert metadata['x-amz-meta-cnpg-system-id'] == plan['source']['system_identifier']
+            assert metadata['x-amz-meta-cnpg-stored-sha256'] == hashlib.sha256(stored).hexdigest()
+            compression = metadata['x-amz-meta-cnpg-compression']
+            assert compression in ('none', 'gzip')
+            if compression == 'gzip':
+                with gzip.GzipFile(fileobj=io.BytesIO(stored)) as stream:
+                    raw = stream.read(size + 1)  # expansion bound, including a corrupt fixture
+            else:
+                raw = stored
+            checksum = hashlib.sha256(raw).hexdigest()
+            assert len(raw) == size == int(metadata['x-amz-meta-cnpg-raw-bytes'])
+            assert checksum == metadata['x-amz-meta-cnpg-raw-sha256']
+            if name == partial:
+                assert checksum == expected['SHA256'], 'promotion did not preserve actual verified bundled bytes'
+            else:
+                local = h.kube('exec', '-n', TARGET, primary, '-c', 'postgres', '--', 'sha256sum',
+                               '/var/lib/postgresql/wal/pg_wal/' + name).split()[0]
+                assert checksum == local, 'new timeline full archive differs from PostgreSQL file'
+            observations.append({'name': name, 'key': key, 'raw_bytes': len(raw), 'raw_sha256': checksum})
+        # PG's .done is observational acknowledgment, not our durability oracle;
+        # independent GET/hash verification above must succeed as well.
+        h.kube('exec', '-n', TARGET, primary, '-c', 'postgres', '--', 'test', '-f',
+               '/var/lib/postgresql/wal/pg_wal/archive_status/' + partial + '.done')
+        self.event('promotion-auxiliary-and-new-full-durable', cluster=state['name'],
+                   repository_id=state['repository_id'], objects=observations,
+                   required_archive=plan['required_archive'], original_full_slot_absent=True)
 
     def ordinary_completion(self, state):
         # Natural CNPG cleanup may have removed Job/Pod by Ready. Its original
@@ -838,6 +902,7 @@ class Campaign:
                 assert not state['plan']['plan']['required_archive'], 'immediate no-archive fixture unexpectedly has remote-required intervals'
                 name = sorted(state['plan']['bundled'])[0]
                 self.helper(state, name, 1) # actual archive-first miss, NOT archive success
+                state['expect_promotion_partial'] = True
                 self.finish(state, BASE, True)
                 negative = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
                 self.materialize(negative)

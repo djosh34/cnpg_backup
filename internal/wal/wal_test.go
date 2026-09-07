@@ -65,6 +65,10 @@ func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		c.Close()
 		return
 	}
+	if b.fault == "auth" {
+		fail(403, "AccessDenied")
+		return
+	}
 	if b.fault == "transient" {
 		fail(503, "ServiceUnavailable")
 		return
@@ -176,9 +180,9 @@ func TestRoundtripRetryConflictAndConfinement(t *testing.T) {
 		t.Run(compression, func(t *testing.T) {
 			w, b := setup(t, 1<<20)
 			w.Compression = compression
-			for _, name := range []string{"000000010000000000000001", "00000002.history", "000000010000000000000001.00000028.backup"} {
+			for _, name := range []string{"000000010000000000000001", "000000010000000000000001.partial", "00000002.history", "000000010000000000000001.00000028.backup"} {
 				data := []byte("1\t0/100000\tfixture promotion\n")
-				if len(name) == 24 {
+				if len(name) == 24 || strings.HasSuffix(name, ".partial") {
 					data = bytes.Repeat([]byte{42}, 1<<20)
 				}
 				src := source(t, data)
@@ -351,7 +355,7 @@ func TestSeededWALTrace(t *testing.T) {
 	}
 }
 func FuzzWALNames(f *testing.F) {
-	for _, s := range []string{"00000002.history", "../escape", "000000010000000000000001"} {
+	for _, s := range []string{"00000002.history", "../escape", "000000010000000000000001", "000000010000000000000001.partial"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, name string) {
