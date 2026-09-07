@@ -1,6 +1,6 @@
 # Initial primary-source reconnaissance
 
-Status: desk research, not completed contract research or experimental validation. Research tickets remain open for focused follow-up. Reconnaissance was performed directly; no background agents or remote research branches were created. The current execution contract requires **Paseo-managed** agents only, with Astra/high and verified archival; earlier raw Pi subprocess examples are superseded (see `docs/agents/paseo.md`).
+Status: desk research, not completed contract research or experimental validation. Research tickets remain open for focused follow-up. Reconnaissance was performed directly; no background agents or remote research branches were created. For current execution, follow the [role and lifecycle policy](../agents/paseo.md) and [binding owner resolution](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5576280720), including Paseo-only agents and verified archival; earlier raw Pi subprocess examples are superseded.
 
 ## Architecture-shaping findings
 
