@@ -15,7 +15,8 @@ the test bundle after unchanged EndLSN, and verifies both original and padded
 inputs with `pg_verifybackup --no-parse-wal` plus direct `pg_waldump` ranges.
 Three first native captures established the distinction; the portable checked-in
 probe independently repeated **3/3**, adding a healthy-after-negative control.
-Exact manifest/WAL hashes, SQL, history bytes and per-control verdicts are in
+Exact manifest/WAL hashes, SQL, history bytes and per-control verdicts at
+harness46dea73 are in
 [evidence/s1-switch-latest.json](evidence/s1-switch-latest.json). Raw temporary
 native archives are not checked in or counted as product inputs.
 
@@ -47,8 +48,13 @@ PG_BIN=/absolute/pinned-pg18/bin PG_SHARE=/absolute/pinned-pg18/share \
 ```
 
 The script uses private Unix sockets, two CPUs, up to3 tiny captures, bounded
-native/startup timeouts, and `.work` disk. It stops every owned server and retains
-commands/results/native inputs there. The native callback is test-only shell;
+native/startup timeouts, and `.work` disk. Shutdown uses explicit5s native/10s
+client deadlines, a bounded immediate-stop fallback on owned roots, and native
+status/PID-file verification. Timeout partial output is recorded; `cleanup.json`
+and `commands.json` persist from unconditional finalizers. Unresolved cleanup
+fails a successful trial without replacing an earlier trial failure. Unit
+regressions exercise timeout/nonzero shutdown and original-error ownership;
+commands/results/native inputs remain in `.work`. The native callback is test-only shell;
 it is not the shipped Go helper or a shell-free-image qualification.
 
 ## Why the oracle distinguishes

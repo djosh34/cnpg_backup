@@ -13,9 +13,15 @@ os.sched_setaffinity(0,sorted(os.sched_getaffinity(0))[:2])
 COMMANDS=[]; SERVERS=[]; PORT='65435'; SEG=16<<20
 TRIALS=int(os.environ.get('S1_TRIALS','3')); assert 1<=TRIALS<=3
 
-def run(tool,*args,check=True):
+def run(tool,*args,check=True,timeout=60):
  argv=[str(B/tool),*map(str,args)]
- p=subprocess.run(argv,env=ENV,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+ try:
+  p=subprocess.run(argv,env=ENV,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
+ except subprocess.TimeoutExpired as error:
+  def text(value): return value.decode(errors='replace') if isinstance(value,bytes) else value or ''
+  COMMANDS.append({'argv':argv,'exit':None,'timeout_seconds':timeout,
+                   'stdout':text(error.stdout),'stderr':text(error.stderr)})
+  raise
  COMMANDS.append({'argv':argv,'exit':p.returncode,'stdout':p.stdout,'stderr':p.stderr})
  if check: assert p.returncode==0,COMMANDS[-1]
  return p
@@ -27,14 +33,44 @@ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def start(data,log):
  SERVERS.append(data)
  return run('pg_ctl','-D',data,'-l',log,'-t','15','-w','start',check=False)
-def stop(data):return run('pg_ctl','-D',data,'-m','fast','-w','stop',check=False)
+def stop(data,mode='fast'):
+ return run('pg_ctl','-D',data,'-m',mode,'-t','5','-w','stop',check=False,timeout=10)
+
+def cleanup(primary_error):
+ # Only this probe's tracked private PGDATA roots. Never signal an arbitrary
+ # PID, infer takeover, or let one failed cleanup hide other command evidence.
+ report={'primary_error':primary_error,'servers':[]}
+ try:
+  for data in dict.fromkeys(SERVERS):
+   if not (data/'postmaster.pid').exists(): continue
+   assert data.resolve().is_relative_to(ROOT.resolve()), 'cleanup target outside owned probe'
+   observed={'data':str(data),'stopped':False,'errors':[]};report['servers'].append(observed)
+   for mode in ('fast','immediate'):
+    try:
+     result=stop(data,mode)
+     if result.returncode: observed['errors'].append(f'{mode} stop exit {result.returncode}')
+    except Exception as error:
+     observed['errors'].append(f'{mode} stop: {type(error).__name__}: {error}')
+    try:
+     status=run('pg_ctl','-D',data,'status',check=False,timeout=5)
+     observed['stopped']=status.returncode==3 and not (data/'postmaster.pid').exists()
+    except Exception as error:
+     observed['errors'].append(f'status: {type(error).__name__}: {error}')
+    if observed['stopped']: break
+  return any(not server['stopped'] for server in report['servers'])
+ finally:
+  # Even a cleanup/status exception must not bypass command persistence.
+  try:
+   (ROOT/'cleanup.json').write_text(json.dumps(report,indent=2)+'\n')
+  finally:
+   (ROOT/'commands.json').write_text(json.dumps(COMMANDS,indent=2)+'\n')
 def verify(data,wal):
  run('pg_verifybackup','--exit-on-error','--no-parse-wal',data)
  for r in json.loads((data/'backup_manifest').read_text())['WAL-Ranges']:
   run('pg_waldump','--quiet','--path='+str(wal),'--timeline='+str(r['Timeline']),'--start='+r['Start-LSN'],'--end='+r['End-LSN'])
-print(json.dumps({'root':str(ROOT),'trials':TRIALS,'version':run('postgres','--version').stdout.strip()}),flush=True)
-results=[]
+results=[];primary_error=None
 try:
+ print(json.dumps({'root':str(ROOT),'trials':TRIALS,'version':run('postgres','--version').stdout.strip()}),flush=True)
  for trial in range(1,TRIALS+1):
   d=ROOT/str(trial);d.mkdir(); source=d/'source'
   run('initdb','-D',source,'-L',os.environ['PG_SHARE'],'-U','probe','-A','trust','--no-locale')
@@ -118,7 +154,15 @@ try:
   (d/'result.json').write_text(json.dumps(result,indent=2)+'\n');results.append(result)
   print(json.dumps(result),flush=True)
  print(json.dumps({'distinguishing_trials':len(results),'product_acceptance':False}),flush=True)
+except BaseException as error:
+ primary_error=f'{type(error).__name__}: {error}'
+ raise
 finally:
- for data in SERVERS:
-  if (data/'postmaster.pid').exists():stop(data)
- (ROOT/'commands.json').write_text(json.dumps(COMMANDS,indent=2)+'\n')
+ try:
+  unresolved=cleanup(primary_error)
+ except Exception as error:
+  if primary_error is None: raise
+  print(json.dumps({'cleanup_error':str(error),'primary_error':primary_error}),flush=True)
+ else:
+  if unresolved and primary_error is None:
+   raise RuntimeError('owned PostgreSQL cleanup unresolved; see cleanup.json and commands.json')

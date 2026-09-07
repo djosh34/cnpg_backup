@@ -46,6 +46,11 @@ def lsn(text):
     return int(hi, 16) << 32 | int(lo, 16)
 
 
+def canonical_lsn(text):
+    position = lsn(text)
+    return f'{position >> 32:X}/{position & 0xffffffff:X}'
+
+
 def switch_witness(commit, dump):
     """Independent native-record precondition; never alter native EndLSN."""
     size = 16 << 20  # This campaign's explicitly checked source segment size.
@@ -358,7 +363,10 @@ class Campaign:
                      '--path=/fixture', '--rmgr=Transaction', '--xid=' + self.target['xid'], self.remote)
         matches = re.findall(r'lsn: ([0-9A-F]+/[0-9A-F]+).*desc: COMMIT', dump)
         assert len(matches) == 1, 'independent native WAL commit-record oracle is ambiguous'
-        self.target['commit_lsn'] = matches[0]
+        self.target['commit_lsn_native'] = matches[0]
+        # pg_waldump zero-pads its low half; selectors use the same numeric LSN
+        # in canonical repository spelling. Keep the raw independent observation.
+        self.target['commit_lsn'] = canonical_lsn(matches[0])
         # CNPG time syntax is RFC3339, derived from PostgreSQL commit time itself.
         import datetime
         self.target['time_rfc3339'] = datetime.datetime.fromisoformat(self.target['commit_time']).isoformat()
@@ -849,11 +857,15 @@ class Campaign:
                 source = '/var/lib/postgresql/wal/pg_wal/' + name
                 h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source, source + '.withheld')
                 try:
-                    self.helper(state, name, 255)
+                    # Both actual archive absence and local withholding survive
+                    # the PG request, helper255 and terminal no-promotion proof.
+                    self.replay_failure(state, name)
+                    self.event('effective-local-bundle-absence', filename=name, pod=state['pod'])
                 finally:
                     h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source + '.withheld', source)
-                self.helper(state, name, 1) # distinguishes invalid helper/never-admitted RPC
-                self.finish(state, BASE, True)
+                # The intact exit1/SQL positive is the separate fresh target
+                # above, never this repaired negative attempt.
+                self.retire_target(state)
 
     def put_fixture(self, key, path):
         d = self.wal.directory
@@ -991,23 +1003,26 @@ class Campaign:
     def fatal_replay(self, state, requested, mode, family):
         self.wal.control(mode, requested)
         try:
-            self.release(state['pod'], 'release-response')
-            self.barrier(state['pod'], 'cnpg-exited', 240)
-            logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
-            trace = self.file(state['pod'], '/controller/campaign/rpc.jsonl')
+            self.replay_failure(state, requested)
             assert self.wal.control()['blocked'] > 0, 'ineffective fault injection is not product failure'
-            assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
-            assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
-            events = [json.loads(x) for x in trace.splitlines()]
-            assert any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
-            assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events)
-            self.holds(state, 'fatal-source-WAL-with-intact-bundle')
             self.event('effective-fatal-WAL', family=family, filename=requested, proxy=self.wal.control())
-            h.save_log(state['name'] + '-fatal-main.log', logs)
-            h.save_log(state['name'] + '-fatal-rpc.jsonl', trace)
         finally:
             self.wal.control('')
         self.retire_target(state)
+
+    def replay_failure(self, state, requested):
+        self.release(state['pod'], 'release-response')
+        self.barrier(state['pod'], 'cnpg-exited', 240)
+        logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
+        trace = self.file(state['pod'], '/controller/campaign/rpc.jsonl')
+        h.save_log(state['name'] + '-fatal-main.log', logs)
+        h.save_log(state['name'] + '-fatal-rpc.jsonl', trace)
+        assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
+        assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
+        events = [json.loads(x) for x in trace.splitlines()]
+        assert any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
+        assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events)
+        self.holds(state, 'fatal-source-WAL')
 
     def ownership(self):
         # Real guard and actual CNPG original command, with external pauses at

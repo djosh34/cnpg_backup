@@ -1,6 +1,7 @@
 {
   "scope": "fresh native primitive only; not CNPG/Go/MinIO product acceptance",
   "harness_base": "1b4823d42c3a5056898aeaf49caaa528400cc001",
+  "harness_revision": "46dea73deacf676a9aa3afd1470861fd2851abf7",
   "postgres_source": "724edf9bde9d356724ad384a2e196edc3c9f80f7",
   "actual_native_version": "18.6 (Ubuntu 18.6-3.pgdg24.04+1)",
   "script": "hack/s1_switch_probe.py",

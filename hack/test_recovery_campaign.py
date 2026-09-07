@@ -266,6 +266,60 @@ class CampaignTests(unittest.TestCase):
             campaign.fatal_replay(state, name, 'missing-wal-get', 'same-segment')
         self.assertEqual(active, [''])
 
+    def test_local_bundle_absence_survives_until_real_replay_fails(self):
+        import contextlib
+        from unittest.mock import Mock
+        from recovery_cases import Campaign
+        campaign = Campaign(None, Mock())
+        campaign.m.case.side_effect = lambda name: contextlib.nullcontext()
+        name = '000000010000000000000002'
+        absent, withheld, replayed, retired = [], [], [], []
+        @contextlib.contextmanager
+        def archive_absent():
+            absent.append(True)
+            try:
+                yield
+            finally:
+                absent.pop()
+        states = [{'name': 'g-' + str(i), 'pod': 'p' + str(i),
+                   'plan': {'plan': {'required_archive': []}, 'bundled': {name: {}}}}
+                  for i in range(1, 4)]
+        def barrier(pod, *args):
+            if pod == 'p3':
+                self.assertTrue(absent and withheld, 'required absence repaired before real PG replay')
+                replayed.append(pod)
+        def kube(*args, **kwargs):
+            if 'mv' in args:
+                if args[-1].endswith('.withheld'):
+                    withheld.append(True)
+                else:
+                    self.assertEqual(replayed, ['p3'], 'local bundle restored before fatal replay evidence')
+                    withheld.pop()
+            return 'FATAL restore_command exit 255'
+        trace = '\n'.join(json.dumps(e) for e in [{'event': 'wal-request', 'name': name},
+                                                  {'event': 'actual-cnpg-exit', 'exit': 1}])
+        def finish(state, *args):
+            self.assertEqual(state['pod'], 'p1', 'repaired negative reused as a positive')
+        with patch.object(campaign, 'archive_absent', side_effect=archive_absent), \
+             patch.object(campaign, 'start', side_effect=states), patch.object(campaign, 'materialize'), \
+             patch.object(campaign, 'helper'), patch.object(campaign, 'finish', side_effect=finish), \
+             patch.object(campaign, 'release'), patch.object(campaign, 'barrier', side_effect=barrier), \
+             patch.object(campaign, 'file', return_value=trace), patch.object(campaign, 'holds'), \
+             patch.object(campaign, 'event'), patch.object(campaign, 'retire_target', side_effect=lambda s: retired.append(s['pod'])), \
+             patch('recovery_cases.h.kube', side_effect=kube), patch('recovery_cases.h.save_log'):
+            campaign.base = {'backup_uid': 'base'}
+            campaign.bundle_fallback()
+        self.assertEqual(replayed, ['p3'])
+        self.assertEqual(retired, ['p2', 'p3'])
+        self.assertFalse(absent or withheld)
+
+    def test_native_commit_lsn_target_uses_same_numeric_canonical_spelling(self):
+        from recovery_cases import canonical_lsn, lsn
+        native = '0/050002C0'  # actual first full-LSN hosted failure, pg_waldump output
+        self.assertEqual(canonical_lsn(native), '0/50002C0')
+        self.assertEqual(lsn(canonical_lsn(native)), lsn(native))
+        self.assertEqual(canonical_lsn('0000000A/00000000'), 'A/0')
+
     def test_budget_rejects_fault_before_it_is_generated(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = c.Manifest(Path(tmp), {'profile': 'recovery'}, ['one'], deadline=0)
