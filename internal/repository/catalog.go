@@ -51,13 +51,13 @@ func (h *Hold) Catalog(ctx context.Context, limits CatalogLimits) (*Catalog, err
 	if e := limits.validate(); e != nil {
 		return nil, e
 	}
-	f, e := h.r.spoolCatalog(ctx, limits, true)
+	f, e := h.r.spoolCatalog(ctx, limits)
 	if e != nil {
 		return nil, e
 	}
 	return &Catalog{hold: h, file: f}, nil
 }
-func (r *Repository) spoolCatalog(ctx context.Context, l CatalogLimits, verify bool) (f *os.File, err error) {
+func (r *Repository) spoolCatalog(ctx context.Context, l CatalogLimits) (f *os.File, err error) {
 	f, err = r.temp()
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (r *Repository) spoolCatalog(ctx context.Context, l CatalogLimits, verify b
 			return ErrCorrupt
 		}
 		if kind != "commit" {
-			return nil
+			return r.validateListedMetadata(ctx, i.Key)
 		}
 		count++
 		if count > l.MaxRecords {
@@ -100,10 +100,8 @@ func (r *Repository) spoolCatalog(ctx context.Context, l CatalogLimits, verify b
 			if e = r.parent(ctx, c); e != nil {
 				return e
 			}
-			if verify {
-				if e = r.verifyPayload(ctx, c); e != nil {
-					return e
-				}
+			if e = r.verifyPayload(ctx, c); e != nil {
+				return e
 			}
 		}
 		entry := Entry{c, digest(b), info.Modified, retired}

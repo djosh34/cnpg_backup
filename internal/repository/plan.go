@@ -47,7 +47,7 @@ func RestoreOperationID(target, fingerprint string) (string, error) {
 		return "", ErrInvalid
 	}
 	b := sha256.Sum256([]byte("cnpg-backup/restore/v1\x00" + target + "\x00" + fingerprint))
-	b[6] = (b[6] & 15) | 80
+	b[6] = (b[6] & 15) | 128 // UUIDv8: project-defined SHA256 derivation.
 	b[8] = (b[8] & 63) | 128
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

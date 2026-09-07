@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,21 @@ type GCOwner struct {
 }
 
 func (r *Repository) AcquireGC(ctx context.Context) (*GCOwner, error) {
+	if e := r.store.CheckBucketSafety(ctx); e != nil {
+		return nil, e
+	}
+	r.gcMu.Lock()
+	wait := time.Until(r.gcNotBefore)
+	r.gcMu.Unlock()
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	o := Owner{OperationID: UUID(), ProcessID: r.process, Kind: "gc"}
 	e := r.changeGate(ctx, func(g *Gate) (bool, error) {
 		if g.Owner != nil {
@@ -101,7 +117,7 @@ func (g *GCOwner) Inventory(ctx context.Context, l CatalogLimits, visit func(Ent
 	if visit == nil {
 		return ErrInvalid
 	}
-	f, e := g.r.spoolCatalog(ctx, l, false)
+	f, e := g.r.spoolCatalog(ctx, l)
 	if e != nil {
 		return e
 	}
@@ -128,7 +144,7 @@ func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 		return ErrInvalid
 	}
 	// No effect until the entire list/graph and all victim shapes are valid.
-	f, e := g.r.spoolCatalog(ctx, CatalogLimits{MaxCatalogRecords, 1 << 40}, false)
+	f, e := g.r.spoolCatalog(ctx, CatalogLimits{MaxCatalogRecords, 1 << 40})
 	if e != nil {
 		return e
 	}
@@ -189,8 +205,22 @@ func (g *GCOwner) validateVictim(ctx context.Context, v Victim, retired map[stri
 		if v.WALName == nil || v.ExpectedETag == nil || *v.ExpectedETag == "" || len(*v.ExpectedETag) > 256 || v.BackupUID != nil || v.AttemptID != nil || v.Index != nil || v.Compression != nil || v.UploadID != nil {
 			return ErrInvalid
 		}
-		_, e := g.r.WALKey(*v.WALName)
-		return e
+		name := *v.WALName
+		if len(name) != 24 || v.RawBytes != g.r.id.WALSegmentBytes {
+			return ErrInvalid
+		}
+		key, e := g.r.WALKey(name)
+		if e != nil {
+			return e
+		}
+		info, e := g.r.store.Head(ctx, key)
+		if e != nil {
+			return e
+		}
+		if info.ETag != *v.ExpectedETag || info.Metadata["cnpg-format"] != "wal-v1" || info.Metadata["cnpg-system-id"] != g.r.id.SystemIdentifier || info.Metadata["cnpg-raw-sha256"] != v.SHA256 || info.Metadata["cnpg-raw-bytes"] != strconv.FormatInt(v.RawBytes, 10) {
+			return ErrIdentity
+		}
+		return nil
 	}
 	if v.BackupUID == nil || !validID(*v.BackupUID) || v.WALName != nil || v.ExpectedETag != nil {
 		return ErrInvalid
@@ -306,6 +336,9 @@ func (g *GCOwner) Close(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.closed = true
+	g.r.gcMu.Lock()
+	g.r.gcNotBefore = time.Now().Add(time.Second)
+	g.r.gcMu.Unlock()
 	if g.uncertain {
 		return ErrUncertain
 	}

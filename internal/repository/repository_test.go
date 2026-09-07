@@ -45,6 +45,11 @@ type fakeStore struct {
 	oracleErrors       []string
 }
 
+func (s *fakeStore) CheckBucketSafety(context.Context) error { return nil }
+func (s *fakeStore) Head(c context.Context, k string) (s3store.Info, error) {
+	_, i, e := s.Read(c, k, MaxArtifactBytes)
+	return i, e
+}
 func newFake() *fakeStore { return &fakeStore{objects: map[string]object{}} }
 func (s *fakeStore) Read(_ context.Context, k string, max int64) ([]byte, s3store.Info, error) {
 	s.mu.Lock()
@@ -118,6 +123,9 @@ func (s *fakeStore) mutate(k string, b []byte, c s3store.Condition, destructive 
 	}
 }
 func operationName(k string, d bool) string {
+	if strings.Contains(k, "/gc/") {
+		return "gc-plan"
+	}
 	if d {
 		return "destructive"
 	}

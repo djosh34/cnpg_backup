@@ -195,6 +195,9 @@ func (r *Repository) AdmitBackup(ctx context.Context, writer, operation string) 
 	if writer != r.id.WriterClusterUID || !validID(operation) {
 		return nil, ErrIdentity
 	}
+	if e := r.store.CheckBucketSafety(ctx); e != nil {
+		return nil, e
+	}
 	return r.admit(ctx, "backup", writer, operation)
 }
 func (r *Repository) admit(ctx context.Context, kind, target, operation string) (*Hold, error) {

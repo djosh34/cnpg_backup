@@ -87,7 +87,7 @@ func strict(b []byte, max int64, out any) error {
 	if int64(len(b)) > max {
 		return ErrCapacity
 	}
-	if !utf8.Valid(b) {
+	if !utf8.Valid(b) || !validJSONUnicode(b) {
 		return ErrInvalid
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -308,7 +308,7 @@ func (v Commit) validate(id Identity) error {
 	if n[0] > n[1] || n[1] >= n[2] || n[3] > n[0] || n[4] != n[2] || len(v.WALRanges) != 1 || v.WALRanges[0] != (WALRange{v.Timeline, v.BundledWALStartLSN, v.BundledWALEndLSN}) {
 		return ErrInvalid
 	}
-	if !validText(v.BackupLabel, 64<<10) || len(v.TablespaceMap) > 64<<10 || !utf8.ValidString(v.TablespaceMap) || strings.ContainsRune(v.TablespaceMap, 0) || v.ManifestBytes < 1 || v.ManifestBytes > MaxManifestBytes || !hashRE.MatchString(v.ManifestSHA256) {
+	if v.BackupLabel == "" || len(v.BackupLabel) > 64<<10 || !utf8.ValidString(v.BackupLabel) || strings.ContainsRune(v.BackupLabel, 0) || len(v.TablespaceMap) > 64<<10 || !utf8.ValidString(v.TablespaceMap) || strings.ContainsRune(v.TablespaceMap, 0) || v.ManifestBytes < 1 || v.ManifestBytes > MaxManifestBytes || !hashRE.MatchString(v.ManifestSHA256) {
 		return ErrInvalid
 	}
 	switch v.Kind {

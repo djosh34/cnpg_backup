@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/djosh34/cnpg_backup/internal/s3store"
 )
@@ -17,6 +19,8 @@ import (
 // Mutations make one attempt; unknown errors are always treated as ambiguous.
 // List is ordered and complete only on nil return. Files are private disk spools.
 type Storage interface {
+	CheckBucketSafety(context.Context) error
+	Head(context.Context, string) (s3store.Info, error)
 	Read(context.Context, string, int64) ([]byte, s3store.Info, error)
 	PutFile(context.Context, string, *os.File, s3store.Integrity, s3store.Condition, map[string]string) (s3store.Info, error)
 	UploadFile(context.Context, string, *os.File, s3store.Integrity, map[string]string) (s3store.Upload, s3store.Info, error)
@@ -33,6 +37,8 @@ type Repository struct {
 	store                    Storage
 	id                       Identity
 	root, workspace, process string
+	gcMu                     sync.Mutex
+	gcNotBefore              time.Time
 }
 
 // Open checks immutable identity and an existing gate. It never initializes or
@@ -85,6 +91,19 @@ func initialize(ctx context.Context, s Storage, id Identity, workspace string) e
 		return ErrInvalid
 	}
 	r := &Repository{store: s, id: id, root: "v1/" + id.RepositoryID + "/", workspace: workspace, process: UUID()}
+	_, _, readErr := s.Read(ctx, r.root+"repository.json", smallLimit)
+	if s3store.Is(readErr, s3store.NotFound) {
+		if e := s.List(ctx, r.root, MaxCatalogRecords, func(i s3store.Info) error {
+			if strings.HasPrefix(i.Key, r.root+"probes/") {
+				return nil
+			}
+			return ErrIdentity
+		}); e != nil {
+			return e
+		}
+	} else if readErr != nil {
+		return readErr
+	}
 	b, _ := json.Marshal(id)
 	if _, e := r.createExact(ctx, r.root+"repository.json", b, smallLimit); e != nil {
 		return e
@@ -109,7 +128,7 @@ func initialize(ctx context.Context, s Storage, id Identity, workspace string) e
 		return nil
 	}
 	// An existing valid gate is sufficient; its nonce need not equal our candidate.
-	_, _, readErr := r.readGate(ctx)
+	_, _, readErr = r.readGate(ctx)
 	if readErr == nil {
 		return nil
 	}
