@@ -171,13 +171,15 @@ func (r *Repository) artifact(c Commit, a Artifact) string {
 func (r *Repository) temp() (*os.File, error) { return os.CreateTemp(r.workspace, "repository-*") }
 func removeFile(f *os.File)                   { name := f.Name(); f.Close(); os.Remove(name) }
 func (r *Repository) put(ctx context.Context, key string, b []byte, c s3store.Condition) (s3store.Info, error) {
+	// These local failures precede PutFile dispatch: no remote mutation can
+	// still arrive. Do not let them poison an otherwise drained hold/owner.
 	f, e := r.temp()
 	if e != nil {
-		return s3store.Info{}, e
+		return s3store.Info{}, &s3store.Error{Kind: s3store.LocalIO}
 	}
 	defer removeFile(f)
 	if _, e = f.Write(b); e != nil {
-		return s3store.Info{}, e
+		return s3store.Info{}, &s3store.Error{Kind: s3store.LocalIO}
 	}
 	return r.store.PutFile(ctx, key, f, s3store.Integrity{Size: int64(len(b)), SHA256: digest(b)}, c, nil)
 }

@@ -25,17 +25,8 @@ func (r *Repository) parentMetadata(ctx context.Context, c Commit) error {
 	if c.Kind == "full" {
 		return nil
 	}
-	p, b, _, e := r.readCommit(ctx, *c.ParentBackupUID)
+	p, e := r.readParent(ctx, c)
 	if e != nil {
-		return e
-	}
-	if e = validateParent(c, p); e != nil {
-		return e
-	}
-	if e = r.live(ctx, p, b); e != nil {
-		return e
-	}
-	if _, e = r.requestFor(ctx, p); e != nil {
 		return e
 	}
 	return r.payloadMetadata(ctx, p)

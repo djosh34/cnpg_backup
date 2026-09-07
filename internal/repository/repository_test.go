@@ -233,6 +233,33 @@ func independentOracle(objects map[string]object) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
+		if root, _, wal := strings.Cut(k, "/wal/"); wal {
+			// Check each observed WAL-retirement effect against its persisted
+			// victim set, independently of production plan/order validation.
+			var tomb struct {
+				State     string `json:"state"`
+				Operation string `json:"gc_operation_id"`
+			}
+			if json.Unmarshal(objects[k].b, &tomb) == nil && tomb.State == "retired" {
+				var plan struct {
+					Victims []struct {
+						Kind   string `json:"kind"`
+						Backup string `json:"backup_uid"`
+					} `json:"victims"`
+				}
+				p, ok := objects[root+"/gc/"+tomb.Operation+".json"]
+				if !ok || json.Unmarshal(p.b, &plan) != nil {
+					return errors.New("WAL retirement lacks durable plan")
+				}
+				for _, v := range plan.Victims {
+					if v.Kind == "retire-backup" {
+						if _, ok := objects[root+"/backups/"+v.Backup+"/retired.json"]; !ok {
+							return errors.New("WAL retired before planned backup exclusion")
+						}
+					}
+				}
+			}
+		}
 		if !strings.HasSuffix(k, "/commit.json") {
 			continue
 		}

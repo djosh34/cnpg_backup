@@ -174,14 +174,18 @@ func (c *Catalog) Visit(ctx context.Context, visit func(Entry) error) error {
 	if e := h.check(ctx); e != nil {
 		return e
 	}
-	return scanEntries(c.file, visit)
+	return scanEntries(ctx, c.file, visit)
 }
-func scanEntries(f *os.File, visit func(Entry) error) error {
+func scanEntries(ctx context.Context, f *os.File, visit func(Entry) error) error {
 	if _, e := f.Seek(0, 0); e != nil {
 		return e
 	}
 	d := json.NewDecoder(f)
 	for {
+		// Also check after the last callback, before accepting EOF as success.
+		if e := ctx.Err(); e != nil {
+			return e
+		}
 		var v Entry
 		e := d.Decode(&v)
 		if e == io.EOF {

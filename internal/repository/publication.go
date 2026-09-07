@@ -195,20 +195,31 @@ func (r *Repository) parent(ctx context.Context, c Commit) error {
 	if c.Kind == "full" {
 		return nil
 	}
-	p, b, _, e := r.readCommit(ctx, *c.ParentBackupUID)
+	p, e := r.readParent(ctx, c)
 	if e != nil {
 		return e
 	}
+	return r.verifyPayload(ctx, p)
+}
+
+// readParent validates a differential's exact live full edge and immutable
+// request/claim. Payload verification belongs to selection/publication or the
+// original input's actual download, not every unrelated differential input.
+func (r *Repository) readParent(ctx context.Context, c Commit) (Commit, error) {
+	p, b, _, e := r.readCommit(ctx, *c.ParentBackupUID)
+	if e != nil {
+		return Commit{}, e
+	}
 	if e = validateParent(c, p); e != nil {
-		return e
+		return Commit{}, e
 	}
 	if e = r.live(ctx, p, b); e != nil {
-		return e
+		return Commit{}, e
 	}
 	if _, e = r.requestFor(ctx, p); e != nil {
-		return e
+		return Commit{}, e
 	}
-	return r.verifyPayload(ctx, p)
+	return p, nil
 }
 func (r *Repository) verifyWinner(ctx context.Context, c Commit, b []byte) error {
 	if e := r.live(ctx, c, b); e != nil {
@@ -327,8 +338,10 @@ func (h *Hold) DownloadInput(ctx context.Context, uid string, index int, dst *os
 	if _, e = r.requestFor(ctx, c); e != nil {
 		return e
 	}
-	if e = r.parent(ctx, c); e != nil {
-		return e
+	if c.Kind == "differential" {
+		if _, e = r.readParent(ctx, c); e != nil {
+			return e
+		}
 	}
 	key := r.attempt(uid, c.AttemptID) + "manifest.pg.json"
 	size, hash, raw, rawhash, comp := c.ManifestBytes, c.ManifestSHA256, c.ManifestBytes, c.ManifestSHA256, "none"

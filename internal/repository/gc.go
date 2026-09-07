@@ -122,7 +122,7 @@ func (g *GCOwner) Inventory(ctx context.Context, l CatalogLimits, visit func(Ent
 		return e
 	}
 	defer removeFile(f)
-	return scanEntries(f, visit)
+	return scanEntries(ctx, f, visit)
 }
 func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 	g.mu.Lock()
@@ -150,13 +150,23 @@ func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 	}
 	defer removeFile(f)
 	retired := map[string]bool{}
+	walRetirement := false
 	for _, v := range p.Victims {
+		// Validate the COMPLETE ordering before persisting or executing the
+		// plan. An interrupted batch must never leave a still-live backup
+		// after its planned remote WAL has already been retired.
+		if v.Kind == "retire-wal" {
+			walRetirement = true
+		}
+		if v.Kind == "retire-backup" && walRetirement {
+			return ErrInvalid
+		}
 		if e = g.validateVictim(ctx, v, retired); e != nil {
 			return e
 		}
 		if v.Kind == "retire-backup" {
 			uid := *v.BackupUID
-			e = scanEntries(f, func(en Entry) error {
+			e = scanEntries(ctx, f, func(en Entry) error {
 				if !en.Retired && en.Commit.ParentBackupUID != nil && *en.Commit.ParentBackupUID == uid && !retired[en.Commit.BackupUID] {
 					return ErrBlocked
 				}
@@ -385,13 +395,14 @@ func (r *Repository) WALKey(name string) (string, error) {
 	return fmt.Sprintf("%swal/%08X/%s", r.root, timeline, name), nil
 }
 func (r *Repository) putWALTombstone(ctx context.Context, key string, b []byte, etag string) (s3store.Info, error) {
+	// As with put, spool failures are definitive only BEFORE dispatch.
 	f, e := r.temp()
 	if e != nil {
-		return s3store.Info{}, e
+		return s3store.Info{}, &s3store.Error{Kind: s3store.LocalIO}
 	}
 	defer removeFile(f)
 	if _, e = f.Write(b); e != nil {
-		return s3store.Info{}, e
+		return s3store.Info{}, &s3store.Error{Kind: s3store.LocalIO}
 	}
 	return r.store.PutFile(ctx, key, f, s3store.Integrity{Size: int64(len(b)), SHA256: digest(b)}, s3store.Condition{Match: etag}, map[string]string{"cnpg-format": "wal-retired-v1"})
 }
