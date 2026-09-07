@@ -76,7 +76,8 @@
                       "prefix": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 512,
+                        "maxLength": 128,
+                        "pattern": "^([\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*[\\x20-\\x22\\x24\\x26-\\x2d\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e][\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*|\\.{3,})(/([\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*[\\x20-\\x22\\x24\\x26-\\x2d\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e][\\x20-\\x22\\x24\\x26-\\x2e\\x30-\\x3e\\x40-\\x5b\\x5d-\\x7e]*|\\.{3,}))*$",
                         "x-kubernetes-validations": [
                           {
                             "rule": "self == oldSelf",

@@ -45,10 +45,16 @@ def schema():
     selector = obj({'name': string(minLength=1, maxLength=253, pattern=r'^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
                     'key': string(minLength=1, maxLength=253, pattern=r'^[-._a-zA-Z0-9]+$')}, ('name', 'key'))
     immutable = {'x-kubernetes-validations': [{'rule': 'self == oldSelf', 'message': 'storage identity is immutable; create a new Repository'}]}
+    # Printable ASCII excluding /, backslash, %, ? and #, matching s3store.
+    # A segment either contains a non-dot character or is at least three dots;
+    # this excludes empty, '.' and '..' segments without RE2 lookarounds.
+    safe = r'[\x20-\x22\x24\x26-\x2e\x30-\x3e\x40-\x5b\x5d-\x7e]'
+    non_dot = r'[\x20-\x22\x24\x26-\x2d\x30-\x3e\x40-\x5b\x5d-\x7e]'
+    segment = rf'({safe}*{non_dot}{safe}*|\.{{3,}})'
     s3 = {
         'endpoint': string(minLength=9, maxLength=2048, pattern=r'^https://[^/@?#]+/?$', **immutable),
         'bucket': string(minLength=3, maxLength=63, pattern=r'^[a-z0-9][a-z0-9.-]*[a-z0-9]$', **immutable),
-        'prefix': string(minLength=1, maxLength=512, **immutable),
+        'prefix': string(minLength=1, maxLength=128, pattern=rf'^{segment}(/{segment})*$', **immutable),
         'signature': string('v4', ['v2', 'v4'], **immutable), 'addressing': string('path', ['path'], **immutable),
         'region': string('us-east-1', minLength=1, maxLength=64, **immutable),
         'encryption': string('bucket-default', ['bucket-default']),

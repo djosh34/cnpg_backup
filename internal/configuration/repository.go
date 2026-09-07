@@ -114,8 +114,15 @@ func (s Spec) Validate() error {
 	if len(validation.IsDNS1123Subdomain(s.S3.Bucket)) != 0 || len(s.S3.Bucket) < 3 || len(s.S3.Bucket) > 63 {
 		return fail("s3.bucket")
 	}
-	if s.S3.Prefix == "" || len(s.S3.Prefix) > 512 || path.Clean(s.S3.Prefix) != s.S3.Prefix || strings.HasPrefix(s.S3.Prefix, "/") || strings.ContainsAny(s.S3.Prefix, "\\\x00\n\r") || s.S3.Prefix == "." || s.S3.Prefix == ".." || strings.HasPrefix(s.S3.Prefix, "../") {
+	// Match s3store's safe printable-ASCII path contract; Repository requires
+	// a nonempty prefix even though the low-level adapter permits bucket root.
+	if s.S3.Prefix == "" || len(s.S3.Prefix) > 128 || path.Clean(s.S3.Prefix) != s.S3.Prefix || strings.HasPrefix(s.S3.Prefix, "/") || strings.ContainsAny(s.S3.Prefix, "\\%?#") || s.S3.Prefix == "." || s.S3.Prefix == ".." || strings.HasPrefix(s.S3.Prefix, "../") {
 		return fail("s3.prefix")
+	}
+	for _, c := range s.S3.Prefix {
+		if c < 32 || c > 126 {
+			return fail("s3.prefix")
+		}
 	}
 	if s.S3.Signature != "v2" && s.S3.Signature != "v4" {
 		return fail("s3.signature")

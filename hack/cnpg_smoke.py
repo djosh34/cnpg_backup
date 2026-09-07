@@ -549,6 +549,8 @@ def recovery_placement_matrix(cluster, repository, report):
         logs = kube('logs', job['metadata']['name'], '-n', NS, '-c', 'full-recovery', check=False)
         save_log(name + '-main.log', logs)
         (OUT / (name + '-pod.json')).write_text(json.dumps(pod_evidence(job), indent=2))
+        termination = next(c for c in job['status']['containerStatuses'] if c['name'] == 'full-recovery')['state']['terminated']
+        assert termination['exitCode'] != 0, name + ': full-recovery must terminate with a nonzero exit'
         if poison:
             assert 'TargetOwnershipUncertain' in logs, logs[-4000:]
             assert 'cleaning up existing' not in logs
@@ -560,6 +562,10 @@ def recovery_placement_matrix(cluster, repository, report):
             # admits even a fresh owner. CNPG itself deletes the invalid seeded
             # PGDATA/WAL, then reports unsupported plugin materialization.
             assert 'cleaning up existing data directory' in logs and 'cleaning up existing WAL directory' in logs, logs[-6000:]
+            records = [json.loads(line) for line in logs.splitlines() if line.startswith('{')]
+            assert any(record.get('level') == 'error' and record.get('msg') == 'restore error'
+                       and record.get('error') == 'while restoring cluster: no plugin supports the restore job hooks capability'
+                       for record in records), 'fresh recovery must fail for unsupported materialization: ' + logs[-6000:]
             for role in ('pgdata', 'wal'):
                 path, directory = backing[role]
                 run('docker', 'exec', NAME + '-control-plane', 'test', '!', '-e', path + '/' + directory + '/preflight-sentinel')

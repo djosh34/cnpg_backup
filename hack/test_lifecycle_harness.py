@@ -149,6 +149,80 @@ class LifecycleHarness(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaisesRegex((RuntimeError, AssertionError), error):
                 self.native_matrix(fault)
 
+    def replay_recovery_matrix(self, report, zero_exits=(), wrong_cause=None):
+        observations = json.loads((Path(__file__).parent / 'testdata/recovery-placement/observations.json').read_text())
+        state = {'case': None, 'pv': 0, 'file_checks': []}
+        def apply(document):
+            if document.get('kind') == 'Cluster':
+                state['case'] = document['metadata']['name'].removeprefix('recover-')
+        def kube(*args, **kwargs):
+            case = state['case']
+            if args[:2] == ('get', 'pv'):
+                state['pv'] += 1
+                return json.dumps({'items': [{'metadata': {'name': 'fixture-' + str(state['pv'])},
+                    'spec': {'storageClassName': 'cnpg-backup-bounded', 'local': {'path': '/fixture/' + str(state['pv'])}},
+                    'status': {'phase': 'Available'}}]})
+            if args[:2] == ('get', 'pods'):
+                containers = copy.deepcopy(observations[case]['containers'])
+                main = next(c for c in containers if c['name'] == 'full-recovery')
+                if case in zero_exits:
+                    main['state']['terminated'].update(exitCode=0, reason='Completed')
+                return json.dumps({'items': [{'metadata': {'name': 'recover-' + case, 'uid': 'fixture-uid'},
+                    'spec': {'containers': [{'name': 'full-recovery', 'command': [
+                        '/cnpg-backup/bin/cnpg-backup', 'recovery-guard', '--', '/controller/manager', 'instance', 'restore']}]},
+                    'status': {'containerStatuses': [main], 'initContainerStatuses': [c for c in containers if c != main]}}]})
+            if args[0] == 'logs':
+                logs = observations[case]['logs']
+                if case == 'fresh' and wrong_cause is not None:
+                    logs = logs.replace('no plugin supports the restore job hooks capability', wrong_cause)
+                return logs
+            self.assertIn(args[0], ('patch', 'annotate', 'delete'))
+            return ''
+        def run(*args, **kwargs):
+            self.assertEqual(args[:3], ('docker', 'exec', cnpg_smoke.NAME + '-control-plane'))
+            if args[3] == 'sh':
+                self.assertEqual(args[4], '-ec')  # Fixture seeding only.
+                return ''
+            self.assertEqual(args[3], 'test')
+            state['file_checks'].append((state['case'], args[4:]))
+            if state['case'] == 'fresh':
+                self.assertEqual(args[4:6], ('!', '-e'))
+            else:
+                self.assertEqual(args[4], '-f')
+                self.assertTrue(args[-1].endswith('/preflight-sentinel'))
+            return ''
+        def wait(test, description, *args):
+            self.assertTrue(test(), description)
+        cluster = {'kind': 'Cluster', 'metadata': {}, 'spec': {'plugins': [{'parameters': {}}]}}
+        repository = {'kind': 'Repository', 'metadata': {}, 'spec': {}}
+        with tempfile.TemporaryDirectory() as temp, patch.object(cnpg_smoke, 'OUT', Path(temp)), \
+                patch.object(cnpg_smoke, 'apply', side_effect=apply), patch.object(cnpg_smoke, 'kube', side_effect=kube), \
+                patch.object(cnpg_smoke, 'run', side_effect=run), patch.object(cnpg_smoke, 'wait', side_effect=wait):
+            cnpg_smoke.recovery_placement_matrix(cluster, repository, report)
+        self.assertEqual(len(state['file_checks']), 14)  # 3 per poison, 2 preflight + 3 clean Drain markers.
+
+    def test_recovery_matrix_saved_real_failures_complete_all_four_cases(self):
+        report = {'completed': []}
+        self.replay_recovery_matrix(report)
+        self.assertEqual(report['completed'], list(cnpg_smoke.MANDATORY_SCENARIOS[10:14]))
+
+    def test_recovery_matrix_rejects_zero_main_exits_before_completion(self):
+        cases = ('pgdata', 'wal', 'tablespace', 'fresh')
+        for changed in [(case,) for case in cases] + [cases]:
+            with self.subTest(changed=changed):
+                report = {'completed': []}
+                with self.assertRaisesRegex(AssertionError, 'full-recovery.*nonzero'):
+                    self.replay_recovery_matrix(report, zero_exits=changed)
+                self.assertEqual(report['completed'], list(cnpg_smoke.MANDATORY_SCENARIOS[10:10 + cases.index(changed[0])]))
+
+    def test_recovery_matrix_rejects_wrong_fresh_failure_cause_before_completion(self):
+        for cause in ('unrelated certificate failure', 'TargetOwnershipUncertain', ''):
+            with self.subTest(cause=cause):
+                report = {'completed': []}
+                with self.assertRaisesRegex(AssertionError, 'unsupported materialization'):
+                    self.replay_recovery_matrix(report, wrong_cause=cause)
+                self.assertEqual(report['completed'], list(cnpg_smoke.MANDATORY_SCENARIOS[10:13]))
+
     def test_expected_command_failure_cannot_pass_on_diagnostic_text_alone(self):
         result = subprocess.CompletedProcess([], 0, stdout='unsupported actual PostgreSQL')
         with patch.object(cnpg_smoke.subprocess, 'run', return_value=result):

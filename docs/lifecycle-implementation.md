@@ -19,6 +19,8 @@ The frozen design and issue resolution comments remain authoritative.
   next namespace and restart later. No informer/framework or Secret watch.
   `Ready`/`Invalid`, observedGeneration and validated nonsecret configuration hash
   describe configuration only, **not storage health or native capacity**.
+  Repository prefixes are explicitly supplied, immutable, 1–128 printable ASCII
+  bytes, with the same safe path segments/characters as the storage adapter.
   RetentionBlocked is Unknown until storage/retention exists. Status patches use
   resourceVersion; unchanged results do not churn. Warning ConfigurationInvalid
   is throttled per Repository to5m with the throttle persisted before best-effort
@@ -132,8 +134,11 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
   server-leaf/private-CA overlap, defaulted live config/image rollout and uninstall.
 - Actual CNPG-generated recovery Jobs test poison on each target volume before
   CNPG preflight and a fresh/all-fresh-PVC Begin → actual CNPG preflight → clean
-  Drain case. Unavailable materialization must still fail; this is **not** a
-  full restore/replay test. Full data/replay/pause/crash integration extends in G.
+  Drain case. Every negative case requires the actual `full-recovery` main's
+  nonzero termination; the fresh case also requires CNPG's specific missing
+  restore-job-hooks capability error. Unavailable materialization must still
+  fail; this is **not** a full restore/replay test. Full data/replay/pause/crash
+  integration extends in G.
 - The smoke collector captures allowlisted Pod/container status (including last
   termination), bounded current/previous container logs and fault-setting stages.
   Two disposable namespaces, a60s total request budget and64KiB/container-log cap;
@@ -218,6 +223,19 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
    the original error and checks initialized progress, deadline/cancellation and
    unrelated-error negative controls. This does not establish the cause of C's
    historical failure whose original setup diagnostics were discarded.
+
+10. Fresh recheck at38ef343 found D-RSPEC-1/2: Repository validation/schema
+    admitted unusable prefixes, and recovery placement could report completion
+    with a zero main exit or an unrelated fresh-recovery failure. Regressions
+    first reproduced both. Go/defaulted decoding and generated CRD now enforce
+    the frozen128-byte ASCII safe-path contract; tests compare the actual S3
+    constructor without network operations, preserving explicit-prefix and
+    immutability rules. Saved real34090997211 main observations replay through
+    the actual full recovery matrix: original2/2/2/1 failures pass; each zero
+    exit, all-zero exits and wrong fresh failure causes cannot add completion.
+    Existing preflight/no-mutation/marker/drain assertions remain. Local full
+    Go/Python suites, vet, CRD generation and static/native-root build checks
+    pass; fresh current-SHA hosted checks/reviews remain orchestrator gates.
 
 C mergecca29ed was reconciled into D at3074da6 without conflicts; both MinIO
 integration targets and D's guard/CNPG entry points remain. Repository/S3 product

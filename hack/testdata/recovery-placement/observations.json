@@ -1,0 +1,253 @@
+{
+  "pgdata": {
+    "containers": [
+      {
+        "name": "bootstrap-controller",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/cloudnative-pg@sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:27Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:27Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup-socket-init",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:28Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:28Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "running": {
+            "startedAt": "2026-09-07T06:36:29Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "full-recovery",
+        "ready": false,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/postgresql@sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4",
+        "state": {
+          "terminated": {
+            "exitCode": 2,
+            "finishedAt": "2026-09-07T06:36:31Z",
+            "reason": "Error",
+            "startedAt": "2026-09-07T06:36:31Z"
+          }
+        },
+        "lastState": {}
+      }
+    ],
+    "logs": "recovery-guard: TargetOwnershipUncertain: retry with a fresh Cluster and all fresh target PVCs"
+  },
+  "wal": {
+    "containers": [
+      {
+        "name": "bootstrap-controller",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/cloudnative-pg@sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:36Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:36Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup-socket-init",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:37Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:37Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "running": {
+            "startedAt": "2026-09-07T06:36:38Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "full-recovery",
+        "ready": false,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/postgresql@sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4",
+        "state": {
+          "terminated": {
+            "exitCode": 2,
+            "finishedAt": "2026-09-07T06:36:40Z",
+            "reason": "Error",
+            "startedAt": "2026-09-07T06:36:40Z"
+          }
+        },
+        "lastState": {}
+      }
+    ],
+    "logs": "recovery-guard: TargetOwnershipUncertain: retry with a fresh Cluster and all fresh target PVCs"
+  },
+  "tablespace": {
+    "containers": [
+      {
+        "name": "bootstrap-controller",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/cloudnative-pg@sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:46Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:46Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup-socket-init",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:46Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:46Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "running": {
+            "startedAt": "2026-09-07T06:36:47Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "full-recovery",
+        "ready": false,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/postgresql@sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4",
+        "state": {
+          "terminated": {
+            "exitCode": 2,
+            "finishedAt": "2026-09-07T06:36:49Z",
+            "reason": "Error",
+            "startedAt": "2026-09-07T06:36:49Z"
+          }
+        },
+        "lastState": {}
+      }
+    ],
+    "logs": "recovery-guard: TargetOwnershipUncertain: retry with a fresh Cluster and all fresh target PVCs"
+  },
+  "fresh": {
+    "containers": [
+      {
+        "name": "bootstrap-controller",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/cloudnative-pg@sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:56Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:56Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup-socket-init",
+        "ready": true,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:36:56Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:56Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "cnpg-backup",
+        "ready": false,
+        "restartCount": 0,
+        "imageID": "docker.io/library/cnpg-backup-smoke-rollout@sha256:ad5fcbb8ebadd7cd202d38b94ed3953a831111b1905e1214ab1cce3589029881",
+        "state": {
+          "terminated": {
+            "exitCode": 0,
+            "finishedAt": "2026-09-07T06:37:00Z",
+            "reason": "Completed",
+            "startedAt": "2026-09-07T06:36:57Z"
+          }
+        },
+        "lastState": {}
+      },
+      {
+        "name": "full-recovery",
+        "ready": false,
+        "restartCount": 0,
+        "imageID": "ghcr.io/cloudnative-pg/postgresql@sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4",
+        "state": {
+          "terminated": {
+            "exitCode": 1,
+            "finishedAt": "2026-09-07T06:37:00Z",
+            "reason": "Error",
+            "startedAt": "2026-09-07T06:36:59Z"
+          }
+        },
+        "lastState": {}
+      }
+    ],
+    "logs": "{\"level\":\"info\",\"ts\":\"2026-09-07T06:36:59.947840486Z\",\"msg\":\"Starting webserver\",\"logging_pod\":\"recover-fresh-1-full-recovery\",\"address\":\"localhost:8010\",\"hasTLS\":false}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.049979238Z\",\"msg\":\"pg_controldata check on existing directory failed, cleaning up folders\",\"pgdata\":\"/var/lib/postgresql/data/pgdata\",\"logging_pod\":\"recover-fresh-1-full-recovery\",\"err\":\"while executing pg_controldata: exit status 1\",\"out\":\"\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.050009394Z\",\"msg\":\"cleaning up existing data directory\",\"pgdata\":\"/var/lib/postgresql/data/pgdata\",\"pgwal\":\"/var/lib/postgresql/wal/pg_wal\",\"logging_pod\":\"recover-fresh-1-full-recovery\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.050159333Z\",\"msg\":\"cleaning up existing WAL directory\",\"pgdata\":\"/var/lib/postgresql/data/pgdata\",\"pgwal\":\"/var/lib/postgresql/wal/pg_wal\",\"logging_pod\":\"recover-fresh-1-full-recovery\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.050402927Z\",\"msg\":\"Restore through plugin detected, proceeding...\",\"logging_pod\":\"recover-fresh-1-full-recovery\"}\n{\"level\":\"error\",\"ts\":\"2026-09-07T06:37:00.052398576Z\",\"msg\":\"Error while restoring a backup\",\"logging_pod\":\"recover-fresh-1-full-recovery\",\"error\":\"no plugin supports the restore job hooks capability\",\"stacktrace\":\"github.com/cloudnative-pg/machinery/pkg/log.(*logger).Error\\n\\tpkg/mod/github.com/cloudnative-pg/machinery@v0.5.0/pkg/log/log.go:128\\ngithub.com/cloudnative-pg/cloudnative-pg/internal/cmd/manager/instance/restore.restoreSubCommand\\n\\tinternal/cmd/manager/instance/restore/restore.go:79\\ngithub.com/cloudnative-pg/cloudnative-pg/internal/cmd/manager/instance/restore.(*restoreRunnable).Start\\n\\tinternal/cmd/manager/instance/restore/restore.go:62\\nsigs.k8s.io/controller-runtime/pkg/manager.(*runnableGroup).reconcile.func1\\n\\tpkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/manager/runnable_group.go:260\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.052480669Z\",\"msg\":\"Stopping and waiting for non leader election runnables\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.052490076Z\",\"msg\":\"Stopping and waiting for leader election runnables\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.052492484Z\",\"msg\":\"Stopping and waiting for warmup runnables\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.05254994Z\",\"msg\":\"Webserver exited\",\"logging_pod\":\"recover-fresh-1-full-recovery\",\"address\":\"localhost:8010\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.052580658Z\",\"msg\":\"Stopping and waiting for caches\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.052623648Z\",\"msg\":\"Stopping and waiting for webhooks\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.052634879Z\",\"msg\":\"Stopping and waiting for HTTP servers\"}\n{\"level\":\"info\",\"ts\":\"2026-09-07T06:37:00.052640279Z\",\"msg\":\"Wait completed, proceeding to shutdown the manager\"}\n{\"level\":\"error\",\"ts\":\"2026-09-07T06:37:00.052649506Z\",\"msg\":\"restore error\",\"logging_pod\":\"recover-fresh-1-full-recovery\",\"error\":\"while restoring cluster: no plugin supports the restore job hooks capability\",\"stacktrace\":\"github.com/cloudnative-pg/machinery/pkg/log.(*logger).Error\\n\\tpkg/mod/github.com/cloudnative-pg/machinery@v0.5.0/pkg/log/log.go:128\\ngithub.com/cloudnative-pg/cloudnative-pg/internal/cmd/manager/instance/restore.NewCmd.func1\\n\\tinternal/cmd/manager/instance/restore/cmd.go:101\\ngithub.com/spf13/cobra.(*Command).execute\\n\\tpkg/mod/github.com/spf13/cobra@v1.10.2/command.go:1015\\ngithub.com/spf13/cobra.(*Command).ExecuteC\\n\\tpkg/mod/github.com/spf13/cobra@v1.10.2/command.go:1148\\ngithub.com/spf13/cobra.(*Command).Execute\\n\\tpkg/mod/github.com/spf13/cobra@v1.10.2/command.go:1071\\nmain.main\\n\\tcmd/manager/main.go:71\\nruntime.main\\n\\t/opt/hostedtoolcache/go/1.26.4/x64/src/runtime/proc.go:290\"}"
+  }
+}
