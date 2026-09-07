@@ -88,6 +88,10 @@ from the checksum-verified module cache:
 - `api-put-object-multipart.go` parses embedded errors in HTTP 200 completion.
   The adapter also consumes every bounded control response before SDK handling,
   because SDK `closeResponse` discards drain errors (including DELETE responses).
+  Nonempty control bodies must contain one entire XML document, not merely a
+  decodable first root; trailing junk/extra roots fail closed, including embedded
+  completion errors and bucket configuration absence. S3 needs no DTD; directives
+  are rejected. XML declarations, comments and surrounding whitespace are allowed.
 - `api-list.go` Core part pages retain quoted ETags; the adapter strips only the
   S3 quotes before validating opaque tokens. Missing/malformed list roots and
   truncation markers must not produce a false empty inventory.

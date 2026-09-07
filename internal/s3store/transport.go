@@ -122,12 +122,13 @@ func (t *transport) once(r *http.Request, dataGet bool) (*http.Response, error) 
 	if len(b) > responseLimit {
 		return nil, failure(Limit)
 	}
+	validXML := validXMLDocument(b)
 	if resp.StatusCode >= 400 {
 		var wire struct {
 			XMLName xml.Name
 			Code    string
 		}
-		parsed := xml.Unmarshal(b, &wire) == nil && wire.XMLName.Local == "Error"
+		parsed := validXML && xml.Unmarshal(b, &wire) == nil && wire.XMLName.Local == "Error"
 		code := wire.Code
 		// HEAD has no XML body and cannot distinguish missing bucket from key.
 		if r.Method == "HEAD" && resp.StatusCode == 403 {
@@ -157,6 +158,10 @@ func (t *transport) once(r *http.Request, dataGet bool) (*http.Response, error) 
 		if !parsed {
 			return nil, failure(Unknown)
 		}
+	} else if len(b) != 0 && !validXML {
+		// Include SDK-decoded responses, notably HTTP 200 MPU completion
+		// (success or embedded Error), before the SDK can infer an outcome.
+		return nil, failure(Corrupt)
 	}
 	if resp.StatusCode == 200 && r.Method == "GET" {
 		q := r.URL.Query()
@@ -207,6 +212,45 @@ func (t *transport) once(r *http.Request, dataGet bool) (*http.Response, error) 
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(b))
 	return resp, nil
+}
+
+// validXMLDocument checks the entire already-bounded control body. Decode and
+// Unmarshal stop after the first root, accepting leading text or trailing junk.
+// S3 needs no DTD; reject directives rather than interpreting entity declarations.
+func validXMLDocument(b []byte) bool {
+	d := xml.NewDecoder(bytes.NewReader(b))
+	depth, roots := 0, 0
+	for {
+		offset := d.InputOffset()
+		token, err := d.Token()
+		if err != nil {
+			return err == io.EOF && depth == 0 && roots == 1
+		}
+		switch v := token.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				roots++
+				if roots > 1 {
+					return false
+				}
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			// Outside the root only literal XML whitespace is allowed, not
+			// character references or CDATA that happen to decode to it.
+			if depth == 0 && len(bytes.Trim(b[offset:d.InputOffset()], " \t\r\n")) != 0 {
+				return false
+			}
+		case xml.ProcInst:
+			if strings.EqualFold(v.Target, "xml") && (v.Target != "xml" || offset != 0) {
+				return false
+			}
+		case xml.Directive:
+			return false
+		}
+	}
 }
 
 type releaseBody struct {
