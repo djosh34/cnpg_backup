@@ -180,6 +180,36 @@ def assert_placement():
         kube('exec', '-n', NS, pod['metadata']['name'], '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-capacity')
 
 
+def native_metadata_matrix(report):
+    primary = None
+    for pod in main_pods():
+        name = pod['metadata']['name']
+        standby = kube('exec', '-n', NS, name, '-c', 'postgres', '--', 'psql', '-U', 'postgres', '-d', 'postgres', '-Atqc',
+                       'SELECT pg_is_in_recovery()').strip() == 't'
+        result = kube('exec', '-n', NS, name, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native', check=False)
+        (OUT / (name + '-native-preflight.log')).write_text(result)
+        if standby:
+            assert 'unsupported actual PostgreSQL' in result, result
+        else:
+            assert 'error' not in result.lower() and 'failed' not in result.lower() and 'sidecar:' not in result, result
+            primary = name
+    assert primary, 'no primary native authentication was tested'
+    # Test-only superuser oracle changes the actual setting, without changing
+    # plugin validation or using superuser/password fallback in product code.
+    def sql(command):
+        return kube('exec', '-n', NS, primary, '-c', 'postgres', '--', 'psql', '-U', 'postgres', '-d', 'postgres', '-Atqc', command)
+    sql("ALTER SYSTEM SET summarize_wal = 'off'")
+    sql('SELECT pg_reload_conf()')
+    wait(lambda: sql('SHOW summarize_wal').strip() == 'off', 'actual disabled WAL summaries')
+    result = kube('exec', '-n', NS, primary, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native', check=False)
+    assert 'unsupported actual PostgreSQL' in result, result
+    sql('ALTER SYSTEM RESET summarize_wal')
+    sql('SELECT pg_reload_conf()')
+    wait(lambda: sql('SHOW summarize_wal').strip() == 'on', 'restore CNPG summary settings')
+    kube('exec', '-n', NS, primary, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native')
+    report['completed'].append('actual-native-streaming-replica-cert-local-SAN-auth-settings-control-layout-and-standby-rejection')
+
+
 def repository_status_matrix(report):
     def status_is(kind):
         obj = json.loads(kube('get', 'repository', 'destination', '-n', NS, '-o', 'json'))
@@ -435,6 +465,7 @@ def main():
                             'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
                             'walStorage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
                             'tablespaces': [{'name': 'fast_space', 'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'}}],
+                            'postgresql': {'parameters': {'summarize_wal': 'on', 'wal_summary_keep_time': '14d', 'archive_timeout': '60s'}},
                             'plugins': [{'name': 'cnpg-backup.djosh34.github.io', 'parameters': {'repository': 'destination'}}]}}
         # Discovery is asynchronous in the real operator. Use its actual
         # validating admission path as the startup barrier, before creating data.
@@ -450,6 +481,7 @@ def main():
         kube('wait', '-n', NS, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
         assert_placement()
         report['completed'].append('real-CNPG-1.30-two-instance-initdb-join-WAL-tablespace-startup-and-CRD-CEL')
+        native_metadata_matrix(report)
         repository_status_matrix(report)
         capacity_matrix(data, report)
         before = pod_uids()

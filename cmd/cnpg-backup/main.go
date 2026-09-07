@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/djosh34/cnpg_backup/internal/cnpgi"
+	"github.com/djosh34/cnpg_backup/internal/postgres"
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
 )
 
@@ -43,6 +44,8 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 			var err error
 			if len(args) == 2 && args[1] == "--prepare-socket" && args[0] == "instance" {
 				err = cnpgi.PrepareSocket()
+			} else if len(args) == 2 && args[1] == "--check-native" && args[0] == "instance" {
+				err = postgres.Check(ctx, "/cnpg-backup/projection")
 			} else if len(args) == 2 && args[1] == "--check-capacity" {
 				err = cnpgi.CheckMountedCapacity()
 			} else if len(args) == 2 && args[1] == "--probe" {
@@ -54,7 +57,7 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 				return 2
 			}
 			if err != nil {
-				fmt.Fprintln(errOut, "sidecar: startup/probe failed")
+				fmt.Fprintln(errOut, "sidecar:", err)
 				return 2
 			}
 			return 0

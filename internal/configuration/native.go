@@ -23,10 +23,12 @@ func LoadCaptureSnapshot(directory string) (*CaptureSnapshot, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return loadCaptureSnapshot(root)
+	return LoadCaptureSnapshotFromRoot(root)
 }
 
-func loadCaptureSnapshot(root *os.Root) (*CaptureSnapshot, error) {
+// LoadCaptureSnapshotFromRoot lets native callers read connection/capacity from
+// that same already-open generation, never mix projected revisions.
+func LoadCaptureSnapshotFromRoot(root *os.Root) (*CaptureSnapshot, error) {
 	repo, err := loadRepositorySnapshot(root, "destination")
 	if err != nil {
 		return nil, err
@@ -83,7 +85,7 @@ func PreflightCapture(directory string) (*CaptureSnapshot, error) {
 		return nil, err
 	}
 	defer root.Close()
-	snapshot, err := loadCaptureSnapshot(root)
+	snapshot, err := LoadCaptureSnapshotFromRoot(root)
 	if err != nil {
 		return nil, err
 	}
