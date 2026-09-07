@@ -25,7 +25,7 @@ cp build/out/{go-linked.json,go-modules.json,go-version.txt,version.txt,manager-
 cp build/out/pg18/usr/share/cnpg-backup/{native-files.json,native-packages.json} artifacts/fast/
 if [[ $profile = integration ]]; then
   mkdir -p artifacts/s3
-  CNPG_S3_INTEGRATION=1 CNPG_S3_MINIO_BINARY="$CNPG_BUILD_CACHE/downloads/minio" \
+  CNPG_S3_ARTIFACT_DIR="$PWD/artifacts/s3" CNPG_S3_INTEGRATION=1 CNPG_S3_MINIO_BINARY="$CNPG_BUILD_CACHE/downloads/minio" \
     go test -json -count=1 -timeout=600s -run '^TestMinIOPrimitives$' ./internal/s3store \
     | tee artifacts/s3/minio-primitives.jsonl
   for arg in "$@"; do
