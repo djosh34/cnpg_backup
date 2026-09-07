@@ -15,7 +15,8 @@ The authoritative contract remains [testing.md](testing.md) and design §3–5.
   --profile recovery --seed 1806 --duration-minutes 120
 ```
 
-The campaign bypasses `hack/test`'s source-build pipeline. It pulls the supplied
+After the local fixture checks, the campaign bypasses `hack/test`'s source-build
+pipeline. It pulls the supplied
 canonical digests directly into kind, checks each binary's reported revision,
 and injects those exact images. There is **no subject rebuild or tag substitution**.
 The binary revision check is not release provenance/signature verification (J/K).
@@ -99,6 +100,17 @@ unchanged. Portable release archives and qualification remain later delivery wor
 | Crash, descendant, pending task, stale tuple | Kill actual guard/sidecar from the node's ancestor PID namespace and require observed137, poison and same-PVC refusal. Kill the actual CNPG command during replay, observe real orphaned/detached PG descendants under PID1 and require reaping before clean release. Hold a real source WAL task, pause its original sidecar, and require markers until that same process resumes/drains. An existing Unix WAL RPC carrying a stale incarnation must fail without target writes. Poison retry uses a fresh Cluster and all fresh PVC UIDs. |
 | Source protection and controller completion | Observe source lifetime + reader holders while an actual source input response is held, then through materialization/replay and manager restart. An uninterrupted clean completion removes only those owned holders, not crashed readers from prior cases. After manager restart SQL/own-reader drain must succeed but durable uncertainty and stable protection remain. For retries the observer fails the first attempt before CNPG preflight, lets the actual guard drain, then requires a real Job-controller replacement (completions/parallelism stay1); all matching/retry Pod containers must terminate before stable completion release. |
 
+The local-fallback positive also requires the native promotion `.partial` to be
+durably stored in the **new repository** as a distinct exact-segment-size
+auxiliary: downloaded bytes/metadata must match the verified bundle, PostgreSQL
+must mark `.partial.done`, and no old full-name slot may be manufactured. The
+subsequently switched complete new-timeline archive must independently match
+PostgreSQL's bytes; partial/history presence cannot replace that gate. Partials
+provide no full coverage, frontier or latest-timeline evidence and are retained
+conservatively, without GC pruning. This compatibility correction leaves all31
+families, source isolation and fatal255 rules intact; earlier campaign captures
+do not qualify the corrected image.
+
 The socket observer mounts the full plugin volume outside `/plugins`, verifies
 both aliases identify the original socket, and renames via two paths on that
 **same mount**. Renaming directly between the `/plugins` subPath bind mount and
@@ -140,7 +152,7 @@ proof still fails. If natural cleanup wins before durable observation,
 record that real uncertainty boundary and fail this normal-release case; neither
 readiness nor missing objects is fabricated release evidence. No pause/shutdown recovery-target API is
 advertised by this test. This is a single-node kind experiment, not multi-node
-storage/power-loss or Dell certification.
+storage/power-loss certification.
 
 ## Evidence, resource bounds and next execution
 
