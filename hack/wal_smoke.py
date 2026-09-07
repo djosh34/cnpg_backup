@@ -13,7 +13,8 @@ SCENARIOS = ('actual-cnpg-minio-segment-byte-oracle-and-duplicate-conflict',
              'actual-killed-partial-upload-no-ack-and-retry',
              'actual-transient-and-TLS-are-not-NotFound',
              'actual-finite-WAL-filesystem-full-restore-no-success',
-             'actual-WAL-lag-failure-observability')
+             'actual-WAL-lag-failure-observability',
+             'actual-low-space-archive-backlog-drains-without-restore-reservation')
 
 class WALFixture:
     def __init__(self, h, report):
@@ -214,9 +215,31 @@ class WALFixture:
                 return s['restartCount'] > sidecar['restartCount'] and s.get('ready', False)
             h.wait(restarted, 'killed upload sidecar starts fresh incarnation')
             assert self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '0', 'killed upload acknowledged while fault remains'
+            # Pressure only the bounded disposable WAL volume, while S3 is still
+            # unavailable. Archive reads this volume; its spools live elsewhere.
+            block, count, available = map(int, self.shell(pod, "stat -f -c '%S:%b:%a' pg_wal").strip().split(':'))
+            assert 0 < block * count <= 1 << 30 and block * available > 32 << 20
+            self.shell(pod, 'fallocate -l ' + str(block * available - (32 << 20)) + ' pg_wal/.wal-e-pressure')
+            pending = self.sql(pod, "SELECT string_agg(n, ',') FROM pg_ls_dir('pg_wal/archive_status') n WHERE n LIKE '%.ready'").split(',')
+            assert name + '.ready' in pending
+            sentinel = self.sql(pod, "SELECT md5(pg_read_binary_file('pg_wal/RECOVERYXLOG'))")
+            self.report['wal_low_space_pending'] = pending
         finally:
             self.control('')
-        h.wait(lambda: self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '1', 'actual retry after killed partial upload', 180)
+        try:
+            def drained():
+                return all(self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + n.removesuffix('.ready') + ".done'") == '1' for n in pending)
+            h.wait(drained, 'actual low-space backlog drains after S3 recovery', 180)
+            block, available = map(int, self.shell(pod, "stat -f -c '%S:%a' pg_wal").strip().split(':'))
+            assert block * available < 48 << 20, 'pressure disappeared before archive regression'
+            self.report['wal_low_space_drained'] = {'available_bytes': block * available, 'restore_required_bytes': 48 << 20, 'proxy': self.control()}
+            assert self.control()['mode'] == ''
+            result = self.rpc(pod, 'restore', name, expect='FailedPrecondition')
+            h.save_log('wal-low-space-restore-no-success.log', result)
+            assert self.sql(pod, "SELECT md5(pg_read_binary_file('pg_wal/RECOVERYXLOG'))") == sentinel
+            self.completed(SCENARIOS[6])
+        finally:
+            self.shell(pod, 'rm -f pg_wal/.wal-e-pressure')
         self.verify(pod, name)
         self.completed(SCENARIOS[2])
         h.wait(lambda: int(self.sql(pod, 'SELECT failed_count FROM pg_stat_archiver')) > failed_before, 'PostgreSQL failure counter observes killed upload')
