@@ -13,7 +13,10 @@ The frozen design and issue resolution comments remain authoritative.
   are checked, including new lifecycle/validation calls after startup. Deployment
   lookup has a separate get-only named-resource Role beside the operator.
 - A serial, paginated, namespace-allowlisted Repository status sweep uses one
-  object per5s tick and a30s pass deadline. No informer/framework or Secret watch.
+  object per5s tick and a30s pass deadline. Expired LIST snapshots resume with
+  the API's replacement continuation; independent configuration diagnostics do
+  not require a consistent catalog. Errors without a replacement yield to the
+  next namespace and restart later. No informer/framework or Secret watch.
   `Ready`/`Invalid`, observedGeneration and validated nonsecret configuration hash
   describe configuration only, **not storage health or native capacity**.
   RetentionBlocked is Unknown until storage/retention exists. Status patches use
@@ -164,6 +167,12 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
    templates from admitted live Pods, preserving all admission fields rather than
    special-casing a token mount. Local red/green evidence is retained in the
    author's `.work/fix-2`; exact-current-SHA hosted matrix remains pending.
+7. D-KISS-1: a one-object/five-second sweep outlived Kubernetes LIST snapshots,
+   repeatedly restarting before the tail. A virtual-time production-sweep
+   regression with200+3 Repositories, repeated five-minute expirations and a
+   transient API failure now reaches every status/Warning recipient twice in46
+   virtual minutes. Missing replacement/error paths yield namespaces without
+   writing uncertain status. No per-resource ledger or unbounded LIST was added.
 
 No production deployment/data/bucket operations, GitHub writes or reviewer/worker
 delegation were performed by this scoped author. Two fresh independent reviews

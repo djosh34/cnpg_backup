@@ -4,9 +4,11 @@ package cnpgi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -86,9 +88,14 @@ func (a *API) ReconcileRepositoryStatus(ctx context.Context, object *unstructure
 }
 
 // One bounded page per tick, serial API calls, no Secret watches, worker pool or
-// per-Repository in-memory ledger. Expired continuation tokens restart that
-// namespace; uncertain reads never update status. Total work has a 30s deadline.
+// per-Repository in-memory ledger. On snapshot expiration use the API's replacement
+// cursor: these independent status checks need not share a catalog snapshot.
+// Restart only when no replacement is available; never treat an uncertain page as
+// data. Total work has a 30s deadline.
 func (a *API) RunRepositoryStatus(ctx context.Context) {
+	if len(a.Namespaces) == 0 {
+		return
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	namespace, continuation := 0, ""
@@ -105,6 +112,10 @@ func (a *API) RunRepositoryStatus(ctx context.Context) {
 			continuation = list.GetContinue()
 		} else {
 			continuation = ""
+			var expired apierrors.APIStatus
+			if apierrors.IsResourceExpired(err) && errors.As(err, &expired) {
+				continuation = expired.Status().Continue
+			}
 		}
 		cancel()
 		if continuation == "" {
