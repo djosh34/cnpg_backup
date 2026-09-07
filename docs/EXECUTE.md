@@ -20,7 +20,7 @@ The owner selected automatic **versioned GitHub releases and qualified container
 - [Review contract](agents/review.md): load for every review, disposition and merge.
 - [Paseo lifecycle](agents/paseo.md): load **before creating, waiting for, resuming or cleaning up any subagent**.
 
-Newest owner directions override stale proposals. Git, issue resolutions, current PR/CI evidence and the latest progress comment are durable state; a model transcript is not.
+The [2026-09-07 owner policy update](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5576280720) supersedes frozen operational role/wait/evidence wording while preserving READY and product safety/release gates. Newest owner directions override stale proposals. Git, issue resolutions, current PR/CI evidence and the latest progress comment are durable state; a model transcript is not.
 
 ## Model and child lifecycle — mandatory
 
