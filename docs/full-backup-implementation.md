@@ -90,6 +90,11 @@ E's established node/CRI PID actor and proves restart before judging the outcome
 The downloaded SQL oracle also correlates capture-time acknowledged transactions
 with native stop LSN, and excludes a transaction written after artifact transfer
 began (without fetching later WAL).
+At `37c5be6`, both native callbacks succeeded but the ScheduledBackup finished in
+2.4 seconds on the now-clean fixture, before a poll observed native activity.
+The workload-overlap assertion correctly failed. Each capture now dirties the
+real load table before requesting its spread checkpoint; the native command and
+strict overlap/SQL assertions are unchanged.
 
 The harness records completed versus remaining fault families explicitly.
 Unexecuted SIGTERM/OOM/workspace/credential/late-commit and observability cases

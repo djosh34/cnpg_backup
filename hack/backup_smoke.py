@@ -87,6 +87,10 @@ def _run(h, wal, report, data_image, metrics):
         return item
     wal_serviced = False
     for name, kind in [('full-demand', 'Backup'), ('full-schedule', 'ScheduledBackup')]:
+        # The preceding full flushes almost every fixture page. Dirty the real
+        # load again so each spread checkpoint exposes an observable native
+        # phase, including the operator-created ScheduledBackup child.
+        wal.sql(pod, "UPDATE full_load SET payload=repeat(md5(n::text || '" + name + "'),128)")
         if kind == 'Backup':
             wal.control('hold-artifact-put')
         h.apply(definition(h, name, kind))
