@@ -41,6 +41,27 @@ type Repository struct {
 	gcNotBefore              time.Time
 }
 
+// OpenSource discovers immutable lineage metadata using only the configured
+// repository UUID and S3 credentials. No source Kubernetes catalog/system ID or
+// writer identity needs to have survived. It never initializes missing state.
+func OpenSource(ctx context.Context, s Storage, repositoryID, workspace string) (*Repository, error) {
+	if s == nil || !validID(repositoryID) {
+		return nil, ErrInvalid
+	}
+	b, _, e := s.Read(ctx, "v1/"+repositoryID+"/repository.json", smallLimit)
+	if e != nil {
+		return nil, e
+	}
+	var id Identity
+	if e = strict(b, smallLimit, &id); e != nil {
+		return nil, e
+	}
+	if id.Validate() != nil || id.RepositoryID != repositoryID {
+		return nil, ErrIdentity
+	}
+	return Open(ctx, s, id, workspace)
+}
+
 // Open checks immutable identity and an existing gate. It never initializes or
 // repairs one. A fresh Repository denotes a fresh process incarnation.
 func Open(ctx context.Context, s Storage, id Identity, workspace string) (*Repository, error) {

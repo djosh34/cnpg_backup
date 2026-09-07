@@ -77,7 +77,7 @@ func TestMinIORepository(t *testing.T) {
 			}
 			h1.Close(ctx)
 			h2.Close(ctx)
-			fresh, e := Open(ctx, s, identity(), t.TempDir())
+			fresh, e := OpenSource(ctx, s, repoID, t.TempDir())
 			if e != nil {
 				t.Fatal(e)
 			}

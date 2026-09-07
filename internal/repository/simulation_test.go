@@ -25,7 +25,7 @@ func TestDeterministicAdmissionDeletionSimulation(t *testing.T) {
 			requireOracle(t, s)
 			// Source controller disappears; an independent target still admits alongside
 			// the old paused holders using ONLY persisted storage and source config.
-			rr, e := Open(ctx, s, identity(), r.workspace)
+			rr, e := OpenSource(ctx, s, repoID, r.workspace)
 			if e != nil {
 				t.Fatal(e)
 			}
