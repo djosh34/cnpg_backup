@@ -5,7 +5,7 @@
     "name": "database-1",
     "namespace": "test",
     "annotations": {
-      "cnpg-backup.djosh34.github.io/config": "database-cb-76bb22c888ba",
+      "cnpg-backup.djosh34.github.io/config": "database-cb-1e3da321eb76",
       "cnpg-backup.djosh34.github.io/owner": "11111111-1111-4111-8111-111111111111"
     }
   },
@@ -53,7 +53,18 @@
           "sources": [
             {
               "configMap": {
-                "name": "database-cb-76bb22c888ba",
+                "name": "database-cb-1e3da321eb76",
+                "items": [
+                  {
+                    "key": "capacity.json",
+                    "path": "capacity.json"
+                  }
+                ]
+              }
+            },
+            {
+              "configMap": {
+                "name": "database-cb-1e3da321eb76",
                 "items": [
                   {
                     "key": "destination.json",
@@ -86,7 +97,7 @@
             },
             {
               "configMap": {
-                "name": "database-cb-76bb22c888ba",
+                "name": "database-cb-1e3da321eb76",
                 "items": [
                   {
                     "key": "source.json",

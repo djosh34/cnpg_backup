@@ -28,9 +28,10 @@ func coreResource(name string) schema.GroupVersionResource {
 // API is an uncached client, not an informer or cluster-wide Secret cache.
 // Secret names are independently constrained by install-time RBAC and this list.
 type API struct {
-	Client      dynamic.Interface
-	Namespaces  []string
-	SecretNames map[string][]string
+	OperatorNamespace string
+	Client            dynamic.Interface
+	Namespaces        []string
+	SecretNames       map[string][]string
 }
 
 func (a *API) Get(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error) {

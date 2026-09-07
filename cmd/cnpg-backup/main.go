@@ -43,6 +43,8 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 			var err error
 			if len(args) == 2 && args[1] == "--prepare-socket" && args[0] == "instance" {
 				err = cnpgi.PrepareSocket()
+			} else if len(args) == 2 && args[1] == "--check-capacity" {
+				err = cnpgi.CheckMountedCapacity()
 			} else if len(args) == 2 && args[1] == "--probe" {
 				err = cnpgi.Probe(ctx)
 			} else if len(args) == 1 {

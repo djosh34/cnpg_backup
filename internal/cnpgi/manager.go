@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -30,10 +29,11 @@ import (
 const managerTLSPath = "/cnpg-backup/tls"
 
 type ManagerConfig struct {
-	Namespaces  []string            `json:"namespaces"`
-	SecretNames map[string][]string `json:"secretNames"`
-	Image       string              `json:"image"`
-	ClientName  string              `json:"clientName"`
+	OperatorNamespace string              `json:"operatorNamespace"`
+	Namespaces        []string            `json:"namespaces"`
+	SecretNames       map[string][]string `json:"secretNames"`
+	Image             string              `json:"image"`
+	ClientName        string              `json:"clientName"`
 }
 type managerIdentity struct {
 	Identity
@@ -73,6 +73,9 @@ func validationError(err error) []*operator.ValidationError {
 	return []*operator.ValidationError{{PathComponents: []string{"spec", "plugins"}, Message: err.Error()}}
 }
 func (s Operator) ValidateClusterCreate(ctx context.Context, req *operator.OperatorValidateClusterCreateRequest) (*operator.OperatorValidateClusterCreateResult, error) {
+	if err := s.API.VerifyOperator(ctx); err != nil {
+		return &operator.OperatorValidateClusterCreateResult{ValidationErrors: validationError(err)}, nil
+	}
 	c, err := ParseCluster(req.Definition)
 	if err == nil {
 		_, _, err = s.API.ValidateRepositories(ctx, c)
@@ -80,6 +83,9 @@ func (s Operator) ValidateClusterCreate(ctx context.Context, req *operator.Opera
 	return &operator.OperatorValidateClusterCreateResult{ValidationErrors: validationError(err)}, nil
 }
 func (s Operator) ValidateClusterChange(ctx context.Context, req *operator.OperatorValidateClusterChangeRequest) (*operator.OperatorValidateClusterChangeResult, error) {
+	if err := s.API.VerifyOperator(ctx); err != nil {
+		return &operator.OperatorValidateClusterChangeResult{ValidationErrors: validationError(err)}, nil
+	}
 	old, err := ParseCluster(req.OldCluster)
 	var next Cluster
 	if err == nil {
@@ -121,6 +127,9 @@ func (s Lifecycle) LifecycleHook(ctx context.Context, req *lifecycle.OperatorLif
 	case lifecycle.OperatorOperationType_TYPE_CREATE, lifecycle.OperatorOperationType_TYPE_EVALUATE, lifecycle.OperatorOperationType_TYPE_UPDATE, lifecycle.OperatorOperationType_TYPE_PATCH:
 	default:
 		return nil, status.Error(codes.Unimplemented, "lifecycle operation unsupported")
+	}
+	if err := s.API.VerifyOperator(ctx); err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
 	c, err := ParseCluster(req.ClusterDefinition)
 	if err != nil {
@@ -178,7 +187,10 @@ func RunManager(ctx context.Context, revision string) error {
 	if err != nil {
 		return err
 	}
-	api := &API{Client: client, Namespaces: config.Namespaces, SecretNames: config.SecretNames}
+	api := &API{Client: client, Namespaces: config.Namespaces, SecretNames: config.SecretNames, OperatorNamespace: config.OperatorNamespace}
+	if err := api.VerifyOperator(ctx); err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", ":9090")
 	if err != nil {
 		return err
@@ -187,26 +199,14 @@ func RunManager(ctx context.Context, revision string) error {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 		return configuration.LoadManagerTLS(managerTLSPath, config.ClientName)
 	}}
-	// Check each NEW RPC against current trust too: a still-open transport is not
-	// permission to retain stale trust indefinitely after an invalid rotation.
-	authorize := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		current, err := configuration.LoadManagerTLS(managerTLSPath, config.ClientName)
-		p, ok := peer.FromContext(ctx)
-		if err != nil || !ok {
-			return nil, status.Error(codes.Unauthenticated, "manager trust unavailable")
-		}
-		tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
-		if !ok || configuration.VerifyClient(tlsInfo.State.PeerCertificates, current.ClientCAs, config.ClientName) != nil {
-			return nil, status.Error(codes.Unauthenticated, "manager client rejected")
-		}
-		requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		return handler(requestCtx, req)
-	}
+	authorize := configuration.ManagerAuthorization(managerTLSPath, config.ClientName)
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)), grpc.MaxRecvMsgSize(3<<20), grpc.MaxSendMsgSize(3<<20), grpc.MaxConcurrentStreams(16), grpc.UnaryInterceptor(authorize))
 	identity.RegisterIdentityServer(server, managerIdentity{Identity: Identity{Revision: revision}, clientName: config.ClientName})
 	operator.RegisterOperatorServer(server, Operator{API: api})
 	lifecycle.RegisterOperatorLifecycleServer(server, Lifecycle{API: api, Image: config.Image})
+	statusCtx, stopStatus := context.WithCancel(ctx)
+	defer stopStatus()
+	go api.RunRepositoryStatus(statusCtx)
 	done := make(chan struct{})
 	go func() {
 		select {

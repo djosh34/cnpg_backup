@@ -79,6 +79,10 @@ func LoadSnapshot(directory, role string) (*Snapshot, error) {
 		return nil, err
 	}
 	defer root.Close()
+	return loadRepositorySnapshot(root, role)
+}
+
+func loadRepositorySnapshot(root *os.Root, role string) (*Snapshot, error) {
 	data, err := Read(root, role+"/repository.json", 256<<10)
 	if err != nil {
 		return nil, err

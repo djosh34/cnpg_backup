@@ -552,6 +552,10 @@
                   "configurationHash": {
                     "type": "string"
                   },
+                  "lastWarningTime": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
                   "conditions": {
                     "type": "array",
                     "items": {

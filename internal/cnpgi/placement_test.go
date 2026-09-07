@@ -37,7 +37,7 @@ func unstruct(v any) *unstructured.Unstructured {
 }
 func fixture(t *testing.T, recovery bool) (*API, Cluster, core.Pod) {
 	t.Helper()
-	c, err := ParseCluster([]byte(`{"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","metadata":{"name":"database","namespace":"test","uid":"11111111-1111-4111-8111-111111111111"},"spec":{"imageName":"ghcr.io/cloudnative-pg/postgresql@` + DatabaseDigest + `","plugins":[{"name":"cnpg-backup.djosh34.github.io","parameters":{"repository":"destination"}}],"walStorage":{"size":"1Gi"},"tablespaces":[{"name":"fast_space"}]}}`))
+	c, err := ParseCluster([]byte(`{"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","metadata":{"name":"database","namespace":"test","uid":"11111111-1111-4111-8111-111111111111"},"spec":{"imageName":"ghcr.io/cloudnative-pg/postgresql@` + DatabaseDigest + `","plugins":[{"name":"cnpg-backup.djosh34.github.io","parameters":{"repository":"destination"}}],"storage":{"size":"1Gi"},"walStorage":{"size":"1Gi"},"tablespaces":[{"name":"fast_space","storage":{"size":"1Gi"}}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

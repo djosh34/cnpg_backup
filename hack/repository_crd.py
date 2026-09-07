@@ -81,6 +81,7 @@ def schema():
                      'message': string(), 'lastTransitionTime': string(format='date-time'), 'observedGeneration': {'type': 'integer', 'format': 'int64'}},
                     ('type', 'status', 'reason', 'message', 'lastTransitionTime'))
     status = obj({'observedGeneration': {'type': 'integer', 'format': 'int64'}, 'configurationHash': string(),
+                  'lastWarningTime': string(format='date-time'),
                   'conditions': {'type': 'array', 'items': condition, 'x-kubernetes-list-type': 'map', 'x-kubernetes-list-map-keys': ['type']}})
     return obj({'apiVersion': string(), 'kind': string(), 'metadata': {'type': 'object'}, 'spec': spec, 'status': status}, ('spec',))
 

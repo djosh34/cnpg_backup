@@ -38,7 +38,7 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
             spec['dnsNames'] = [service_name]
         objects.append(resource('cert-manager.io/v1', 'Certificate', f'cnpg-backup-{role}', namespace, spec=spec))
     manager_config = {'namespaces': [managed_namespace], 'secretNames': {managed_namespace: sorted(set(secret_names))},
-                      'image': data_image, 'clientName': 'cnpg-backup-client'}
+                      'image': data_image, 'clientName': 'cnpg-backup-client', 'operatorNamespace': namespace}
     objects.append(resource('v1', 'ConfigMap', 'cnpg-backup-manager', namespace, data={'config.json': json.dumps(manager_config)}))
     service = resource('v1', 'Service', 'cnpg-backup', namespace, spec={'selector': {'app': 'cnpg-backup'}, 'ports': [{'name': 'grpc', 'port': 9090, 'targetPort': 9090}]})
     service['metadata'].update(labels={'cnpg.io/pluginName': 'cnpg-backup.djosh34.github.io'}, annotations={
@@ -61,8 +61,15 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
                         {'name': 'tls', 'projected': {'defaultMode': 0o440, 'sources': [
                             {'secret': {'name': 'cnpg-backup-server-tls', 'items': [{'key': 'tls.crt', 'path': 'tls.crt'}, {'key': 'tls.key', 'path': 'tls.key'}]}},
                             {'secret': {'name': 'cnpg-backup-ca', 'items': [{'key': 'tls.crt', 'path': 'client-ca.crt'}]}}]}}]}}}))
+    objects.append(resource('rbac.authorization.k8s.io/v1', 'Role', 'cnpg-backup-version', namespace, rules=[
+        {'apiGroups': ['apps'], 'resources': ['deployments'], 'resourceNames': ['cnpg-controller-manager'], 'verbs': ['get']}]))
+    objects.append(resource('rbac.authorization.k8s.io/v1', 'RoleBinding', 'cnpg-backup-version', namespace,
+                            roleRef={'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'Role', 'name': 'cnpg-backup-version'},
+                            subjects=[{'kind': 'ServiceAccount', 'name': 'cnpg-backup', 'namespace': namespace}]))
     rules = [
-        {'apiGroups': ['backup.cnpg-backup.djosh34.github.io'], 'resources': ['repositories'], 'verbs': ['get']},
+        {'apiGroups': ['backup.cnpg-backup.djosh34.github.io'], 'resources': ['repositories'], 'verbs': ['get', 'list']},
+        {'apiGroups': ['backup.cnpg-backup.djosh34.github.io'], 'resources': ['repositories/status'], 'verbs': ['patch']},
+        {'apiGroups': [''], 'resources': ['events'], 'verbs': ['create']},
         {'apiGroups': ['postgresql.cnpg.io'], 'resources': ['clusters'], 'verbs': ['get']},
         {'apiGroups': [''], 'resources': ['persistentvolumeclaims'], 'verbs': ['get']},
         {'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['get', 'create']},

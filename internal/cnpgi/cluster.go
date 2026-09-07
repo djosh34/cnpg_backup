@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -25,14 +26,23 @@ type Cluster struct {
 	meta.TypeMeta `json:",inline"`
 	Metadata      meta.ObjectMeta `json:"metadata"`
 	Spec          struct {
-		ImageName   string          `json:"imageName"`
+		ImageName string `json:"imageName"`
+		Storage   struct {
+			Size string `json:"size"`
+		} `json:"storage"`
+		PostgreSQL struct {
+			Parameters map[string]string `json:"parameters"`
+		} `json:"postgresql"`
 		PostgresUID int64           `json:"postgresUID"`
 		PostgresGID int64           `json:"postgresGID"`
 		Plugins     []Plugin        `json:"plugins"`
 		Replica     json.RawMessage `json:"replica"`
 		WALStorage  json.RawMessage `json:"walStorage"`
 		Tablespaces []struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Storage struct {
+				Size string `json:"size"`
+			} `json:"storage"`
 		} `json:"tablespaces"`
 		Bootstrap struct {
 			Recovery *struct {
@@ -47,6 +57,7 @@ type Cluster struct {
 		Certificates struct {
 			ReplicationTLSSecret string `json:"replicationTLSSecret"`
 			ServerCASecret       string `json:"serverCASecret"`
+			ClientCASecret       string `json:"clientCASecret"`
 		} `json:"certificates"`
 	} `json:"spec"`
 }
@@ -71,6 +82,21 @@ func (c Cluster) Repositories() (destination, source string, err error) {
 	}
 	if !strings.HasSuffix(c.Spec.ImageName, "@"+DatabaseDigest) {
 		return "", "", errors.New("initial support requires the pinned PostgreSQL18.6 image digest")
+	}
+	seenTablespaces := map[string]bool{}
+	for _, t := range c.Spec.Tablespaces {
+		name := tablespaceVolume(t.Name)
+		if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`).MatchString(t.Name) || seenTablespaces[name] {
+			return "", "", errors.New("unsupported or colliding managed tablespace name")
+		}
+		seenTablespaces[name] = true
+	}
+	// Lifecycle does not require a running server. Explicit incompatible physical
+	// settings are rejected now; native preflight must still query actual settings
+	// (including defaulted values) before a capture can run.
+	p := c.Spec.PostgreSQL.Parameters
+	if (p["wal_level"] != "" && p["wal_level"] != "replica" && p["wal_level"] != "logical") || (p["full_page_writes"] != "" && p["full_page_writes"] != "on") || (p["summarize_wal"] != "" && p["summarize_wal"] != "on") {
+		return "", "", errors.New("incompatible PostgreSQL WAL settings")
 	}
 	for _, p := range c.Spec.Plugins {
 		if p.Name != recoveryguard.PluginName {
@@ -118,6 +144,13 @@ func (c Cluster) Repositories() (destination, source string, err error) {
 	}
 	return destination, source, nil
 }
+func tablespaceVolume(name string) string {
+	if strings.HasPrefix(name, "_") {
+		name = "1" + name[1:]
+	}
+	return "tbs-" + strings.ToLower(strings.NewReplacer("_", "-", "$", "-").Replace(name))
+}
+
 func (c Cluster) OperationUID() string {
 	bootstrap, _ := json.Marshal(c.Spec.Bootstrap)
 	hash := sha256.Sum256(append([]byte(string(c.Metadata.UID)+"\x00"), bootstrap...))

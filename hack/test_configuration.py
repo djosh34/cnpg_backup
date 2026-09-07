@@ -51,7 +51,7 @@ class ConfigurationManifests(unittest.TestCase):
         service = next(o for o in objects if o['kind'] == 'Service')
         self.assertEqual(service['metadata']['labels']['cnpg.io/pluginName'], 'cnpg-backup.djosh34.github.io')
         self.assertEqual(service['metadata']['annotations']['cnpg.io/pluginServerName'], 'cnpg-backup.cnpg-system.svc')
-        role = next(o for o in objects if o['kind'] == 'Role')
+        role = next(o for o in objects if o['kind'] == 'Role' and o['metadata']['name'] == 'cnpg-backup')
         secrets = next(r for r in role['rules'] if r['resources'] == ['secrets'])
         self.assertEqual(secrets['verbs'], ['get'])
         self.assertEqual(secrets['resourceNames'], ['auth'])

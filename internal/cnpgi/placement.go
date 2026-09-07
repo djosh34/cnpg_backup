@@ -96,6 +96,9 @@ func Place(ctx context.Context, api *API, c Cluster, object []byte, image string
 	return json.Marshal(changes)
 }
 func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metadata *meta.ObjectMeta, image string) error {
+	if err := uniquePlacementNames(spec); err != nil {
+		return err
+	}
 	if spec.HostPID || (spec.ShareProcessNamespace != nil && *spec.ShareProcessNamespace) {
 		return errors.New("private main PID namespace is required")
 	}
@@ -158,18 +161,16 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 		targets["pg-wal"] = "/var/lib/postgresql/wal"
 	}
 	for _, t := range c.Spec.Tablespaces {
-		name := t.Name
-		if strings.HasPrefix(name, "_") {
-			name = "1" + name[1:]
-		}
-		name = strings.ToLower(strings.NewReplacer("_", "-", "$", "-").Replace(name))
-		targets["tbs-"+name] = "/var/lib/postgresql/tablespaces/" + t.Name
+		targets[tablespaceVolume(t.Name)] = "/var/lib/postgresql/tablespaces/" + t.Name
 	}
 	guard := recoveryguard.Config{ClusterUID: string(c.Metadata.UID), OperationUID: c.OperationUID()}
 	dataMounts := []core.VolumeMount{}
 	for _, mount := range main.VolumeMounts {
 		expected, ok := targets[mount.Name]
 		if !ok {
+			if strings.HasPrefix(mount.Name, "tbs-") || strings.HasPrefix(mount.MountPath, "/var/lib/postgresql/") {
+				return errors.New("unmanaged or overlapping database mount")
+			}
 			continue
 		}
 		if mount.MountPath != expected || mount.SubPath != "" || mount.SubPathExpr != "" || mount.ReadOnly || mount.MountPropagation != nil {
@@ -224,7 +225,11 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 			return err
 		}
 	}
-	projection := map[string]string{"destination.json": jsonText(dst)}
+	capacity, err := placementCapacity(c, dst)
+	if err != nil {
+		return err
+	}
+	projection := map[string]string{"destination.json": jsonText(dst), "capacity.json": jsonText(capacity)}
 	if src != nil {
 		projection["source.json"] = jsonText(src)
 	}
@@ -233,7 +238,7 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	if err := api.EnsureProjection(ctx, c, configName, projection); err != nil {
 		return err
 	}
-	sources := []core.VolumeProjection{}
+	sources := []core.VolumeProjection{{ConfigMap: &core.ConfigMapProjection{LocalObjectReference: core.LocalObjectReference{Name: configName}, Items: []core.KeyToPath{{Key: "capacity.json", Path: "capacity.json"}}}}}
 	addRole := func(role string, s configuration.Spec) {
 		sources = append(sources, core.VolumeProjection{ConfigMap: &core.ConfigMapProjection{LocalObjectReference: core.LocalObjectReference{Name: configName}, Items: []core.KeyToPath{{Key: role + ".json", Path: role + "/repository.json"}}}})
 		for _, ref := range []struct {
@@ -262,10 +267,14 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 		if ca == "" {
 			ca = c.Metadata.Name + "-ca"
 		}
+		clientCA := c.Spec.Certificates.ClientCASecret
+		if clientCA == "" {
+			clientCA = c.Metadata.Name + "-ca"
+		}
 		for _, ref := range []struct {
 			name  string
 			items []core.KeyToPath
-		}{{replication, []core.KeyToPath{{Key: "tls.crt", Path: "native/tls.crt"}, {Key: "tls.key", Path: "native/tls.key"}}}, {ca, []core.KeyToPath{{Key: "ca.crt", Path: "native/ca.crt"}}}} {
+		}{{replication, []core.KeyToPath{{Key: "tls.crt", Path: "native/tls.crt"}, {Key: "tls.key", Path: "native/tls.key"}}}, {ca, []core.KeyToPath{{Key: "ca.crt", Path: "native/ca.crt"}}}, {clientCA, []core.KeyToPath{{Key: "ca.crt", Path: "native/client-ca.crt"}}}} {
 			if _, err := api.Get(ctx, coreResource("secrets"), c.Metadata.Namespace, ref.name); err != nil {
 				return errors.New("native replication Secret is missing or not allowlisted")
 			}
@@ -296,7 +305,7 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	addMount := func(container *core.Container, mount core.VolumeMount) error {
 		i := slices.IndexFunc(container.VolumeMounts, func(v core.VolumeMount) bool { return v.Name == mount.Name || v.MountPath == mount.MountPath })
 		if i >= 0 {
-			if !owned {
+			if !owned || container.VolumeMounts[i].Name != mount.Name || container.VolumeMounts[i].MountPath != mount.MountPath {
 				return errors.New("owned mount/path collision")
 			}
 			container.VolumeMounts[i] = mount
