@@ -37,6 +37,26 @@ def lsn(text):
     return int(hi, 16) << 32 | int(lo, 16)
 
 
+def registry_pull_secrets():
+    """Project only GHCR auth to disposable kubelet pulls, never artifacts/argv."""
+    config = Path(os.environ.get('DOCKER_CONFIG', Path.home() / '.docker')) / 'config.json'
+    if not config.exists():
+        return []  # Public/local anonymous pulls remain supported.
+    auth = json.loads(config.read_text()).get('auths', {}).get('ghcr.io', {})
+    if not auth.get('auth'):
+        return []
+    path = WORK / 'registry-auth.json'
+    with open(path, 'x', opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
+        json.dump({'auths': {'ghcr.io': {'auth': auth['auth']}}}, stream)
+    try:
+        for namespace in ('cnpg-system', SOURCE, TARGET):
+            h.kube('create', 'secret', 'generic', 'campaign-ghcr', '-n', namespace,
+                   '--type=kubernetes.io/dockerconfigjson', '--from-file=.dockerconfigjson=' + str(path))
+    finally:
+        path.unlink()
+    return [{'name': 'campaign-ghcr'}]
+
+
 class Campaign:
     def __init__(self, args, manifest):
         self.args, self.m = args, manifest
@@ -108,7 +128,9 @@ class Campaign:
             version = h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL',
                             '--entrypoint=/usr/local/bin/cnpg-backup', image, 'version')
             assert 'revision=' + self.args.subject_sha + ' ' in version, 'selected image binary revision differs from subject SHA'
-            h.run('docker', 'exec', h.NAME + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'pull', '--platform=linux/amd64', image)
+            # Kubelet pulls these SAME registry manifests using the scoped
+            # imagePullSecret below. Never docker-save/import/re-tag a subject:
+            # that can replace its manifest bytes and lose registry identity.
             self.event('consumed-subject-image', flavor=flavor, image=image, version=version.strip())
         h.kube('apply', '--server-side', '-f', WORK / 'pinned-cert-manager.yaml')
         for deploy in ('cert-manager', 'cert-manager-webhook', 'cert-manager-cainjector'):
@@ -119,6 +141,7 @@ class Campaign:
         h.kube('wait', '--for=condition=Established', 'crd/repositories.backup.cnpg-backup.djosh34.github.io', '--timeout=60s')
         for ns in (SOURCE, TARGET, STORE):
             h.apply({'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': ns, 'labels': {'campaign': ns}}})
+        self.image_pull_secrets = registry_pull_secrets()
         h.apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'campaign-target'},
                  'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
         self.pool(3)
@@ -132,6 +155,9 @@ class Campaign:
         conf['namespaces'].append(TARGET)
         conf['secretNames'][TARGET] = ['s3-auth']
         cm['data']['config.json'] = json.dumps(conf)
+        for obj in install['items']:
+            if obj['kind'] == 'Deployment':
+                obj['spec']['template']['spec']['imagePullSecrets'] = self.image_pull_secrets
         h.apply(install)
         h.kube('wait', '-n', 'cnpg-system', '--for=condition=Ready', 'certificate/cnpg-backup-server',
                'certificate/cnpg-backup-client', '--timeout=180s')
@@ -163,6 +189,7 @@ class Campaign:
         h.apply(source)
         self.cluster = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster', 'metadata': {'name': 'database', 'namespace': SOURCE},
                         'spec': {'instances': 1, 'imageName': h.LOCK['database'],
+                                 'imagePullSecrets': self.image_pull_secrets,
                                  'storage': {'size': '3Gi', 'storageClass': 'campaign-target'},
                                  'walStorage': {'size': '3Gi', 'storageClass': 'campaign-target'},
                                  'tablespaces': [{'name': 'fast_space', 'storage': {'size': '3Gi', 'storageClass': 'campaign-target'}}],

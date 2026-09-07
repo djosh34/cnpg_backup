@@ -63,9 +63,26 @@ gh workflow run recovery-campaign.yml --ref main \
   -f profile=recovery -f seed=1806 -f duration_minutes=120
 ```
 
-Private registry pulls are not silently replaced by local builds. Publication,
-registry authentication/portable release archives and qualification belong to the
-parent delivery flow. This test workflow accepts no deployment/model secrets.
+The repository-owned `pr-g-candidate.yml` push caller permits only the exact
+`implementation/pr-g` push SHA and workflow revision in this repository. It
+builds/audits each candidate once, refuses existing or ambiguously absent
+`sha-<commit>` tags, and publishes the audited image IDs to the canonical GHCR
+packages. It records manifest/config digests incrementally (including partial
+publication failure). The smoke job runs first; only its success admits all31
+recovery plus seeded supplementary on the **same digest outputs**, without
+rebuilding. Per-SHA concurrency prevents competing publication from this caller.
+A rerun must not overwrite or rebuild an existing candidate; use its recorded
+digests in a trusted campaign caller instead. No version tags or release are
+published, and G evidence is not H–K qualification.
+
+Only the publishing job has packages:write; test jobs use packages:read. After
+trust validation, the ephemeral GITHUB_TOKEN authenticates Docker via stdin in a
+private `.work` config, never a new owner secret. The harness projects only GHCR
+auth to disposable Kubernetes imagePullSecrets so kubelet pulls the same registry
+manifests even for private packages. No docker-save/import/re-tag substitution.
+Credential files are removed and excluded from artifacts; no deployment/model
+credentials are accepted. The main-only reusable workflow trust contract remains
+unchanged. Portable release archives and qualification remain later delivery work.
 
 ## Actual assertions and arrangements
 
