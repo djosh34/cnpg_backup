@@ -48,6 +48,12 @@ unsafe PID namespaces, wrong identities and foreign recovery PVC owners. It
 preserves CNPG's generated logging flags and its managed tablespace naming.
 Owned immutable ConfigMaps contain checked delivery snapshots, not another
 configuration authority. Source projections appear only in recovery Jobs.
+CREATE/EVALUATE build fresh desired templates with all placement/security checks.
+PATCH/UPDATE authenticate the existing Cluster-owned Pod identity and return no
+mutation: they must preserve the entire admitted spec, unknown admission fields,
+and original image/config snapshot, even when today's Repository is unavailable.
+They grant no new mounts or data access. CNPG compares EVALUATE's fresh spec and
+owns rolling replacement; the manager does not patch live images or projections.
 
 Workspace remains one generic ephemeral PVC per Pod/Job, never a shared RWO
 claim. Lifecycle projects the explicit declared workspace/PGDATA/WAL/tablespace
@@ -150,7 +156,14 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
 5. The apparent mTLS-discovery timeout was permanent CNPG image admission:
    digest-only PG images lack upgrade-version metadata. Add `:18.6` while keeping
    the exact immutable digest, and fail permanent image admission immediately
-   rather than inflate the discovery timeout. Hosted next-stage evidence pending.
+   rather than inflate the discovery timeout.
+6. Runs34086181231/34086586700 reached real operator metadata reconciliation,
+   which rejected removal of serviceaccount mounts from both plugin containers.
+   D-SPEC-1/D-KISS-2: the shared injection path also rewrote live immutable config
+   volumes after Repository changes. Manager-hook regressions distinguish fresh
+   templates from admitted live Pods, preserving all admission fields rather than
+   special-casing a token mount. Local red/green evidence is retained in the
+   author's `.work/fix-2`; exact-current-SHA hosted matrix remains pending.
 
 No production deployment/data/bucket operations, GitHub writes or reviewer/worker
 delegation were performed by this scoped author. Two fresh independent reviews

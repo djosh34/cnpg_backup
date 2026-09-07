@@ -135,6 +135,15 @@ func (s Lifecycle) LifecycleHook(ctx context.Context, req *lifecycle.OperatorLif
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid Cluster")
 	}
+	// PATCH/UPDATE contain an admitted live Pod, not a desired template. Never
+	// regenerate its spec from current configuration: even a metadata PATCH
+	// would then attempt immutable volume changes and discard admission fields.
+	if req.OperationType.Type == lifecycle.OperatorOperationType_TYPE_PATCH || req.OperationType.Type == lifecycle.OperatorOperationType_TYPE_UPDATE {
+		if err := s.API.VerifyLivePod(ctx, c, req.ObjectDefinition); err != nil {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
+		return &lifecycle.OperatorLifecycleResponse{}, nil
+	}
 	p, err := Place(ctx, s.API, c, req.ObjectDefinition, s.Image)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, err.Error())

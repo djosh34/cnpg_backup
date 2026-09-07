@@ -32,8 +32,9 @@ type patch struct {
 	Value any    `json:"value"`
 }
 
-// Place patches only the container/volume lists and owned metadata. It never
-// deletes Pods; EVALUATE returns the same deterministic patch for CNPG rollout.
+// Place builds fresh CREATE/EVALUATE templates, never admitted live Pod updates.
+// It patches the container/volume lists and owned metadata. EVALUATE gives CNPG
+// the desired image/config snapshot for its normal rolling replacement policy.
 func Place(ctx context.Context, api *API, c Cluster, object []byte, image string) ([]byte, error) {
 	if err := api.VerifyCluster(ctx, c); err != nil {
 		return nil, err

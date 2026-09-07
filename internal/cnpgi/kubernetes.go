@@ -119,6 +119,32 @@ func (a *API) VerifyCluster(ctx context.Context, c Cluster) error {
 	return nil
 }
 
+// VerifyLivePod binds a no-mutation hook to an existing Cluster-owned Pod.
+// It deliberately does not revalidate today's Repository or regenerate yesterday's
+// spec: this path grants no new projections or data access. CREATE/EVALUATE own
+// placement/security validation and CNPG decides when to replace the old Pod.
+func (a *API) VerifyLivePod(ctx context.Context, c Cluster, object []byte) error {
+	if err := a.VerifyCluster(ctx, c); err != nil {
+		return err
+	}
+	var pod struct {
+		meta.TypeMeta `json:",inline"`
+		Metadata      meta.ObjectMeta `json:"metadata"`
+	}
+	if len(object) > 2<<20 || json.Unmarshal(object, &pod) != nil || pod.Kind != "Pod" || pod.APIVersion != "v1" || pod.Metadata.Namespace != c.Metadata.Namespace || pod.Metadata.UID == "" {
+		return errors.New("invalid live Pod identity")
+	}
+	actual, err := a.Get(ctx, coreResource("pods"), c.Metadata.Namespace, pod.Metadata.Name)
+	if err != nil {
+		return errors.New("live Pod identity unavailable")
+	}
+	owner := meta.GetControllerOf(actual)
+	if actual.GetUID() != pod.Metadata.UID || owner == nil || owner.UID != c.Metadata.UID {
+		return errors.New("live Pod is not owned by this Cluster")
+	}
+	return nil
+}
+
 // EnsureProjection never trusts editable ConfigMap data as configuration. It
 // compares against current validated Repository specs and an exact Cluster owner.
 // Immutable snapshots preserve Job references; ownership-set bindings reject
