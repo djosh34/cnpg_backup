@@ -1,0 +1,30 @@
+name: Disposable planning native PG18 experiment
+on:
+  push:
+    branches: [planning/platform-preflight]
+    paths:
+      - docs/research/experiments/native/**
+      - .github/workflows/planning-native.yml
+permissions:
+  contents: read
+jobs:
+  native-pg18:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Matching PG18.6 full-reference differential and post-backup WAL replay
+        run: |
+          set -euo pipefail
+          bash docs/research/experiments/native/local-tools.sh "$RUNNER_TEMP/native-tools"
+          source "$RUNNER_TEMP/native-tools/env.sh"
+          bash docs/research/experiments/native/native-workflow.sh "$RUNNER_TEMP/native-experiment"
+      - name: Collect bounded synthetic experiment evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -d "$RUNNER_TEMP/native-experiment" ]; then
+            find "$RUNNER_TEMP/native-experiment" -maxdepth 1 -type f -name '*.log' -print -exec tail -n 100 {} \;
+          fi
