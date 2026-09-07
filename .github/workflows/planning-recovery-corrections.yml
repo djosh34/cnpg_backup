@@ -1,0 +1,41 @@
+name: Disposable planning recovery review corrections
+on:
+  push:
+    branches: [planning/platform-preflight]
+    paths:
+      - docs/research/experiments/recovery-*.py
+      - docs/research/fixtures/same-segment-pg18.tar.gz
+      - .github/workflows/planning-recovery-corrections.yml
+permissions:
+  contents: read
+jobs:
+  recovery-corrections:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Native archive-first controls, direct WAL parser, and ownership model
+        run: |
+          set -euo pipefail
+          bash docs/research/experiments/native/local-tools.sh "$RUNNER_TEMP/native-tools"
+          source "$RUNNER_TEMP/native-tools/env.sh"
+          export PG_BIN="$PGBIN"
+          export PG_SHARE="$RUNNER_TEMP/native-tools/root/usr/share/postgresql/18"
+          export TMPDIR="$RUNNER_TEMP/recovery-evidence"
+          mkdir -p "$TMPDIR" "$RUNNER_TEMP/same-segment-fixture"
+          printf '%s  %s\n' f9f82e6900b42a996670130e3dfa1d70d61f10df7fdaaf9f7837538342f5c1ca docs/research/fixtures/same-segment-pg18.tar.gz | sha256sum --check
+          tar --no-same-owner -xzf docs/research/fixtures/same-segment-pg18.tar.gz -C "$RUNNER_TEMP/same-segment-fixture"
+          python3 docs/research/experiments/recovery-review-pg.py
+          RECOVERY_FIXTURE="$RUNNER_TEMP/same-segment-fixture" python3 docs/research/experiments/recovery-review-pg.py
+          python3 docs/research/experiments/recovery-owner-model.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: recovery-review-corrections
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/recovery-evidence/*/*.json
+            ${{ runner.temp }}/recovery-evidence/*/*.log
