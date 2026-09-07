@@ -1,0 +1,23 @@
+name: Disposable planning recovery error-exit experiment
+on:
+  push:
+    branches: [planning/platform-preflight]
+    paths:
+      - docs/research/experiments/cnpgi-wal-exit.py
+      - .github/workflows/planning-cnpgi.yml
+permissions:
+  contents: read
+jobs:
+  restore-error-exit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prove PostgreSQL fatal transport failure versus ordinary archive miss
+        run: |
+          set -euo pipefail
+          bash docs/research/experiments/native/local-tools.sh "$RUNNER_TEMP/native-tools"
+          source "$RUNNER_TEMP/native-tools/env.sh"
+          PG_BIN="$PGBIN" PG_SHARE="$RUNNER_TEMP/native-tools/root/usr/share/postgresql/18" python3 docs/research/experiments/cnpgi-wal-exit.py
