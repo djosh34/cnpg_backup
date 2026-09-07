@@ -28,7 +28,7 @@ Status: **final technical specification; independent reviews and an explicit REA
 | MinIO test server | **RELEASE.2025-09-07T16-13-09Z** / `07c3a429bfed433e49018cb0f78a52145d4bedeb`; binary SHA256 in research harness |
 | Distribution | **v0.1.0** GitHub release, manager/PG18 GHCR images and portable OCI archives |
 
-These are source/version pins, not invented product image digests. PR A resolves build-image digests/package locks for these versions; exact built subject digests are then qualified. Compatible security patch updates may be adopted autonomously with updated pins and the same tests. MinIO is sufficient; **no Dell access, discovery, testing or certification gate**. Claim MinIO-tested behavior and explicit capability requirements, not universal S3 or AWS-SigV2 support.
+These are source/version pins, not invented product image digests. PR A resolves build-image digests/package locks for these versions; exact built subject digests are then qualified. Compatible security patch updates may be adopted autonomously with updated pins and the same tests. MinIO is sufficient for validation. Claim MinIO-tested behavior and explicit capability requirements, not universal S3 or AWS-SigV2 support.
 
 ## 2. Runtime topology and configuration
 
@@ -144,6 +144,8 @@ The single manager owns bounded Prometheus labels `{repository_id,namespace,clus
 Ship Warning `BackupFailed`, separate full/differential missing/overdue/failure alerts enabled only for configured schedules, plus independent WAL backlog/failure/filesystem pressure alerts. No ID/key/error-string metric labels or durable metrics ledger. These ship in full/differential PRs, not only final operations work.
 
 ## 7. Security, test evidence and adaptation
+
+Agent role settings and 30-minute observation policy live in [Paseo lifecycle](agents/paseo.md); they do not alter the Go manager runtime. Follow the [local-first feedback ladder](testing.md#local-first-feedback) before hosted matrices. Keep one test/review subject association rather than repeated SHA bookkeeping; exact qualified artifact digests and product/input checksums remain binding.
 
 Narrow namespace/RBAC and Secret get-only allowlists, non-root matching CNPG UID, read-only root, dropped capabilities/seccomp, same-namespace explicit projections, and no application/superuser/private-server-key mounts. Manager cert-manager mTLS and leaf/CA reload follow exact pinned CNPG behavior. New operations load a complete validated Secret/CA snapshot; running work retains its snapshot, so credentials/trust overlap must last through draining work. An invalid rotation fails closed rather than using stale credentials indefinitely or dropping holds.
 

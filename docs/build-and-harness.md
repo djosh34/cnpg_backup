@@ -7,7 +7,7 @@ storage, retention or CNPG implementation is included.
 
 ## Run
 
-Linux amd64, non-root, disk-backed checkout with roughly 3 GiB free. Needs bash,
+Start with the [local-first feedback ladder](testing.md#local-first-feedback). `harness` needs bash, Python and curl (disposable loopback HTTP fixtures), and runs fixture/oracle tests without tool downloads; `unit` adds the pinned Go toolchain and Promtool, not native inputs. Full profiles need Linux amd64, non-root, disk-backed checkout with roughly 3 GiB free, plus space for the chosen campaign. Needs bash,
 curl, Python >=3.12 with dpkg-deb (Ubuntu hosted runner), or Python >=3.14 for
 rootless zstd package extraction. Host PostgreSQL test execution also requires
 ordinary distro libraries (recorded by ldd); these host dependencies are not
@@ -15,12 +15,18 @@ runtime-image inputs. Docker is needed only for actual image checks. No daemon
 installation or production credentials/endpoints are accepted.
 
 ```sh
+./hack/test harness
+./hack/test harness test_lifecycle_harness  # optional unittest module/class/method
+./hack/test unit
 ./hack/test fast
 ./hack/test integration --seed 1806             # real PG18.6 + real MinIO
 ./hack/test integration --seed 1806 --images    # CI acceptance profile
 # Diagnostic only when local MinIO cannot execute; NOT MinIO acceptance:
-./hack/test integration --seed 1806 --native-only
+# After ./hack/test fast has prepared tools/roots:
+python3 hack/recovery.py --seed 1806 --native-only
 ```
+
+`harness` also runs first inside every full profile/CI job, before tool downloads and builds, so fixture failures stop cheaply. Targeted `harness` arguments select unittest names; an unfiltered run includes metrics self-tests and CRD generation checks. `unit` runs the same Go tests/vet as `fast`; it does not claim native/image coverage. Every profile failure remains a failure.
 
 `CNPG_BUILD_CACHE=/absolute/disk/path` optionally relocates verified tool inputs;
 default `.work/tools`. Fixtures and Go temporary files stay under `.work`, **not
