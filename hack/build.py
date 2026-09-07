@@ -8,6 +8,7 @@ import shutil
 import subprocess
 
 from bootstrap import CACHE, LOCK, REPO
+from gonotices import copy_notices
 
 OUT = REPO / 'build/out'
 
@@ -98,6 +99,7 @@ if __name__ == '__main__':
                 raise RuntimeError('missing notice: ' + package['name'])
             shutil.copyfile(copyright, notices / (package['name'] + '.copyright'))
         shutil.copyfile(REPO / 'build/inputs.lock.json', notices / 'inputs.lock.json')
+        copy_notices(OUT / 'go-linked.json', root)
         (OUT / (flavor + '-files.json')).write_text(json.dumps(inventory(root), indent=2) + '\n')
     # Sparse test library path: deliberately does not replace the host's libc.
     # Server-only libraries and host tools remain test dependencies, not images.

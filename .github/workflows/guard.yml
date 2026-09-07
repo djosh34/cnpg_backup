@@ -1,0 +1,25 @@
+name: recovery-guard-namespace
+on:
+  push:
+    paths: ['internal/**', 'cmd/**', 'hack/**', 'go.mod', 'go.sum', 'build/**', '.github/workflows/guard.yml']
+  pull_request:
+    paths: ['internal/**', 'cmd/**', 'hack/**', 'go.mod', 'go.sum', 'build/**', '.github/workflows/guard.yml']
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Static build and real private-PID1 Begin/Drain crash tests (not CNPG acceptance)
+        run: ./hack/test guard
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: guard-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14

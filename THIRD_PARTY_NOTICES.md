@@ -3,9 +3,15 @@
 Original project work is all rights reserved; this is not a project license.
 
 - Go 1.27.1 standard library/runtime: Go authors, BSD-style license. Builds copy
-  the toolchain's LICENSE and PATENTS into both image roots. No external Go
-  modules are currently linked. Generated `go-linked.json` and `go-version.txt`
-  describe the actual executable, not merely go.mod.
+  the toolchain's LICENSE and PATENTS into both image roots. Generated
+  `go-linked.json` and `go-version.txt` describe the actual executable, not merely
+  go.mod. External linked modules' license/notice texts are copied into
+  `notices/go`; `go-runtime-modules.json` records exact versions and module sums.
+- CNPG-I v0.6.0 (Apache-2.0), gRPC-Go (Apache-2.0), protobuf-go and Go extended
+  libraries (BSD-style), and Google generated RPC bindings (Apache-2.0) supply
+  the CNPG wire and local control services. The generated runtime inventory is
+  authoritative for the transitive linked subset; dependency test libraries
+  are not shipped.
 - PostgreSQL 18.6: PostgreSQL Global Development Group / Regents of the
   University of California, PostgreSQL License. The data image includes exactly
   six tools, not the database server. PGDG package copyright notices accompany
