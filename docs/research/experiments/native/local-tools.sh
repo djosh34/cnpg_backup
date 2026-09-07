@@ -16,10 +16,19 @@ fetch "$pg/postgresql-18_18.6-3.pgdg24.04%2B1_amd64.deb" server.deb 611dc088b63d
 fetch "$pg/postgresql-client-18_18.6-3.pgdg24.04%2B1_amd64.deb" client.deb 635c8cbad024be8d1208433ec902cf721ae77028e7d6b7e0231a2768ba4dacfa
 fetch "$pg/libpq5_18.6-3.pgdg24.04%2B1_amd64.deb" libpq.deb 29452c26315aeefeb900895b20b3e8adbd33c32cb9b602a83c30ac5cea1c2055
 fetch https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb icu.deb c9a70989678660eed9a1e904c74fa043da8bec8e2036856fc16e31ced79b04f8
-# Python is research tooling only. These archives have pinned hashes; this is
-# not the product's hostile-backup extractor. Package scripts never execute.
+# Extraction only, never installation or package-script execution. Ubuntu's
+# dpkg-deb handles zstd data.tar members; Python gained that support in 3.14.
+if command -v dpkg-deb >/dev/null 2>&1; then
+  for package in "$root/downloads/"*.deb; do
+    dpkg-deb --extract "$package" "$root/root"
+  done
+else
+# Fedora fallback requires Python >=3.14. These pinned package archives are
+# research tooling, not the product's hostile-backup extraction implementation.
 python3 - "$root" <<'PY'
 import io, pathlib, sys, tarfile
+if sys.version_info < (3, 14):
+    sys.exit('package extraction requires dpkg-deb or Python >=3.14 (zstd support)')
 root = pathlib.Path(sys.argv[1])
 for package in sorted((root / 'downloads').glob('*.deb')):
     data = package.read_bytes()
@@ -35,6 +44,7 @@ for package in sorted((root / 'downloads').glob('*.deb')):
             with tarfile.open(fileobj=io.BytesIO(body)) as archive:
                 archive.extractall(root / 'root', filter='data')
 PY
+fi
 printf 'export PGBIN=%q\nexport LD_LIBRARY_PATH=%q\n' "$root/root/usr/lib/postgresql/18/bin" "$root/root/usr/lib/x86_64-linux-gnu" > "$root/env.sh"
 source "$root/env.sh"
 for tool in postgres initdb pg_basebackup pg_combinebackup pg_verifybackup pg_waldump pg_controldata pg_checksums psql pg_ctl; do
