@@ -435,7 +435,8 @@ class Campaign:
         for previous in self.targets:
             assert not target_uids.intersection(previous['pvc_uids']), 'retry reused a target PVC identity'
         cluster_uid = json.loads(h.kube('get', 'cluster', name, '-n', TARGET, '-o', 'json'))['metadata']['uid']
-        state = {'name': name, 'cluster_uid': cluster_uid, 'pod': pod, 'pod_uid': p['metadata']['uid'], 'pvc_uids': sorted(target_uids),
+        job_uid = next(o['uid'] for o in p['metadata']['ownerReferences'] if o.get('kind') == 'Job' and o.get('controller'))
+        state = {'name': name, 'cluster_uid': cluster_uid, 'pod': pod, 'pod_uid': p['metadata']['uid'], 'job_uid': job_uid, 'pvc_uids': sorted(target_uids),
                  'repository_id': repo['spec']['repositoryID'], 'target': target}
         self.targets.append(state)
         self.event('fresh-target', **state)
@@ -474,7 +475,7 @@ class Campaign:
         self.barrier(state['pod'], 'restore-response', 600)
         return self.plan(state)
 
-    def finish(self, state, rows, drop_present=False, stable_retained=False):
+    def finish(self, state, rows, drop_present=False, stable_retained=False, ordinary=False):
         pod = state['pod']
         self.release(pod, 'release-response')
         self.release(pod, 'release-replay')
@@ -487,13 +488,18 @@ class Campaign:
         # while the real Job controller completes and the original plugin watch
         # records all terminal containers. This controlled completion barrier is
         # not permission to certify disappeared/force-deleted API evidence.
-        h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET,
-               'cnpg.io/reconciliationLoop=disabled', '--overwrite')
-        self.event('CNPG-cleanup-paused-before-Job-completion', cluster=state['name'])
+        if not ordinary:
+            h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET,
+                   'cnpg.io/reconciliationLoop=disabled', '--overwrite')
+            self.event('CNPG-cleanup-paused-before-Job-completion', cluster=state['name'])
+        else:
+            assert not stable_retained, 'ordinary normal-completion case requires automatic stable release'
+            self.event('ordinary-CNPG-cleanup-uninterrupted', cluster=state['name'])
         self.release(pod, 'release-shutdown')
-        self.terminated(state, stable_retained=stable_retained)
-        assert self.markers(state) == ['absent'] * 3, 'successful Job did not cleanly release every target marker'
-        h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop-', '--overwrite')
+        if not ordinary:
+            self.terminated(state, stable_retained=stable_retained)
+            assert self.markers(state) == ['absent'] * 3, 'successful Job did not cleanly release every target marker'
+            h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop-', '--overwrite')
         h.kube('wait', '-n', TARGET, '--for=condition=Ready', 'cluster/' + state['name'], '--timeout=360s', timeout=400)
         primary = self.primary(state['name'], TARGET)
         actual = self.sql(TARGET, primary, "SELECT string_agg(id::text||':'||value,',' ORDER BY id) FROM g_oracle")
@@ -516,8 +522,29 @@ class Campaign:
         key = 'smoke/v1/' + state['repository_id'] + '/wal/' + segment[:8] + '/' + segment
         h.wait(lambda: key in self.inventory('smoke/v1/' + state['repository_id'] + '/wal/'), 'new lineage archive', 120)
         assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == before, 'destination write changed source archive'
+        if ordinary:
+            self.ordinary_completion(state)
         self.retire_target(state)
         return state
+
+    def ordinary_completion(self, state):
+        # Natural CNPG cleanup may have removed Job/Pod by Ready. Its original
+        # exact identities were observed before starting replay; require surviving
+        # durable completed proof AND actual source gate release, not readiness.
+        def completed():
+            op = self.operation_state(state)
+            atomic_json(OUT / (state['name'] + '-ordinary-operation.json'), op)
+            assert op['state'] != 'uncertain', 'ordinary cleanup lost termination evidence; source hold must remain (not a passing normal-release case)'
+            return op['state'] == 'completed' and op['lifetimeReleased']
+        h.wait(completed, 'uninterrupted ordinary automatic stable release', 120)
+        op = self.operation_state(state)
+        assert op['completedJobUID'] == state['job_uid']
+        assert op['terminatedPodUIDs'] == [state['pod_uid']]
+        plan = state['plan']['plan']
+        assert not {plan['reader_hold_id'], plan['lifetime_hold_id']}.intersection(x['id'] for x in self.gate()['holders'])
+        assert self.markers(state) == ['absent'] * 3
+        self.event('ordinary-automatic-stable-release', cluster=state['name'], operation=op,
+                   operator_paused=False, current_pods=[h.pod_evidence(p) for p in self.pods(state['name'])])
 
     def terminated(self, state, stable_retained=False):
         # Job Complete is necessary but not sufficient; enumerate ALL retry Pods
@@ -575,10 +602,10 @@ class Campaign:
         assert tree.findtext('s:IsTruncated', namespaces=ns) == 'false'
         return sorted(x.text for x in tree.findall('s:Contents/s:Key', ns))
 
-    def restore(self, target, rows, drop_present=False):
+    def restore(self, target, rows, drop_present=False, ordinary=False):
         state = self.start(target)
         self.materialize(state)
-        return self.finish(state, rows, drop_present)
+        return self.finish(state, rows, drop_present, ordinary=ordinary)
 
     def run(self):
         atomic_json(OUT / 'source-inventory.json', {'keys': self.inventory('smoke/v1/' + SOURCE_ID + '/')})
@@ -589,7 +616,7 @@ class Campaign:
             assert not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']
             self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
         with self.m.case('full-latest-remote-SQL'):
-            selected = self.restore({}, LATEST)
+            selected = self.restore({}, LATEST, ordinary=True)
             newest = getattr(self, 'same_commit', self.newest)
             assert selected['plan']['plan']['chain'][0]['backup_uid'] == newest['backup_uid']
             self.restore({'backupID': self.base['backup_uid']}, LATEST)

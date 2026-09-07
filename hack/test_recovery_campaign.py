@@ -112,6 +112,31 @@ class CampaignTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 campaign.terminated(state, stable_retained=True)
 
+    def test_ordinary_cleanup_needs_matching_durable_proof_and_real_gate_release(self):
+        from recovery_cases import Campaign
+        campaign = Campaign(None, None)
+        state = {'name': 'g-001', 'job_uid': 'original-job', 'pod_uid': 'original-pod',
+                 'plan': {'plan': {'reader_hold_id': 'reader', 'lifetime_hold_id': 'stable'}}}
+        proof = {'state': 'completed', 'lifetimeReleased': True, 'completedJobUID': 'original-job',
+                 'terminatedPodUIDs': ['original-pod']}
+        def wait(predicate, *args):
+            self.assertTrue(predicate())
+        with tempfile.TemporaryDirectory() as tmp, patch('recovery_cases.OUT', Path(tmp)), \
+             patch('recovery_cases.h.wait', side_effect=wait), patch.object(campaign, 'event'), \
+             patch.object(campaign, 'pods', return_value=[]), patch.object(campaign, 'markers', return_value=['absent'] * 3), \
+             patch.object(campaign, 'operation_state', return_value=proof) as operation, \
+             patch.object(campaign, 'gate', return_value={'holders': [{'id': 'unrelated'}]}) as gate:
+            campaign.ordinary_completion(state)  # Job/Pod naturally gone, proof survives
+            for bad in ({**proof, 'state': 'uncertain'}, {**proof, 'completedJobUID': 'other'},
+                        {**proof, 'terminatedPodUIDs': []}, {**proof, 'lifetimeReleased': False}):
+                operation.return_value = bad
+                with self.assertRaises(AssertionError):
+                    campaign.ordinary_completion(state)
+            operation.return_value = proof
+            gate.return_value = {'holders': [{'id': 'stable'}]}
+            with self.assertRaises(AssertionError):
+                campaign.ordinary_completion(state)
+
     def test_budget_rejects_fault_before_it_is_generated(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = c.Manifest(Path(tmp), {'profile': 'recovery'}, ['one'], deadline=0)

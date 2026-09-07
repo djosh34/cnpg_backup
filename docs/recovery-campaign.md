@@ -122,7 +122,13 @@ Pod/container terminations, then resume CNPG for normal instance SQL. The Job
 controller and plugin manager remain active; no missing/deleted-object evidence
 is certified. The first uncontrolled cleanup failure is preserved in run34148247516.
 A dedicated runtime streaming client fixes that run's separate10s HTTP WATCH
-termination; actual watch loss still closes observation without reconnect. No pause/shutdown recovery-target API is
+termination; actual watch loss still closes observation without reconnect.
+The automatic-latest case additionally runs **without pausing CNPG**, with normal
+Job cleanup. It requires surviving durable completion for the exact preobserved
+Job/Pod UIDs, actual removal of its stable/own-reader source holders, clean target
+markers and recovered SQL. If natural cleanup wins before durable observation,
+record that real uncertainty boundary and fail this normal-release case; neither
+readiness nor missing objects is fabricated release evidence. No pause/shutdown recovery-target API is
 advertised by this test. This is a single-node kind experiment, not multi-node
 storage/power-loss or Dell certification.
 
