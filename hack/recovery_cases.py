@@ -28,6 +28,16 @@ BASE = [(1, 'base')]
 BEFORE = BASE + [(2, 'before')]
 INCLUSIVE = BEFORE + [(3, 'target')]
 LATEST = INCLUSIVE + [(4, 'after')]
+MAX_TARGETS = 64
+
+
+def target_secret_names():
+    # Manager loads its exact allowlist at startup: predeclare only the bounded
+    # synthetic target identities, rather than restarting active observers.
+    return ['s3-auth'] + [f'g-{i:03d}-{suffix}' for i in range(1, MAX_TARGETS + 1)
+                          for suffix in ('ca', 'replication')]
+
+
 VOLUMES = ('/var/lib/postgresql/data', '/var/lib/postgresql/wal',
            '/var/lib/postgresql/tablespaces/fast_space')
 
@@ -148,12 +158,12 @@ class Campaign:
         backup_smoke.bounded_capture_workspaces(h, count=16 if self.args.profile == 'smoke' else 80)
         install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', SOURCE,
                                     ['s3-auth', 'database-ca', 'database-replication'])
-        target_install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', TARGET, ['s3-auth'])
+        target_install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', TARGET, target_secret_names())
         install['items'] += [obj for obj in target_install['items'] if obj['metadata']['namespace'] == TARGET]
         cm = next(obj for obj in install['items'] if obj['kind'] == 'ConfigMap')
         conf = json.loads(cm['data']['config.json'])
         conf['namespaces'].append(TARGET)
-        conf['secretNames'][TARGET] = ['s3-auth']
+        conf['secretNames'][TARGET] = target_secret_names()
         cm['data']['config.json'] = json.dumps(conf)
         for obj in install['items']:
             if obj['kind'] == 'Deployment':
@@ -219,7 +229,8 @@ class Campaign:
         h.apply({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'actor', 'namespace': TARGET, 'labels': {'app': 'actor'}},
                  'spec': {'containers': [{'name': 'actor', 'image': image, 'args': ['webhook'],
                                           'env': [{'name': 'ACTOR_IMAGE', 'value': image}],
-                                          'resources': {'limits': {'memory': '128Mi', 'cpu': '1'}},
+                                          'resources': {'requests': {'memory': '32Mi', 'cpu': '25m'},
+                                                        'limits': {'memory': '128Mi', 'cpu': '1'}},
                                           'volumeMounts': [{'name': 'tls', 'mountPath': '/tls', 'readOnly': True}]}],
                           'volumes': [{'name': 'tls', 'secret': {'secretName': 'actor-tls'}}]}})
         h.apply({'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': 'actor', 'namespace': TARGET},
@@ -394,6 +405,7 @@ class Campaign:
     def start(self, target, hold_replay=False):
         self.m.budget()
         self.count += 1
+        assert self.count <= MAX_TARGETS, 'bounded exact target/Secret allocation exhausted'
         self.m.data['restore_attempt_count'] = self.count
         name = f'g-{self.count:03d}'
         self.pool(3)
@@ -462,7 +474,7 @@ class Campaign:
         self.barrier(state['pod'], 'restore-response', 600)
         return self.plan(state)
 
-    def finish(self, state, rows, drop_present=False):
+    def finish(self, state, rows, drop_present=False, stable_retained=False):
         pod = state['pod']
         self.release(pod, 'release-response')
         self.release(pod, 'release-replay')
@@ -494,11 +506,11 @@ class Campaign:
         key = 'smoke/v1/' + state['repository_id'] + '/wal/' + segment[:8] + '/' + segment
         h.wait(lambda: key in self.inventory('smoke/v1/' + state['repository_id'] + '/wal/'), 'new lineage archive', 120)
         assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == before, 'destination write changed source archive'
-        self.terminated(state)
+        self.terminated(state, stable_retained=stable_retained)
         self.retire_target(state)
         return state
 
-    def terminated(self, state):
+    def terminated(self, state, stable_retained=False):
         # Job Complete is necessary but not sufficient; enumerate ALL retry Pods
         # and every restartable init/main status, preserving actual terminations.
         def all_done():
@@ -515,8 +527,15 @@ class Campaign:
         jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']
         assert any(any(c['type'] == 'Complete' and c['status'] == 'True' for c in j.get('status', {}).get('conditions', [])) for j in jobs)
         plan = state['plan']['plan']
-        h.wait(lambda: not {plan['lifetime_hold_id'], plan['reader_hold_id']}.intersection(x['id'] for x in self.gate()['holders']),
-               'same-reader drain and stable-controller completion release only owned holds', 120)
+        h.wait(lambda: plan['reader_hold_id'] not in {x['id'] for x in self.gate()['holders']},
+               'original sidecar conclusively drains only its own reader', 120)
+        if stable_retained:
+            assert plan['lifetime_hold_id'] in {x['id'] for x in self.gate()['holders']}, 'uncertain stable hold was cleared'
+            op = self.operation_state(state)
+            assert op['state'] == 'uncertain' and not op['lifetimeReleased']
+        else:
+            h.wait(lambda: plan['lifetime_hold_id'] not in {x['id'] for x in self.gate()['holders']},
+                   'uninterrupted original observer releases stable lifetime after all terminations', 120)
         state['completion_pods'] = self.pods(state['name'])
         self.event('completion-evidence', cluster=state['name'], job_uids=[j['metadata']['uid'] for j in jobs],
                    pods=[h.pod_evidence(p) for p in state['completion_pods']])
@@ -1047,6 +1066,10 @@ class Campaign:
                     h.save_log(log_path.name, log_path.read_text())
             self.retire_target(state)
 
+    def operation_state(self, state):
+        cm = json.loads(h.kube('get', 'configmap', state['name'] + '-cb-recovery', '-n', TARGET, '-o', 'json'))
+        return json.loads(cm['data']['operation.json'])
+
     def protection(self):
         with self.m.case('stale-tuple-rejected'):
             state = self.start({'backupID': self.base['backup_uid']})
@@ -1078,33 +1101,47 @@ class Campaign:
             h.kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
             self.holds(state, 'controller-restart-during-actual-replay')
             assert old_holders <= {x['id'] for x in self.gate()['holders']}, 'manager removed an uncertain other-reader holder'
-            self.finish(state, LATEST)
+            h.wait(lambda: self.operation_state(state)['state'] == 'uncertain', 'durable observer loss after manager restart', 180)
+            self.finish(state, LATEST, stable_retained=True)
             ours = {state['plan']['plan']['lifetime_hold_id'], state['plan']['plan']['reader_hold_id']}
             assert old_holders - ours <= {x['id'] for x in self.gate()['holders']}, 'completion erased another process holder'
         with self.m.case('controller-all-Job-retry-Pods-terminated'):
             state = self.start({'backupID': self.base['backup_uid']})
-            self.materialize(state)
-            self.release(state['pod'], 'release-response')
-            self.barrier(state['pod'], 'cnpg-exited', 600)
-            # Main command success alone is explicitly insufficient: wrapper is
-            # still running and same-reader admission has not drained.
-            self.holds(state, 'CNPG-success-but-Job-main-still-live')
             jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']
-            assert jobs and not any(any(c['type'] == 'Complete' and c['status'] == 'True' for c in j.get('status', {}).get('conditions', [])) for j in jobs)
             job = next(j for j in jobs if any(o.get('uid') == j['metadata']['uid']
                        for p in self.pods(state['name']) if p['metadata']['name'] == state['pod']
                        for o in p['metadata'].get('ownerReferences', [])))
-            # Let the REAL Job controller create one concurrent attempt while
-            # old main is paused after CNPG success. Its actual guard must fail
-            # busy; manager cannot use success of the first command as completion.
-            h.kube('patch', 'job', job['metadata']['name'], '-n', TARGET, '--type=merge', '-p', '{"spec":{"parallelism":2}}')
-            def retry_terminated():
-                return any(p['metadata']['uid'] != state['pod_uid'] and
-                           any(c['name'] == 'full-recovery' and c.get('state', {}).get('terminated', {}).get('exitCode', 0) != 0
-                               for c in p.get('status', {}).get('containerStatuses', [])) for p in self.pods(state['name']))
-            h.wait(retry_terminated, 'actual Job concurrent/retry Pod guard termination', 180)
-            self.holds(state, 'another-Job-attempt-terminated-original-still-live')
-            h.kube('patch', 'job', job['metadata']['name'], '-n', TARGET, '--type=merge', '-p', '{"spec":{"parallelism":1}}')
+            assert job['spec']['completions'] == job['spec']['parallelism'] == 1
+            h.kube('patch', 'job', job['metadata']['name'], '-n', TARGET, '--type=merge', '-p', '{"spec":{"backoffLimit":2}}')
+            first_uid = state['pod_uid']
+            # Fail BEFORE original CNPG preflight, then let the real guard cleanly
+            # drain. No materialized files/poison need clearing on these PVCs.
+            self.release(state['pod'], 'fail-before-preflight')
+            self.release(state['pod'], 'release-before')
+            def failed_first():
+                first = next(p for p in self.pods(state['name']) if p['metadata']['uid'] == first_uid)
+                return first.get('status', {}).get('phase') == 'Failed' and all(
+                    'terminated' in c.get('state', {}) for c in first['status'].get('containerStatuses', []) + first['status'].get('initContainerStatuses', []))
+            h.wait(failed_first, 'actual failed first attempt with all containers terminated', 180)
+            first = next(p for p in self.pods(state['name']) if p['metadata']['uid'] == first_uid)
+            main = next(c for c in first['status']['containerStatuses'] if c['name'] == 'full-recovery')
+            assert main['state']['terminated']['exitCode'] == 42
+            self.event('actual-failed-first-attempt', job_uid=job['metadata']['uid'], pod=h.pod_evidence(first))
+            def retry_started():
+                return any(p['metadata']['uid'] != first_uid and any(
+                    c['name'] == 'full-recovery' and 'running' in c.get('state', {})
+                    for c in p.get('status', {}).get('containerStatuses', [])) for p in self.pods(state['name']))
+            h.wait(retry_started, 'actual Job-controller replacement after failed attempt', 180)
+            retry = next(p for p in self.pods(state['name']) if p['metadata']['uid'] != first_uid)
+            assert any(o.get('uid') == job['metadata']['uid'] for o in retry['metadata'].get('ownerReferences', []))
+            state['pod'], state['pod_uid'] = retry['metadata']['name'], retry['metadata']['uid']
+            self.barrier(state['pod'], 'before-rpc')
+            self.materialize(state)
+            self.holds(state, 'first-attempt-terminated-retry-reader-live')
+            self.release(state['pod'], 'release-response')
+            self.barrier(state['pod'], 'cnpg-exited', 600)
+            self.holds(state, 'CNPG-success-but-retry-guard-still-live')
+            assert self.operation_state(state)['state'] == 'active'
             self.finish(state, LATEST)
             recovery_pods = [p for p in state['completion_pods'] if any(c['name'] == 'full-recovery' for c in p['spec']['containers'])]
             assert len(recovery_pods) > 1, 'mandatory actual retry-Pod evidence disappeared'

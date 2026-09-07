@@ -97,7 +97,15 @@ unchanged. Portable release archives and qualification remain later delivery wor
 | R0 | Export the selected data image to check no shell; verify its real downloaded original tar via `pg_verifybackup --no-parse-wal` and the existing direct-Go WAL verifier. Missing/corrupt required bundled ranges must fail. Actual G materialization also executes in that unchanged shell-free image. |
 | K1/S2 | A test-only admission observer in the disposable target namespace installs a wrapper on CNPG's controller **volume**, preserves the original pinned CNPG executable and executes it. The unchanged product guard remains private-namespace PID1. Pause after Begin/before original preflight, delay the real RestoreResponse, hold actual replay and pause after CNPG shutdown. Same-PVC replacement runs the actual guard and must fail without any directory/inode/content changes on all three target filesystems. |
 | Crash, descendant, pending task, stale tuple | Kill actual guard/sidecar from the node's ancestor PID namespace and require observed137, poison and same-PVC refusal. Kill the actual CNPG command during replay, observe real orphaned/detached PG descendants under PID1 and require reaping before clean release. Hold a real source WAL task, pause its original sidecar, and require markers until that same process resumes/drains. An existing Unix WAL RPC carrying a stale incarnation must fail without target writes. Poison retry uses a fresh Cluster and all fresh PVC UIDs. |
-| Source protection and controller completion | Observe source lifetime + reader holders while an actual source input response is held, then through materialization/replay and manager restart. A clean completion removes only those owned holders, not crashed readers from prior cases. The real Job controller creates another attempt while old main is held; all matching/retry Pod containers must terminate before stable completion release. |
+| Source protection and controller completion | Observe source lifetime + reader holders while an actual source input response is held, then through materialization/replay and manager restart. An uninterrupted clean completion removes only those owned holders, not crashed readers from prior cases. After manager restart SQL/own-reader drain must succeed but durable uncertainty and stable protection remain. For retries the observer fails the first attempt before CNPG preflight, lets the actual guard drain, then requires a real Job-controller replacement (completions/parallelism stay1); all matching/retry Pod containers must terminate before stable completion release. |
+
+The socket observer mounts the full plugin volume outside `/plugins`, verifies
+both aliases identify the original socket, and renames via two paths on that
+**same mount**. Renaming directly between the `/plugins` subPath bind mount and
+`/controller` (or even a second alias of the plugin volume) is invalid EXDEV.
+Target certificate Secret names are explicitly predeclared for bounded g-001
+through g-064 in both manager startup configuration and Secret-get-only RBAC.
+No manager restart is needed to expand authorization mid-campaign.
 
 The wrapper/proxy is observation/fault arrangement, not a replacement PostgreSQL
 server, recovery engine or production test endpoint. It records the original

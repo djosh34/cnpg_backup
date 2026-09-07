@@ -41,7 +41,7 @@ MANDATORY_SCENARIOS = (
     'actual-CNPG-before-preflight-pgdata-poison-rejected-with-no-target-mutation',
     'actual-CNPG-before-preflight-wal-poison-rejected-with-no-target-mutation',
     'actual-CNPG-before-preflight-tablespace-poison-rejected-with-no-target-mutation',
-    'actual-fresh-Cluster-all-fresh-PVC-guard-Begin-CNPG-preflight-clean-Drain',
+    'actual-fresh-Cluster-all-fresh-PVC-preflight-native-failure-poisons-reuse',
     'plugin-uninstall',
 )
 spec = importlib.util.spec_from_file_location('install_render', ROOT / 'config/render.py')
@@ -573,9 +573,39 @@ def recovery_placement_matrix(cluster, repository, report):
             for role in ('pgdata', 'wal'):
                 path, directory = backing[role]
                 run('docker', 'exec', NAME + '-control-plane', 'test', '!', '-e', path + '/' + directory + '/preflight-sentinel')
+            sidecar_logs = kube('logs', job['metadata']['name'], '-n', NS, '-c', 'cnpg-backup', check=False)
+            save_log(name + '-sidecar.log', sidecar_logs)
+            assert 'phase=native-materialization' in sidecar_logs, 'failure did not cross the native poison boundary'
+            assert 'recovery-guard: TargetOwnershipUncertain' in logs, 'native failure incorrectly drained cleanly'
             for path, _ in backing.values():
-                run('docker', 'exec', NAME + '-control-plane', 'test', '!', '-e', path + '/.cnpg-backup/owner.json')
-            report['completed'].append('actual-fresh-Cluster-all-fresh-PVC-guard-Begin-CNPG-preflight-clean-Drain')
+                run('docker', 'exec', NAME + '-control-plane', 'test', '-f', path + '/.cnpg-backup/owner.json')
+            # Native failure closes admission conservatively. A new Pod on these
+            # PVCs must be rejected BEFORE CNPG preflight, with no target changes.
+            def snapshot():
+                return [run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec',
+                            'cd "$1"; find . -xdev -printf "%y %p %i %s\\n" | sort; '
+                            'find . -xdev -type f -exec sha256sum {} + | sort',
+                            'owned-negative-snapshot', path) for path, _ in backing.values()]
+            before = snapshot()
+            replacement = json.loads(json.dumps(job))
+            replacement.pop('status', None)
+            replacement['metadata'] = {'name': name + '-replacement', 'namespace': NS}
+            replacement['spec'].pop('nodeName', None)
+            replacement['spec']['restartPolicy'] = 'Never'
+            apply(replacement)
+            def refused():
+                p = json.loads(kube('get', 'pod', name + '-replacement', '-n', NS, '-o', 'json'))
+                return any(c['name'] == 'full-recovery' and 'terminated' in c.get('state', {})
+                           for c in p.get('status', {}).get('containerStatuses', []))
+            wait(refused, 'native-failure poisoned-PVC replacement refused', 180)
+            retry_logs = kube('logs', name + '-replacement', '-n', NS, '-c', 'full-recovery')
+            save_log(name + '-replacement.log', retry_logs)
+            assert 'TargetOwnershipUncertain' in retry_logs and 'cleaning up existing' not in retry_logs
+            assert snapshot() == before, 'poisoned retry mutated target bytes/directories'
+            kube('delete', 'pod', name + '-replacement', '-n', NS, '--wait=true', '--timeout=120s')
+            # Clean Drain/new-owner remains required by the actual guard
+            # namespace profile and G successful full/PITR/retry cases.
+            report['completed'].append('actual-fresh-Cluster-all-fresh-PVC-preflight-native-failure-poisons-reuse')
         # Stop real Job retries; poison markers are never removed for reuse.
         kube('annotate', 'cluster/' + name, '-n', NS, 'cnpg.io/reconciliationLoop=disabled', '--overwrite')
         kube('delete', 'cluster/' + name, '-n', NS, '--wait=true', '--timeout=120s')

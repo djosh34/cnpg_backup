@@ -190,12 +190,12 @@ var jobsResource = schema.GroupVersionResource{Group: "batch", Version: "v1", Re
 
 func (a *API) observeRecovery(ctx context.Context, c Cluster, source configuration.Spec, state recoveryOperation, stream watch.Interface) {
 	defer stream.Stop()
-	completed := false
+	durablyClosed := false
 	defer func() {
 		coordinator := a.recoveryState()
 		coordinator.mu.Lock()
 		defer coordinator.mu.Unlock()
-		if completed {
+		if durablyClosed {
 			delete(coordinator.monitors, c.OperationUID())
 		} else if m := coordinator.monitors[c.OperationUID()]; m != nil {
 			m.done = true
@@ -212,9 +212,18 @@ func (a *API) observeRecovery(ctx context.Context, c Cluster, source configurati
 			return
 		}
 		got, e := operationFrom(o, c)
-		if e == nil && got.State == "active" && got.ObserverID == state.ObserverID {
+		if e != nil || got.ObserverID != state.ObserverID {
+			return
+		}
+		if got.State == "uncertain" || got.State == "completed" {
+			durablyClosed = true
+		} else if got.State == "active" {
 			got.State = "uncertain"
 			if a.writeOperation(pass, c, o, got) == nil {
+				// Only the durable closed operation replaces the in-memory fence.
+				// Source holders remain untouched; an unacknowledged write keeps
+				// the done monitor so this process cannot reopen observation.
+				durablyClosed = true
 				a.recoveryWarning(pass, c, "RetentionBlocked")
 			}
 		}
@@ -270,6 +279,7 @@ func (a *API) observeRecovery(ctx context.Context, c Cluster, source configurati
 			got, e := operationFrom(o, c)
 			if e != nil || got.State != "active" || got.ObserverID != state.ObserverID {
 				cancel()
+				uncertain()
 				return
 			}
 			got.State = "completed"
@@ -283,7 +293,7 @@ func (a *API) observeRecovery(ctx context.Context, c Cluster, source configurati
 			}
 			// Durable terminal close precedes release. Retry only the stable holder;
 			// an uncertain/crashed process-reader is never removed by this manager.
-			completed = true
+			durablyClosed = true
 			a.releaseCompletedRecovery(ctx, c, source)
 			return
 		}

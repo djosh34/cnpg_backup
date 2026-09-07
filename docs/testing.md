@@ -118,9 +118,16 @@ claim H–K or release qualification; incomplete mandatory coverage fails.
 
 The disjoint harness author's local evidence is compilation/unit tests only,
 not integrated CNPG execution. The existing D/E/F smoke gates remain separate;
-their fresh-preflight negative now expects protected materialization rejection
-once G is integrated, rather than absence of a Restore capability. Historical
-D logs remain unchanged; their G failure projection is explicitly unit-only.
+their fresh-preflight negative now expects protected native-materialization
+rejection, retained poison on all targets and same-PVC replacement refusal with
+unchanged bytes/directories. The first integrated D run34144591683 observed
+`phase=native-materialization`, FailedPrecondition and guard TargetOwnershipUncertain:
+source admission had succeeded, but generic native failure deliberately closes
+admission and cannot acknowledge a clean Drain. Historical D logs remain unchanged;
+their G failure projection is explicitly unit-only. Actual clean Drain/new-owner
+positives remain mandatory in the guard namespace profile and G successful
+full/PITR and failed-before-preflight/clean-drain/retry cases; poison expectations
+do not replace those gates.
 
 ## Primary references
 

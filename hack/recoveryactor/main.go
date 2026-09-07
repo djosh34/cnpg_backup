@@ -32,6 +32,8 @@ import (
 
 const root = "/controller/campaign"
 const socket = "/plugins/cnpg-backup.djosh34.github.io"
+const socketRoot = "/campaign-sockets"
+const upstreamSocket = socketRoot + "/upstream.sock"
 
 var eventMu sync.Mutex
 
@@ -103,7 +105,14 @@ func main() {
 	defer cancel()
 	mark("before-rpc") // guard Begin has already succeeded; original CNPG has not run.
 	must(wait(ctx, "release-before"))
-	must(os.Rename(socket, root+"/upstream.sock"))
+	if exists("fail-before-preflight") {
+		// Genuine failed first Job attempt, without target materialization.
+		// Returning normally lets the actual guard drain and release its markers.
+		event(map[string]any{"event": "injected-preflight-exit", "exit": 42})
+		os.Exit(42)
+	}
+	must(relocateSocket(socket, socketRoot))
+	event(map[string]any{"event": "socket-relocated-same-mount", "source": socketRoot + socket, "destination": upstreamSocket})
 	proxy := exec.Command("/controller/manager", "proxy")
 	proxy.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	proxy.Stdout, proxy.Stderr = os.Stdout, os.Stderr
@@ -130,6 +139,24 @@ func main() {
 	os.Exit(code)
 }
 
+// /plugins is a subPath bind mount. Rename via the full volume alias for BOTH
+// paths: merely using another alias as the destination still gives EXDEV.
+func relocateSocket(discovery, volumeRoot string) error {
+	source := filepath.Join(volumeRoot, "plugins", filepath.Base(discovery))
+	a, e := os.Stat(discovery)
+	if e != nil {
+		return e
+	}
+	b, e := os.Stat(source)
+	if e != nil {
+		return e
+	}
+	if !os.SameFile(a, b) || a.Mode()&os.ModeSocket == 0 {
+		return errors.New("observer socket aliases do not identify the same real listener")
+	}
+	return os.Rename(source, filepath.Join(volumeRoot, "upstream.sock"))
+}
+
 type rawCodec struct{}
 
 func (rawCodec) Name() string                  { return "proto" }
@@ -139,7 +166,7 @@ func (rawCodec) Unmarshal(b []byte, v any) error {
 	return nil
 }
 func serveProxy() {
-	conn, e := grpc.NewClient("unix://"+root+"/upstream.sock", grpc.WithTransportCredentials(insecure.NewCredentials()),
+	conn, e := grpc.NewClient("unix://"+upstreamSocket, grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{}), grpc.MaxCallRecvMsgSize(4<<20), grpc.MaxCallSendMsgSize(4<<20)))
 	must(e)
 	defer conn.Close()
@@ -385,18 +412,22 @@ func webhook() {
 		if json.Unmarshal(review.Request.Object.Raw, &pod) != nil {
 			response.Allowed = false
 		} else if pod.Namespace == "campaign-target" || review.Request.Namespace == "campaign-target" {
-			for _, c := range pod.Spec.Containers {
+			for index, c := range pod.Spec.Containers {
 				if c.Name != "full-recovery" {
 					continue
 				}
 				mounts := []core.VolumeMount{}
+				var sockets *core.VolumeMount
 				for _, m := range c.VolumeMounts {
+					if m.MountPath == "/plugins" && m.SubPath == "plugins" && !m.ReadOnly {
+						sockets = &core.VolumeMount{Name: m.Name, MountPath: socketRoot}
+					}
 					if m.MountPath == "/controller" {
 						m.ReadOnly = false
 						mounts = append(mounts, m)
 					}
 				}
-				if len(mounts) != 1 {
+				if len(mounts) != 1 || sockets == nil {
 					response.Allowed = false
 					response.Result = &meta.Status{Message: "test actor requires actual CNPG controller mount"}
 					break
@@ -406,7 +437,10 @@ func webhook() {
 				yes := true
 				installer := core.Container{Name: "campaign-observer-install", Image: image, Command: []string{"/actor", "install"}, VolumeMounts: mounts,
 					SecurityContext: &core.SecurityContext{RunAsUser: &user, RunAsGroup: &user, RunAsNonRoot: &yes, ReadOnlyRootFilesystem: &yes, AllowPrivilegeEscalation: &no, Capabilities: &core.Capabilities{Drop: []core.Capability{"ALL"}}}}
-				patch := []map[string]any{{"op": "add", "path": "/spec/initContainers/-", "value": installer}}
+				patch := []map[string]any{
+					{"op": "add", "path": "/spec/initContainers/-", "value": installer},
+					{"op": "add", "path": fmt.Sprintf("/spec/containers/%d/volumeMounts/-", index), "value": sockets},
+				}
 				b, e := json.Marshal(patch)
 				must(e)
 				kind := admission.PatchTypeJSONPatch

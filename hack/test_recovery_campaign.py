@@ -62,6 +62,48 @@ class CampaignTests(unittest.TestCase):
                 Campaign(None, None).setup()
             run.assert_not_called()
 
+    def test_target_secret_grants_are_exact_for_every_bounded_target(self):
+        from recovery_cases import target_secret_names, MAX_TARGETS, TARGET
+        import cnpg_smoke as h
+        names = target_secret_names()
+        self.assertNotIn('*', names)
+        self.assertEqual(len(names), 1 + 2 * MAX_TARGETS)
+        rendered = h.renderer.render('manager@sha256:' + 'a' * 64, 'pg18@sha256:' + 'b' * 64,
+                                     'cnpg-system', TARGET, names)
+        role = next(o for o in rendered['items'] if o['kind'] == 'Role' and o['metadata']['namespace'] == TARGET)
+        rule = next(r for r in role['rules'] if r['resources'] == ['secrets'])
+        self.assertEqual(rule['verbs'], ['get'])
+        self.assertEqual(set(rule['resourceNames']), set(names))
+        config = next(o for o in rendered['items'] if o['kind'] == 'ConfigMap')
+        self.assertEqual(set(json.loads(config['data']['config.json'])['secretNames'][TARGET]), set(names))
+
+    def test_restart_oracle_requires_own_reader_drain_but_retains_uncertain_stable(self):
+        from recovery_cases import Campaign
+        campaign = Campaign(None, None)
+        state = {'name': 'g-001', 'plan': {'plan': {'reader_hold_id': 'reader', 'lifetime_hold_id': 'stable'}}}
+        pods = [{'metadata': {'uid': 'pod'}, 'spec': {'containers': [{'name': 'full-recovery'}]},
+                 'status': {'initContainerStatuses': [{'state': {'terminated': {}}}],
+                            'containerStatuses': [{'state': {'terminated': {}}}]}}]
+        jobs = {'items': [{'metadata': {'uid': 'job'}, 'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}}]}
+        # No polling in this unit test: inspect the exact verdict immediately.
+        def wait(predicate, *args):
+            self.assertTrue(predicate())
+        from unittest.mock import Mock
+        with patch.object(campaign, 'pods', return_value=pods), patch.object(campaign, 'event'), \
+             patch('recovery_cases.h.kube', return_value=json.dumps(jobs)), patch('recovery_cases.h.wait', side_effect=wait), \
+             patch('recovery_cases.h.pod_evidence', return_value={}), \
+             patch.object(campaign, 'operation_state', return_value={'state': 'uncertain', 'lifetimeReleased': False}), \
+             patch.object(campaign, 'gate', return_value={'holders': [{'id': 'stable'}, {'id': 'unrelated'}]}) as gate:
+            campaign.terminated(state, stable_retained=True)
+            # An oracle that removes uncertain protection must be caught.
+            gate.return_value = {'holders': [{'id': 'unrelated'}]}
+            with self.assertRaises(AssertionError):
+                campaign.terminated(state, stable_retained=True)
+            campaign.terminated(state)  # uninterrupted release uses a different oracle
+            gate.return_value = {'holders': [{'id': 'reader'}, {'id': 'stable'}]}
+            with self.assertRaises(AssertionError):
+                campaign.terminated(state, stable_retained=True)
+
     def test_budget_rejects_fault_before_it_is_generated(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = c.Manifest(Path(tmp), {'profile': 'recovery'}, ['one'], deadline=0)

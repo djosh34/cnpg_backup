@@ -168,6 +168,8 @@ class LifecycleHarness(unittest.TestCase):
                 return json.dumps({'items': [{'metadata': {'name': 'fixture-' + str(state['pv'])},
                     'spec': {'storageClassName': 'cnpg-backup-bounded', 'local': {'path': '/fixture/' + str(state['pv'])}},
                     'status': {'phase': 'Available'}}]})
+            if args[:2] == ('get', 'pod'):
+                return json.dumps(json.loads(kube('get', 'pods'))['items'][0])
             if args[:2] == ('get', 'pods'):
                 containers = copy.deepcopy(observations[case]['containers'])
                 main = next(c for c in containers if c['name'] == 'full-recovery')
@@ -178,6 +180,10 @@ class LifecycleHarness(unittest.TestCase):
                         '/cnpg-backup/bin/cnpg-backup', 'recovery-guard', '--', '/controller/manager', 'instance', 'restore']}]},
                     'status': {'containerStatuses': [main], 'initContainerStatuses': [c for c in containers if c != main]}}]})
             if args[0] == 'logs':
+                if args[-1] == 'cnpg-backup':
+                    return 'WARN protected full restore failed phase=native-materialization'
+                if args[1].endswith('-replacement'):
+                    return 'recovery-guard: TargetOwnershipUncertain'
                 logs = observations[case]['logs']
                 if case == 'fresh':
                     # Preserve historical D logs on disk. This unit-only G
@@ -185,6 +191,7 @@ class LifecycleHarness(unittest.TestCase):
                     logs = logs.replace('no plugin supports the restore job hooks capability',
                                         'rpc error: code = FailedPrecondition desc = protected full restore failed'
                                         if wrong_cause is None else wrong_cause)
+                    logs += '\nrecovery-guard: TargetOwnershipUncertain\n'
                 return logs
             self.assertIn(args[0], ('patch', 'annotate', 'delete'))
             return ''
@@ -196,7 +203,10 @@ class LifecycleHarness(unittest.TestCase):
             self.assertEqual(args[3], 'test')
             state['file_checks'].append((state['case'], args[4:]))
             if state['case'] == 'fresh':
-                self.assertEqual(args[4:6], ('!', '-e'))
+                if args[-1].endswith('/owner.json'):
+                    self.assertEqual(args[4], '-f')
+                else:
+                    self.assertEqual(args[4:6], ('!', '-e'))
             else:
                 self.assertEqual(args[4], '-f')
                 self.assertTrue(args[-1].endswith('/preflight-sentinel'))
@@ -209,7 +219,7 @@ class LifecycleHarness(unittest.TestCase):
                 patch.object(cnpg_smoke, 'apply', side_effect=apply), patch.object(cnpg_smoke, 'kube', side_effect=kube), \
                 patch.object(cnpg_smoke, 'run', side_effect=run), patch.object(cnpg_smoke, 'wait', side_effect=wait):
             cnpg_smoke.recovery_placement_matrix(cluster, repository, report)
-        self.assertEqual(len(state['file_checks']), 14)  # 3 per poison, 2 preflight + 3 clean Drain markers.
+        self.assertEqual(len(state['file_checks']), 14)  # 3 per poison, 2 preflight + 3 retained poison markers.
 
     def test_recovery_matrix_historical_poison_and_synthetic_G_failure_complete_four_cases(self):
         report = {'completed': []}

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +16,48 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestRelocateSocketUsesFullVolumeAliasAndPreservesListener(t *testing.T) {
+	volume, err := os.MkdirTemp("", "sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(volume)
+	if err := os.Mkdir(filepath.Join(volume, "plugins"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := filepath.Join(volume, "plugins", "service")
+	listener, err := net.Listen("unix", original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	// Real listener under the volume root; discovery is a separate alias. The
+	// actual hosted campaign supplies the distinct subPath bind mount.
+	aliasDir, err := os.MkdirTemp("", "alias-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(aliasDir)
+	alias := filepath.Join(aliasDir, "service")
+	if err := os.Symlink(original, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := relocateSocket(alias, volume); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(original); !os.IsNotExist(err) {
+		t.Fatal("discovery entry still exists", err)
+	}
+	conn, err := net.DialTimeout("unix", filepath.Join(volume, "upstream.sock"), time.Second)
+	if err != nil {
+		t.Fatal("renamed actual listener unavailable", err)
+	}
+	conn.Close()
+	if err := relocateSocket(filepath.Join(volume, "upstream.sock"), volume); err == nil {
+		t.Fatal("wrong alias accepted")
+	}
+}
 
 // Real local socket/protobuf interoperability for the observer transport. This
 // is not actual CNPG coverage and never increments the campaign family ledger.
