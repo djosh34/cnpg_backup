@@ -17,6 +17,15 @@ class LifecycleHarness(unittest.TestCase):
         self.assertTrue(cnpg_smoke.admission_ready('cluster.postgresql.cnpg.io/database serverside-applied (server dry run)'))
         self.assertFalse(cnpg_smoke.admission_ready('plugin connection not ready'))
 
+    def test_live_identity_has_only_namespaced_pod_get_permission(self):
+        image = 'test/image@sha256:' + '1' * 64
+        objects = cnpg_smoke.renderer.render(image, image, 'cnpg-system', 'managed', ['auth'])['items']
+        grants = [(obj['kind'], obj['metadata']['namespace'], rule['verbs'])
+                  for obj in objects for rule in obj.get('rules', []) if 'pods' in rule['resources']]
+        self.assertEqual(grants, [('Role', 'managed', ['get'])])
+        self.assertFalse(any('pods/exec' in rule['resources'] or '*' in rule['resources']
+                             for obj in objects for rule in obj.get('rules', [])))
+
     def test_live_rollout_oracle_rejects_in_place_snapshot_rewrites(self):
         pod = {'metadata': {'uid': 'old', 'annotations': {
             'cnpg-backup.djosh34.github.io/owner': 'cluster',

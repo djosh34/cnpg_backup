@@ -71,7 +71,7 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
         {'apiGroups': ['backup.cnpg-backup.djosh34.github.io'], 'resources': ['repositories/status'], 'verbs': ['patch']},
         {'apiGroups': [''], 'resources': ['events'], 'verbs': ['create']},
         {'apiGroups': ['postgresql.cnpg.io'], 'resources': ['clusters'], 'verbs': ['get']},
-        {'apiGroups': [''], 'resources': ['persistentvolumeclaims'], 'verbs': ['get']},
+        {'apiGroups': [''], 'resources': ['persistentvolumeclaims', 'pods'], 'verbs': ['get']},
         {'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['get', 'create']},
         {'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': sorted(set(secret_names)), 'verbs': ['get']},
     ]
