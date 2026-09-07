@@ -27,15 +27,91 @@ renderer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(renderer)
 
 
+def redact_diagnostics(text):
+    # Logs from this disposable fixture only. Never collect Secret objects,
+    # commands, environments or arbitrary Pod annotations. Drop sensitive lines
+    # and PEM blocks rather than try to preserve credential-bearing context.
+    text = re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|\Z)',
+                  '<REDACTED>', text, flags=re.S)
+    for value in ('disposable-test-only-access', 'disposable-test-only-secret'):
+        text = text.replace(value, '<REDACTED>').replace(base64.b64encode(value.encode()).decode(), '<REDACTED>')
+    return '\n'.join('<REDACTED>' if re.search(r'password|secret|token|authorization|credential|access.?key|://[^/\s]+@',
+                                              line, re.I) else line for line in text.splitlines())
+
+
 def run(*args, check=True, timeout=300, input=None, expect_failure=False):
-    result = subprocess.run([str(a) for a in args], cwd=ROOT, input=input, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    try:
+        result = subprocess.run([str(a) for a in args], cwd=ROOT, input=input, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired's default rendering reflects the full command argv,
+        # which can contain a Secret patch. Do not propagate that exception.
+        raise RuntimeError('test command timed out; argv/input withheld') from None
     if expect_failure:
         if result.returncode == 0:
-            raise RuntimeError(f'{args}: command unexpectedly succeeded')
+            raise RuntimeError('test command unexpectedly succeeded; argv/input withheld')
     elif check and result.returncode:
-        raise RuntimeError(f'{args}: {result.stdout[-12000:]}')
+        sensitive = any(re.search(r'secret|password|token', str(arg), re.I) for arg in args)
+        sensitive = sensitive or (input is not None and bool(re.search(r'secret|password|token', input, re.I)))
+        diagnostic = '<REDACTED>' if sensitive else redact_diagnostics(result.stdout)[-12000:]
+        raise RuntimeError(f'test command exited {result.returncode}; argv/input withheld: ' + diagnostic)
     return result.stdout
+
+
+def save_log(filename, text, limit=128000):
+    (OUT / filename).write_bytes(redact_diagnostics(text).encode()[:limit])
+
+
+def pod_evidence(pod):
+    status = pod.get('status', {})
+    result = {'name': pod['metadata']['name'], 'uid': pod['metadata']['uid'], 'phase': status.get('phase'),
+              'containers': []}
+    for kind in ('initContainerStatuses', 'containerStatuses'):
+        for container in status.get(kind, [])[:8]:
+            item = {key: container.get(key) for key in ('name', 'ready', 'restartCount', 'imageID')}
+            for field in ('state', 'lastState'):
+                item[field] = {state: {key: value for key, value in details.items()
+                                      if key in ('reason', 'exitCode', 'signal', 'startedAt', 'finishedAt')}
+                               for state, details in container.get(field, {}).items()}
+            result['containers'].append(item)
+    return result
+
+
+def collect_pod_evidence():
+    # A 60s total budget, <=24 Pods/namespace, <=16 container statuses/Pod,
+    # <=64KiB per current/previous log. Only two owned fixture namespaces.
+    # API/exec errors are best-effort diagnostics, never a new test verdict.
+    deadline = time.monotonic() + 60
+    errors = []
+    def collect(filename, *args):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            return kube(*args, '--request-timeout=8s', timeout=min(10, remaining))
+        except Exception as error:
+            errors.append({'artifact': filename, 'errorType': type(error).__name__})
+            return None  # never reflect argv/output/exception text
+    for namespace in (NS, 'cnpg-system'):
+        raw = collect(namespace + '-pods', 'get', 'pods', '-n', namespace, '-o', 'json')
+        if raw is None:
+            continue
+        try:
+            pods = json.loads(raw)['items'][:24]
+            for pod in pods:
+                info = pod_evidence(pod)
+                prefix = namespace + '-' + info['name']
+                (OUT / (prefix + '-status.json')).write_text(json.dumps(info, indent=2) + '\n')
+                for container in info['containers']:
+                    for previous in (False, True) if container['restartCount'] else (False,):
+                        filename = prefix + '-' + container['name'] + ('-previous' if previous else '') + '.log'
+                        logs = collect(filename, 'logs', info['name'], '-n', namespace, '-c', container['name'],
+                                       '--tail=100', '--limit-bytes=65536', '--timestamps', *(['--previous'] if previous else []))
+                        if logs is not None:
+                            save_log(filename, logs, 65536)
+        except Exception as error:
+            errors.append({'artifact': namespace + '-pods', 'errorType': type(error).__name__})
+    (OUT / 'pod-collection.json').write_text(json.dumps({'errors': errors, 'deadlineReached': time.monotonic() >= deadline}, indent=2) + '\n')
 
 
 def kube(*args, **kwargs):
@@ -90,7 +166,7 @@ def loop_diagnostics(label):
                'ls -l /dev/loop*; losetup --list; '
                'for p in /sys/class/block/loop*/dev; do echo "$p $(cat "$p")"; done; '
                'findmnt -t ext4; df -h /var/local', check=False)
-    (OUT / ('loops-' + label + '.log')).write_text(text[-128000:])
+    save_log('loops-' + label + '.log', text)
 
 
 def loop_device(value):
@@ -140,7 +216,7 @@ def bounded_workspaces():
         path = f'/var/local/cnpg-backup-work-{i}'
         try:
             evidence = provision_filesystem(path)
-            (OUT / f'finite-fs-{i}.log').write_text(evidence)
+            save_log(f'finite-fs-{i}.log', evidence)
         except Exception:
             loop_diagnostics(f'failure-{i}')
             raise
@@ -190,7 +266,7 @@ def native_metadata_matrix(report):
         standby = kube('exec', '-n', NS, name, '-c', 'postgres', '--', 'psql', '-U', 'postgres', '-d', 'postgres', '-Atqc',
                        'SELECT pg_is_in_recovery()').strip() == 't'
         result = kube('exec', '-n', NS, name, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native', check=not standby)
-        (OUT / (name + '-native-preflight.log')).write_text(result)
+        save_log(name + '-native-preflight.log', result)
         if standby:
             assert 'unsupported actual PostgreSQL' in result, result
         else:
@@ -234,7 +310,7 @@ def native_metadata_matrix(report):
         record('fault-observed')
         result = kube('exec', '-n', NS, primary, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup',
                       'instance', '--check-native', expect_failure=True)
-        (OUT / 'native-summary-rejection.log').write_text(result[-12000:])
+        save_log('native-summary-rejection.log', result, 12000)
         assert 'unsupported actual PostgreSQL' in result, result
         assert sql('SHOW summarize_wal').strip() == 'off', 'fault cleared before rejection was observed'
     finally:
@@ -299,7 +375,7 @@ def capacity_matrix(image, report):
         code = pod['status']['containerStatuses'][0]['state']['terminated']['exitCode']
         assert (code == 0) == success, f'capacity {name} returned {code}'
         logs = kube('logs', podname, '-n', NS, check=False)
-        (OUT / (podname + '.log')).write_text(logs)
+        save_log(podname + '.log', logs)
         if not success:
             assert 'dedicated writable finite ext4/xfs filesystem' in logs, logs
         kube('delete', 'pod', podname, '-n', NS, '--wait=true')
@@ -445,8 +521,8 @@ def recovery_placement_matrix(cluster, repository, report):
         assert main['command'][:6] == ['/cnpg-backup/bin/cnpg-backup', 'recovery-guard', '--', '/controller/manager', 'instance', 'restore']
         assert not job['spec'].get('hostPID') and not job['spec'].get('shareProcessNamespace')
         logs = kube('logs', job['metadata']['name'], '-n', NS, '-c', 'full-recovery', check=False)
-        (OUT / (name + '-main.log')).write_text(logs[-128000:])
-        (OUT / (name + '-pod.json')).write_text(json.dumps(job, indent=2))
+        save_log(name + '-main.log', logs)
+        (OUT / (name + '-pod.json')).write_text(json.dumps(pod_evidence(job), indent=2))
         if poison:
             assert 'TargetOwnershipUncertain' in logs, logs[-4000:]
             assert 'cleaning up existing' not in logs
@@ -538,7 +614,7 @@ def main():
             result = kube('apply', '--server-side', '--dry-run=server', '--field-manager=cnpg-backup-smoke', '-f', '-',
                           input=json.dumps(cluster), check=False)
             admission_attempts.append(result[-4000:])
-            (OUT / 'discovery.log').write_text('\n'.join(admission_attempts))
+            save_log('discovery.log', '\n'.join(admission_attempts))
             return admission_ready(result)
         wait(discovered, 'CNPG mTLS plugin discovery and validation')
         apply(cluster)
@@ -585,10 +661,11 @@ def main():
     finally:
         (OUT / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
         if created:
-            (OUT / 'resources.log').write_text(kube('get', 'pods,jobs,pvc,clusters', '-A', '-o', 'wide', check=False)[-256000:])
-            (OUT / 'events.log').write_text(kube('get', 'events', '-A', '--sort-by=.metadata.creationTimestamp', check=False)[-256000:])
+            collect_pod_evidence()
+            save_log('resources.log', kube('get', 'pods,jobs,pvc,clusters', '-A', '-o', 'wide', check=False), 256000)
+            save_log('events.log', kube('get', 'events', '-A', '--sort-by=.metadata.creationTimestamp', check=False), 256000)
             for namespace, name in [('cnpg-system', 'cnpg-backup'), ('cnpg-system', 'cnpg-controller-manager')]:
-                (OUT / (name + '.log')).write_text(kube('logs', '-n', namespace, 'deployment/' + name, '--all-containers', '--tail=500', check=False)[-256000:])
+                save_log(name + '.log', kube('logs', '-n', namespace, 'deployment/' + name, '--all-containers', '--tail=500', check=False), 256000)
             loop_diagnostics('final')
             # Only detach loops backed by this disposable node's own files.
             run('docker', 'exec', NAME + '-control-plane', 'sh', '-c',

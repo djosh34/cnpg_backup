@@ -134,6 +134,13 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
   CNPG preflight and a fresh/all-fresh-PVC Begin → actual CNPG preflight → clean
   Drain case. Unavailable materialization must still fail; this is **not** a
   full restore/replay test. Full data/replay/pause/crash integration extends in G.
+- The smoke collector captures allowlisted Pod/container status (including last
+  termination), bounded current/previous container logs and fault-setting stages.
+  Two disposable namespaces, a60s total request budget and64KiB/container-log cap;
+  no Secret objects, Pod env/commands/annotations or termination messages are
+  exported. Log redaction removes private-key blocks and credential-bearing
+  lines; command failures/timeouts never reflect argv/input, and Secret command
+  failures suppress output. Collection API errors record only exception types.
 - Real lifecycle matrix execution remains in progress. Definitions and local
   fakes do not constitute a hosted CNPG PASS. Local Docker and GCC are unavailable;
   hosted CI supplies real namespaces/CNPG and test-only race compilation.
@@ -184,6 +191,12 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
    product validation/RBAC/default changes. Local harness red/green covers the
    exact original error, cleanup after lost SET response/probe failure, and
    wrong-reason/zero-exit negative controls. Hosted confirmation remains pending.
+
+C mergecca29ed was reconciled into D at3074da6 without conflicts; both MinIO
+integration targets and D's guard/CNPG entry points remain. Repository/S3 source
+matches C exactly. Full local Go tests/vet, Python harness, CRD and static/native
+build checks pass at3074da6. This is not hosted acceptance or G's lifecycle hold
+integration; data capabilities remain safely unadvertised.
 
 No production deployment/data/bucket operations, GitHub writes or reviewer/worker
 delegation were performed by this scoped author. Two fresh independent reviews

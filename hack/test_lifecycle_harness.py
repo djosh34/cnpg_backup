@@ -142,6 +142,69 @@ class LifecycleHarness(unittest.TestCase):
         with patch.object(cnpg_smoke.subprocess, 'run', return_value=result):
             self.assertEqual(cnpg_smoke.run('fixture', expect_failure=True), result.stdout)
 
+    def test_command_failure_and_timeout_never_reflect_secret_argv_or_output(self):
+        args = ('kubectl', 'patch', 'secret', 'auth', '-p', 'DO-NOT-COPY')
+        result = subprocess.CompletedProcess(args, 1, stdout='DO-NOT-COPY')
+        for outcome in (result, subprocess.TimeoutExpired(args, 1, output='DO-NOT-COPY')):
+            with self.subTest(outcome=type(outcome).__name__):
+                options = {'side_effect': outcome} if isinstance(outcome, Exception) else {'return_value': outcome}
+                with patch.object(cnpg_smoke.subprocess, 'run', **options):
+                    with self.assertRaises(RuntimeError) as raised:
+                        cnpg_smoke.run(*args)
+                    self.assertNotIn('DO-NOT-COPY', str(raised.exception))
+                    self.assertIn('withheld', str(raised.exception))
+
+    def test_pod_collector_is_bounded_redacted_and_keeps_previous_failure(self):
+        pod = {'metadata': {'name': 'database-1', 'uid': 'pod-uid', 'annotations': {'secret': 'DO-NOT-COPY'}},
+               'spec': {'containers': [{'name': 'postgres', 'env': [{'name': 'PASSWORD', 'value': 'DO-NOT-COPY'}]}]},
+               'status': {'phase': 'Running', 'initContainerStatuses': [
+                   {'name': 'cnpg-backup', 'ready': False, 'restartCount': 1,
+                    'state': {'waiting': {'reason': 'CrashLoopBackOff'}},
+                    'lastState': {'terminated': {'exitCode': 1, 'reason': 'Error', 'message': 'token=DO-NOT-COPY'}}}]}}
+        calls = []
+        def kube(*args, **kwargs):
+            calls.append(args)
+            self.assertLessEqual(kwargs['timeout'], 10)
+            self.assertTrue(any(str(arg).startswith('--request-timeout=') for arg in args))
+            self.assertNotIn('secret', args)
+            if args[:2] == ('get', 'pods'):
+                return json.dumps({'items': [pod]})
+            self.assertEqual(args[0], 'logs')
+            self.assertIn('--limit-bytes=65536', args)
+            self.assertIn('--tail=100', args)
+            return ('runtime failure: native settings\nAuthorization: Bearer DO-NOT-COPY\n'
+                    '-----BEGIN PRIVATE KEY-----\nDO-NOT-COPY\n-----END PRIVATE KEY-----\n'
+                    'disposable-test-only-secret\n' + 'x' * 70000)
+        with tempfile.TemporaryDirectory() as temp, patch.object(cnpg_smoke, 'OUT', Path(temp)), \
+                patch.object(cnpg_smoke, 'kube', side_effect=kube):
+            cnpg_smoke.collect_pod_evidence()
+            files = list(Path(temp).glob('*'))
+            self.assertTrue(files)
+            text = '\n'.join(path.read_text() for path in files)
+            self.assertNotIn('DO-NOT-COPY', text)
+            self.assertNotIn('disposable-test-only-secret', text)
+            self.assertIn('runtime failure: native settings', text)
+            self.assertIn('CrashLoopBackOff', text)
+            self.assertIn('<REDACTED>', text)
+            self.assertTrue(any('--previous' in args for args in calls))
+            self.assertTrue(all(path.stat().st_size <= 65536 for path in files if path.suffix == '.log'))
+
+    def test_pod_collector_stops_requests_at_total_deadline(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(cnpg_smoke, 'OUT', Path(temp)), \
+                patch.object(cnpg_smoke.time, 'monotonic', side_effect=[0, 61, 62, 63]), \
+                patch.object(cnpg_smoke, 'kube') as kube:
+            cnpg_smoke.collect_pod_evidence()
+            kube.assert_not_called()
+            self.assertTrue(json.loads((Path(temp) / 'pod-collection.json').read_text())['deadlineReached'])
+
+    def test_pod_collector_errors_do_not_replace_original_failure(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(cnpg_smoke, 'OUT', Path(temp)), \
+                patch.object(cnpg_smoke, 'kube', side_effect=RuntimeError('secret=DO-NOT-COPY')):
+            cnpg_smoke.collect_pod_evidence()
+            text = '\n'.join(path.read_text() for path in Path(temp).glob('*'))
+            self.assertIn('RuntimeError', text)
+            self.assertNotIn('DO-NOT-COPY', text)
+
     def test_kernel_known_missing_loop_node_uses_same_minor(self):
         self.assertEqual(cnpg_smoke.loop_device('/dev/loop8 (lost)\n'), '/dev/loop8')
         self.assertEqual(cnpg_smoke.loop_device('/dev/loop37\n'), '/dev/loop37')
