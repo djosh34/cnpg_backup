@@ -27,3 +27,13 @@ _Avoid_: Object age (not a measure of recoverability)
 
 **Backup chain**:
 A full backup and the dependent backups required to reconstruct a selected backup.
+
+**Repository lineage**:
+An independently owned history of physical backups and archived WAL. A restored clone has its own lineage even when its PostgreSQL system identifier matches its source.
+_Avoid_: Cluster name (names can be reused)
+
+**Bundled WAL**:
+WAL preserved with a physical backup to make that backup consistent. It is distinct from later archived WAL needed to reach a recovery target beyond the backup.
+
+**Backup retirement**:
+The permanent withdrawal of a backup from available recovery selections, distinct from removal of its stored bytes.
