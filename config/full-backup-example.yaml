@@ -1,0 +1,31 @@
+# The Cluster must select a Repository with a verified finite capture workspace,
+# PG18.6, summarize_wal=on and sufficient summary retention. No fallback exists.
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: full-on-demand
+spec:
+  cluster:
+    name: database
+  method: plugin
+  target: primary
+  pluginConfiguration:
+    name: cnpg-backup.djosh34.github.io
+    parameters:
+      backupType: full
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: daily-full
+spec:
+  cluster:
+    name: database
+  schedule: "0 0 2 * * *"
+  backupOwnerReference: self
+  method: plugin
+  target: primary
+  pluginConfiguration:
+    name: cnpg-backup.djosh34.github.io
+    parameters:
+      backupType: full

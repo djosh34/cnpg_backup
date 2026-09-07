@@ -109,6 +109,18 @@ func (a *Attempt) RequestSHA256() string { return a.claim.RequestSHA256 }
 // enforces transport/raw integrity and parent identity again before commit.
 // Files stay caller-owned, immutable and disk-backed for the whole call.
 func (a *Attempt) Publish(ctx context.Context, c Commit, manifest *os.File, files []*os.File) (*Result, error) {
+	return a.publish(ctx, c, manifest, files, nil)
+}
+
+// PublishChecked performs the native caller's final source continuity check
+// after remote payload verification, immediately before commit dispatch.
+func (a *Attempt) PublishChecked(ctx context.Context, c Commit, manifest *os.File, files []*os.File, check func(context.Context) error) (*Result, error) {
+	if check == nil {
+		return nil, ErrInvalid
+	}
+	return a.publish(ctx, c, manifest, files, check)
+}
+func (a *Attempt) publish(ctx context.Context, c Commit, manifest *os.File, files []*os.File, check func(context.Context) error) (*Result, error) {
 	h := a.hold
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -164,6 +176,14 @@ func (a *Attempt) Publish(ctx context.Context, c Commit, manifest *os.File, file
 		return nil, e
 	}
 	if e = r.parent(ctx, c); e != nil {
+		return nil, e
+	}
+	if check != nil {
+		if e = check(ctx); e != nil {
+			return nil, e
+		}
+	}
+	if e = ctx.Err(); e != nil {
 		return nil, e
 	}
 	b, _ := json.Marshal(c)

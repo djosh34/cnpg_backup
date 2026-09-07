@@ -18,6 +18,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 
 from bootstrap import CACHE, LOCK, REPO
 from build import OUT
@@ -25,12 +26,33 @@ from build import OUT
 
 def s3_command(config, endpoint, method, key, source=None, dest=None):
     # -q must be first: an ambient .curlrc can add URLs or credential traces.
-    command = ['curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '60', '--config', config, '-X', method]
+    command = ['curl', '-q', '--silent', '--show-error', '--fail-with-body', '--max-time', '60', '--config', config, '-X', method]
     if source:
         command += ['--upload-file', source]
     if dest:
         command += ['--output', dest]
     return [*command, endpoint + '/foundation/' + key]
+
+
+def create_bucket(run, command, sleep=time.sleep):
+    """Retry only MinIO's exact startup response; retain every first failure."""
+    for attempt in range(30):
+        code, text = run([*command, '--write-out', '\nCNPG_HTTP=%{http_code}\n'], check=False)
+        if code == 0:
+            return
+        retry = False
+        if code == 22 and text.endswith('CNPG_HTTP=503'):
+            start, end = text.find('<Error'), text.find('</Error>')
+            if 0 <= start < end and end - start <= 65536:
+                try:
+                    error = ET.fromstring(text[start:end + len('</Error>')])
+                    retry = error.findtext('Code') == 'XMinioServerNotInitialized'
+                except ET.ParseError:
+                    pass
+        if not retry:
+            raise RuntimeError('MinIO bucket setup rejected; original response retained in commands.log')
+        sleep(.1)
+    raise RuntimeError('MinIO bucket initialization deadline; all responses retained')
 
 
 def main():
@@ -195,7 +217,7 @@ def main():
             return run(s3_command(config, endpoint, method, key, source, dest))
 
         if not args.native_only:
-            s3('PUT', '')
+            create_bucket(run, s3_command(config, endpoint, 'PUT', ''))
             passed('disposable_minio_sigv4_bucket')
         source = work / 'source'
         pg('initdb', '-D', source, '--waldir', work / 'source-wal', '-U', 'fixture', '-A', 'trust', '--no-locale', '--encoding=UTF8', '--data-checksums')
@@ -208,6 +230,10 @@ def main():
         if sql('SHOW server_version_num') != '180006':
             raise RuntimeError('wrong live server version')
         sql('CREATE ROLE backup LOGIN REPLICATION')
+        run(['env', f'CNPG_TEST_PG_BIN={bin_dir}', f'CNPG_TEST_PG_SOCKET={sock}',
+             f'CNPG_TEST_PG_LIBS={OUT / "test-libs"}', 'CNPG_TEST_PG_USER=fixture', 'CNPG_TEST_PG_ROLE=backup',
+             CACHE / 'go/bin/go', 'test', './internal/postgres', '-run', '^TestNativeLabelTimeZones$', '-count=1', '-v'])
+        passed('source_timezone_DST_label_normalization')
         salt = random.Random(args.seed).randrange(1, 2**31)
         transaction('full', f"CREATE TABLE t(id int PRIMARY KEY, v text); INSERT INTO t SELECT i, repeat(md5('{salt}:' || i::text),32) FROM generate_series(1,20000) i; CREATE TABLE reset_me(v text); INSERT INTO reset_me VALUES('old'); CREATE TABLE recreated(v text); INSERT INTO recreated VALUES('old')")
 

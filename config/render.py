@@ -45,6 +45,11 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
         'cnpg.io/pluginPort': '9090', 'cnpg.io/pluginClientSecret': 'cnpg-backup-client-tls',
         'cnpg.io/pluginServerSecret': 'cnpg-backup-server-tls', 'cnpg.io/pluginServerName': service_name})
     objects.append(service)
+    # Separate internal metrics Service: never a CNPG-discoverable plugin/data proxy.
+    metrics = resource('v1', 'Service', 'cnpg-backup-metrics', namespace, spec={
+        'selector': {'app': 'cnpg-backup'}, 'ports': [{'name': 'metrics', 'port': 9091, 'targetPort': 'metrics'}]})
+    metrics['metadata']['labels'] = {'app': 'cnpg-backup-metrics'}
+    objects.append(metrics)
     security = {'runAsUser': 26, 'runAsGroup': 26, 'runAsNonRoot': True, 'readOnlyRootFilesystem': True,
                 'allowPrivilegeEscalation': False, 'capabilities': {'drop': ['ALL']}, 'seccompProfile': {'type': 'RuntimeDefault'}}
     objects.append(resource('apps/v1', 'Deployment', 'cnpg-backup', namespace, spec={
@@ -52,7 +57,7 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
         'template': {'metadata': {'labels': {'app': 'cnpg-backup'}}, 'spec': {'serviceAccountName': 'cnpg-backup',
             'securityContext': {'fsGroup': 26, 'runAsUser': 26, 'runAsGroup': 26, 'runAsNonRoot': True},
             'containers': [{'name': 'manager', 'image': manager_image, 'imagePullPolicy': 'IfNotPresent',
-                'command': ['/usr/local/bin/cnpg-backup', 'manager'], 'ports': [{'containerPort': 9090, 'name': 'grpc'}],
+                'command': ['/usr/local/bin/cnpg-backup', 'manager'], 'ports': [{'containerPort': 9090, 'name': 'grpc'}, {'containerPort': 9091, 'name': 'metrics'}],
                 'readinessProbe': {'tcpSocket': {'port': 9090}, 'periodSeconds': 2, 'timeoutSeconds': 1},
                 'securityContext': security, 'resources': {'requests': {'cpu': '50m', 'memory': '64Mi'}, 'limits': {'cpu': '500m', 'memory': '256Mi'}},
                 'volumeMounts': [{'name': 'config', 'mountPath': '/cnpg-backup/manager', 'readOnly': True},
@@ -70,7 +75,8 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
         {'apiGroups': ['backup.cnpg-backup.djosh34.github.io'], 'resources': ['repositories'], 'verbs': ['get', 'list']},
         {'apiGroups': ['backup.cnpg-backup.djosh34.github.io'], 'resources': ['repositories/status'], 'verbs': ['patch']},
         {'apiGroups': [''], 'resources': ['events'], 'verbs': ['create']},
-        {'apiGroups': ['postgresql.cnpg.io'], 'resources': ['clusters'], 'verbs': ['get']},
+        {'apiGroups': ['postgresql.cnpg.io'], 'resources': ['clusters'], 'verbs': ['get', 'list']},
+        {'apiGroups': ['postgresql.cnpg.io'], 'resources': ['backups'], 'verbs': ['list', 'watch']},
         {'apiGroups': [''], 'resources': ['persistentvolumeclaims', 'pods'], 'verbs': ['get']},
         {'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['get', 'create']},
         {'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': sorted(set(secret_names)), 'verbs': ['get']},

@@ -7,10 +7,49 @@ import tempfile
 import threading
 import unittest
 
-from recovery import s3_command
+from recovery import s3_command, create_bucket
 
 
 class S3IsolationTests(unittest.TestCase):
+    def test_bucket_startup_retries_only_exact_MinIO_error(self):
+        for code in ('XMinioServerNotInitialized', 'AccessDenied', 'ServiceUnavailable'):
+            observed = []
+            class Handler(BaseHTTPRequestHandler):
+                def do_PUT(self):
+                    observed.append(self.path)
+                    body = (f'<Error><Code>{code}</Code></Error>').encode() if len(observed) == 1 else b''
+                    self.send_response(503 if body else 200)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                def log_message(self, *_args):
+                    pass
+            server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                with tempfile.TemporaryDirectory() as directory:
+                    config = Path(directory) / 'curl.conf'
+                    config.write_text('noproxy = "*"\n')
+                    outputs = []
+                    def run(command, check):
+                        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
+                        outputs.append(result.stdout.strip())
+                        return result.returncode, result.stdout.strip()
+                    command = s3_command(config, f'http://127.0.0.1:{server.server_port}', 'PUT', '')
+                    if code == 'XMinioServerNotInitialized':
+                        create_bucket(run, command, sleep=lambda _: None)
+                        self.assertEqual(len(observed), 2)
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            create_bucket(run, command, sleep=lambda _: None)
+                        self.assertEqual(len(observed), 1)
+                    self.assertIn(code, outputs[0], 'first failure body must be retained')
+            finally:
+                server.shutdown()
+                thread.join()
+                server.server_close()
+
     def test_ambient_curl_configuration_cannot_add_targets_or_traces(self):
         requests = []
 

@@ -1,0 +1,11 @@
+{
+  "promtool": {
+    "version": "3.5.0",
+    "revision": "8be3a9560fbdd18a94dedec4b747c35178177202",
+    "url": "https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz",
+    "sha256": "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a",
+    "member": "prometheus-3.5.0.linux-amd64/promtool",
+    "binary_sha256": "e59210d5474e2c811a4460fb1593d708b94d58107ae62e9d44e88029bb7e5805",
+    "runtime_dependency": false
+  }
+}

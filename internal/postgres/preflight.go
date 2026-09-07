@@ -7,12 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/djosh34/cnpg_backup/internal/configuration"
@@ -40,12 +38,26 @@ type serverState struct {
 	ArchiveSeconds int64             `json:"archiveSeconds"`
 	ArchiveMode    string            `json:"archiveMode"`
 	Tablespaces    map[string]string `json:"tablespaces"`
+	TablespaceOIDs map[string]uint32 `json:"tablespaceOIDs"`
+	Postmaster     string            `json:"postmaster"`
+	Clock          string            `json:"clock"`
+	LogTimezone    string            `json:"logTimezone"`
+	ConfigLoaded   string            `json:"configLoaded"`
+	FreeSenders    int               `json:"freeSenders"`
+	FreeSlots      int               `json:"freeSlots"`
 }
 
 // All functions/settings here are public to CNPG's replication role. Privileged
 // physical identity is read separately using pg_controldata, never SQL superuser.
 const preflightSQL = `SELECT json_build_object(
  'version', current_setting('server_version_num')::int,
+ 'freeSenders', current_setting('max_wal_senders')::int - (SELECT count(*) FROM pg_stat_replication),
+ 'freeSlots', current_setting('max_replication_slots')::int - (SELECT count(*) FROM pg_replication_slots),
+ 'postmaster', to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+ 'clock', to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+ 'logTimezone', current_setting('log_timezone'),
+ 'configLoaded', to_char(pg_conf_load_time() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+ 'tablespaceOIDs', COALESCE((SELECT json_object_agg(spcname,oid::bigint) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')), '{}'::json),
  'role', current_user, 'primary', NOT pg_is_in_recovery(),
  'blockSize', current_setting('block_size')::bigint,
  'segmentSize', pg_size_bytes(current_setting('segment_size')),
@@ -97,18 +109,7 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 func command(ctx context.Context, env []string, tool string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, tools+tool, args...)
-	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 2 * time.Second
-	var out, diagnostics boundedOutput
-	cmd.Stdout = &out
-	cmd.Stderr = &diagnostics
-	if cmd.Run() != nil || out.exceeded || diagnostics.exceeded {
-		return nil, errors.New("native metadata command failed (authentication, availability, timeout or output limit)")
-	}
-	return out.data, nil
+	return runTool(ctx, env, tool, args...)
 }
 
 // Check runs real certificate-authenticated local-primary SQL plus mounted
@@ -191,7 +192,13 @@ func checkFromRoot(ctx context.Context, root *os.Root, wal bool) error {
 			return errors.New("unmanaged actual data/tablespace symlink layout")
 		}
 	}
-	directory, err := os.MkdirTemp("/cnpg-backup/work", "native-auth-")
+	// Standalone --preflight diagnostics are not admitted sidecar operations;
+	// keep their independently owned temporary files outside the reclaimable tree.
+	scratch := "/cnpg-backup/work"
+	if nativeWorkspaceLock.Load() != nil {
+		scratch = NativeWorkspace
+	}
+	directory, err := os.MkdirTemp(scratch, "native-auth-")
 	if err != nil {
 		return errors.New("native private workspace unavailable")
 	}

@@ -1,0 +1,21 @@
+# Optional Prometheus Operator integration. Adapt namespaces and selectors to
+# your monitoring installation. Restrict port 9091 to monitoring workloads.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cnpg-backup
+  namespace: cnpg-system
+spec:
+  namespaceSelector:
+    matchNames: [cnpg-system]
+  selector:
+    matchLabels:
+      app: cnpg-backup-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 5s
+      # The sample namespace is the managed Cluster namespace, not the manager
+      # Service's namespace. Preserve it rather than creating exported_namespace.
+      honorLabels: true

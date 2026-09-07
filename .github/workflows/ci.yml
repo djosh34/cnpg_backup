@@ -18,7 +18,20 @@ jobs:
         env:
           CGO_ENABLED: '1'
           GOTOOLCHAIN: local
-        run: .work/tools/go/bin/go test -race -count=1 -timeout=120s ./...
+        run: |
+          export CNPG_PROMTOOL="$(python3 hack/test_tools.py)"
+          .work/tools/go/bin/go test -race -count=1 -timeout=120s ./...
+      - name: Bounded hostile native input fuzzing (CGO-free)
+        env:
+          CGO_ENABLED: '0'
+          GOTOOLCHAIN: local
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          for target in FuzzNativeManifest FuzzNativeArchive; do
+            .work/tools/go/bin/go test -json ./internal/postgres -run '^$' -fuzz "^${target}$" -fuzztime=30s -parallel=2 -timeout=90s \
+              | tee "artifacts/fast/${target}.jsonl"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

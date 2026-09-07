@@ -64,7 +64,7 @@ class Fixture:
         self.root.mkdir()
         self.targets = [('data', '/var/lib/postgresql/data'), ('wal', '/var/lib/postgresql/wal'),
                         ('tbs', '/var/lib/postgresql/tablespaces/fast_space')]
-        for path in ['config', 'bin', 'plugins', 'test', *[a for a, _ in self.targets]]:
+        for path in ['config', 'bin', 'plugins', 'test', 'work', *[a for a, _ in self.targets]]:
             (self.root / path).mkdir(mode=0o700)
         config = {'clusterUID': str(uuid.uuid4()), 'operationUID': str(uuid.uuid4()),
                   'targets': [{'pvcUID': str(uuid.uuid4()), 'mount': b} for _, b in self.targets]}
@@ -84,7 +84,7 @@ class Fixture:
                 '--security-opt=no-new-privileges', '--user', f'{os.getuid()}:{os.getgid()}',
                 '--memory=256m', '--cpus=1', '--pids-limit=128', '-e', 'POD_UID=' + pod, '-e', 'SCENARIO=' + self.mode]
         mounts = [('config', '/cnpg-backup/config', True), ('bin', '/cnpg-backup/bin', role != 'sidecar'),
-                  ('plugins', '/plugins', False), ('test', '/test', False)]
+                  ('plugins', '/plugins', False), ('test', '/test', False), ('work', '/cnpg-backup/work', False)]
         mounts += [(a, b, False) for a, b in self.targets]
         for source, target, readonly in mounts:
             args += ['--mount', f'type=bind,source={self.root / source},target={target}' + (',readonly' if readonly else '')]

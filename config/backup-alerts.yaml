@@ -1,0 +1,66 @@
+# Install in a namespace selected by your Prometheus ruleSelector.
+# backupFreshness thresholds opt each requested type into schedule monitoring.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-backup
+spec:
+  groups:
+    - name: cnpg-backup
+      rules:
+        - alert: CNPGBackupFullNeverSuccessful
+          expr: (cnpg_backup_success_history_known{backup_type="full"} == 1 and on(repository_id,namespace,cluster,backup_type) cnpg_backup_freshness_max_age_seconds{backup_type="full"} > 0) unless on(repository_id,namespace,cluster,backup_type) cnpg_backup_last_success_timestamp_seconds{backup_type="full"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Configured full backup schedule has no durable success
+        - alert: CNPGBackupDifferentialNeverSuccessful
+          expr: (cnpg_backup_success_history_known{backup_type="differential"} == 1 and on(repository_id,namespace,cluster,backup_type) cnpg_backup_freshness_max_age_seconds{backup_type="differential"} > 0) unless on(repository_id,namespace,cluster,backup_type) cnpg_backup_last_success_timestamp_seconds{backup_type="differential"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Configured differential backup schedule has no durable success
+        - alert: CNPGBackupFullStale
+          expr: (time() - cnpg_backup_last_success_timestamp_seconds{backup_type="full"} > on(repository_id,namespace,cluster,backup_type) cnpg_backup_freshness_max_age_seconds{backup_type="full"}) and on(repository_id,namespace,cluster,backup_type) (cnpg_backup_success_history_known{backup_type="full"} == 1)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Full backup durable success is older than its configured budget
+        - alert: CNPGBackupDifferentialStale
+          expr: (time() - cnpg_backup_last_success_timestamp_seconds{backup_type="differential"} > on(repository_id,namespace,cluster,backup_type) cnpg_backup_freshness_max_age_seconds{backup_type="differential"}) and on(repository_id,namespace,cluster,backup_type) (cnpg_backup_success_history_known{backup_type="differential"} == 1)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Differential backup durable success is older than its configured budget
+        - alert: CNPGBackupFullFailing
+          expr: (increase(cnpg_backup_failures_total{backup_type="full"}[15m]) > 0) and on(repository_id,namespace,cluster,backup_type) (cnpg_backup_freshness_max_age_seconds{backup_type="full"} > 0)
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: A full backup invocation failed; inspect CNPG Backup status
+        - alert: CNPGBackupDifferentialFailing
+          expr: (increase(cnpg_backup_failures_total{backup_type="differential"}[15m]) > 0) and on(repository_id,namespace,cluster,backup_type) (cnpg_backup_freshness_max_age_seconds{backup_type="differential"} > 0)
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: A differential backup invocation failed; no full fallback is performed
+        - alert: CNPGBackupFullHistoryUnknown
+          expr: (cnpg_backup_success_history_known{backup_type="full"} == 0) and on(repository_id,namespace,cluster,backup_type) (cnpg_backup_freshness_max_age_seconds{backup_type="full"} > 0)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Full backup history cannot be established; inspect storage/configuration health
+        - alert: CNPGBackupDifferentialHistoryUnknown
+          expr: (cnpg_backup_success_history_known{backup_type="differential"} == 0) and on(repository_id,namespace,cluster,backup_type) (cnpg_backup_freshness_max_age_seconds{backup_type="differential"} > 0)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Differential backup history cannot be established; inspect storage/configuration health
