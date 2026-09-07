@@ -2,13 +2,13 @@
 
 This is the **fresh-thread implementation orchestrator brief**. Read this first, not the chat history.
 
-**State: DESIGN IN PROGRESS — not ready to launch implementation.** The owner requires all technical/design questions to be resolved **before** handoff. The final design grill and source/experiment-backed decisions happen in planning, not as the first phase of implementation. Commit planning work as requested without labeling an unfinished design approved.
+**State: finalized technical specification; launch is authorized only by the explicit READY resolution on [issue #14](https://github.com/djosh34/cnpg_backup/issues/14) linking the independently reviewed, pushed frozen commit.** All owner Q1–Q12 answers are recorded. Read the reconciled [design](design.md), its scoped evidence and [release/security contract](release-policy.md). Missing READY still prohibits implementation; planning finalization and independent review are not product qualification.
 
 ## Authority and completion boundary
 
 The owner has authorized autonomous commits, branch pushes, PR creation, review/fix cycles, CI and merges **after the design is complete**. There are no routine owner approval or manual dispatch steps in implementation. Review findings may be rejected with recorded, defensible reasons; all findings must be addressed, not necessarily implemented. The repository is public and hosted CI runs automatically as needed.
 
-The owner selected automatic **versioned GitHub releases and qualified container images**, with **no production deployment**: consuming teams run the product in their environments. Original project work is **all rights reserved**, not open source; preserve third-party licenses/notices and do not invent a downstream project license. Finalize versioning, distribution details, support scope and remaining operational trade-offs in the [design/handoff decision](https://github.com/djosh34/cnpg_backup/issues/14) before setting it READY. No production database/bucket operations belong to implementation or CI. Respect existing platform protections; verify before handoff that required credentials/rules allow the agreed autonomous delivery instead of leaving a predictable human step for later.
+The owner selected automatic **versioned GitHub releases and qualified container images**, with **no production deployment**: consuming teams run the product in their environments. Original project work is **all rights reserved**, not open source; preserve third-party licenses/notices and do not invent a downstream project license. The [release policy](release-policy.md) selects v0.1.0, Linux amd64, canonical GitHub releases with portable OCI archives and qualified `ghcr.io/djosh34/cnpg-backup-manager` / `cnpg-backup-pg18` images; the design/handoff resolution activates that contract. No production database/bucket operations belong to implementation or CI. Respect existing platform protections. [Executed platform preflight](research/platform-preflight.md) verified push/Actions/release/GHCR/OIDC authority without changing protections; recheck unexpected drift, never invent approvals or bypass rules.
 
 ## Sources of truth
 
@@ -16,6 +16,7 @@ The owner selected automatic **versioned GitHub releases and qualified container
 - [Design](design.md), [remote design asset](https://github.com/djosh34/cnpg_backup/issues/2): agreed architecture and safety invariants; update it from resolution comments before freeze.
 - [PR plan](pr-plan.md), [delivery graph](https://github.com/djosh34/cnpg_backup/issues/3): requirements, acceptance and native dependencies. PR sizes/package seams may adapt to evidence without dropping agreed behavior.
 - [Testing](testing.md): load when implementing tests, CI or qualification.
+- [Release/security contract](release-policy.md): exact endpoint, first-release policy, licensing, scans/provenance and resource gates. Research experiments are evidence for chosen mechanisms, not a substitute for actual product recovery.
 - [Review contract](agents/review.md): load for every review, disposition and merge.
 - [Paseo lifecycle](agents/paseo.md): load **before creating, waiting for, resuming or cleaning up any subagent**.
 

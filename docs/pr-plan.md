@@ -1,8 +1,8 @@
-# Proposed PR delivery plan
+# PR delivery plan
 
-Status: **draft**. PR means a planned implementation slice, not a pull request already opened. The [separate GitHub delivery epic](https://github.com/djosh34/cnpg_backup/issues/3) is the executable backlog; the [Wayfinder map](https://github.com/djosh34/cnpg_backup/issues/1) resolves design decisions. All technical/design blockers and the final owner grill are resolved before the READY handoff. Read [EXECUTE.md](EXECUTE.md) for autonomous implementation, Paseo Astra/high workers, independent reviews, automatic merges and restart behavior. This graph may be adjusted when evidence changes the best PR boundary; safety and acceptance goals remain binding.
+Status: **implementation graph, activated only by READY**, governed by the frozen [design](design.md), [release policy](release-policy.md) and issue #14 READY gate. PR means a planned implementation slice, not a pull request already opened. The [separate GitHub delivery epic](https://github.com/djosh34/cnpg_backup/issues/3) is the executable backlog; the [Wayfinder map](https://github.com/djosh34/cnpg_backup/issues/1) resolves design decisions. All technical/design blockers and the final owner grill are resolved before the READY handoff. Read [EXECUTE.md](EXECUTE.md) for autonomous implementation, Paseo Astra/high workers, independent reviews, automatic merges and restart behavior. This graph may be adjusted when evidence changes the best PR boundary; safety and acceptance goals remain binding.
 
-Each PR includes its own documentation and tests. [testing.md](testing.md) defines mandatory test tiers and the two-hour manual/reusable GitHub Actions recovery campaign; [agents/review.md](agents/review.md) defines two independent reviews and evidence-based disposition. All Go runtime builds use `CGO_ENABLED=0`; justify PostgreSQL tool exceptions. Keep simulation machinery in test code, not the product. Planning files are committed as a planning snapshot at the owner's request; finish and commit the final design before READY. Do not schedule a redundant initial documentation PR if the required plan is already in git.
+Each PR includes its own documentation and tests. [testing.md](testing.md) defines mandatory test tiers and the two-hour manual/reusable GitHub Actions recovery campaign; [agents/review.md](agents/review.md) defines two independent reviews and evidence-based disposition. All Go runtime builds use `CGO_ENABLED=0`; justify PostgreSQL tool exceptions. Keep simulation machinery in test code, not the product. Planning source/PG18/MinIO experiments already exist under docs/research; reuse their distinguishing assertions in the real harness without counting research scripts as product qualification. Finish independent final design review and commit/push before READY. Do not schedule a redundant initial documentation PR if the required plan is already in git.
 
 ## PR A — Establish build, dependency policy and recovery test harness
 
@@ -28,7 +28,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 
 **Requirements**
 - Configured SigV2/SigV4, endpoint/addressing, private CA and explicit credentials; no anonymous or signing downgrade fallback.
-- Streaming get/put, paginated list, metadata/checksum handling, bounded multipart upload/abort, delete and verified conditional operations needed by the chosen repository protocol.
+- Streaming get/put, paginated list, metadata/checksum handling, file-backed known-length Core multipart primitives, explicit gate-owned abort/delete and tested conditional operations. Do not allow the high-level SDK multipart error path to perform uncoordinated abort.
 - Cancellation, bounded retries and typed error categories; no ETag-as-SHA256 assumption.
 
 **Acceptance**
@@ -65,7 +65,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 
 **Requirements**
 - Identity/capabilities, manager gRPC security/discovery, instance/restore Unix sockets, idempotent lifecycle patches, configuration schema and validation.
-- Namespaced Secret/private CA projection, reload or documented rollout behavior, minimal RBAC and restricted containers.
+- Namespaced Secret/private CA projection, validated operation-snapshot reload, minimal RBAC and restricted containers. Pin the v0.5-operator/v0.6-plugin wire subset; lifecycle mounts and installs the exact static helper outside /plugins before main startup.
 - Reuse Backup/ScheduledBackup/Cluster recovery configuration; no second scheduler.
 - Advertise only implemented capabilities at each merge; safe unsupported-feature errors until data-path PRs land.
 
@@ -103,7 +103,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 
 **Requirements**
 - Managed native-tool subprocesses and replication auth, safe disk workspace, PG manifests, bounded compression/upload and commit publication.
-- Tool compatibility, tablespace/WAL-volume support or explicit preflight rejection, cancellation/process reaping and operation retries.
+- Tool compatibility, mandatory CNPG tablespace/separate-WAL support, cancellation/process reaping and operation retries. Preflight rejection applies only to layouts outside the agreed initial support; never use it to omit the agreed layouts.
 - Bundled bootstrap WAL and approved archive availability checks; CNPG result timestamps/LSNs/metadata are accurate.
 - Example native CNPG ScheduledBackup; no custom cron loop. Extend real-system fault scenarios and DST to capture/retry/cancellation; archive/backup acknowledgments are checked by the harness.
 
@@ -122,9 +122,9 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Goal:** demonstrate actual disaster recovery before adding dependent backups.
 
 **Requirements**
-- S3-only catalog resolution, eligible-backup/timeline selection, secure extraction and verification, custom WAL directory handling, restore-job integration.
+- S3-only catalog resolution, eligible-backup/timeline selection, secure extraction and original-input verification, custom WAL directory handling, restore-job integration. CNPG replays inside the Job: return the direct wal-fetch helper command, exit1 only on verified allowed absence and exit255 on required gaps/storage/helper failures; stock CNPG error exits are not safe for latest PITR.
 - Respect CNPG recovery targets and PostgreSQL replay semantics; explicit backup selection where target inference is unsupported.
-- Source archive read versus target archive write identity separation, automatic repository-wide deletion protection for plugin-managed restores (including cross-cluster restores; arbitrary external S3 readers are out of scope) and capacity preflight.
+- Source archive read versus target archive write identity separation, automatic repository-wide deletion protection for plugin-managed restores (including cross-cluster restores; arbitrary external S3 readers are out of scope), durable target plan, serialized target materialization and capacity preflight. Controller releases only stable lifecycle protection after proven Job/Pod completion; uncertain process-reader holders remain.
 - Introduce manually dispatched, reusable recovery workflow calling the same local harness. It can run the currently implemented full/PITR scenarios with seed, exact image digest and bounded duration, retaining failure evidence. It must not yet claim differential/retention qualification.
 
 **Acceptance**
@@ -161,7 +161,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 
 **Requirements**
 - Pure explainable keep/delete planner, window anchor, full-root safety floor, dependency closure and timeline-aware WAL reachability.
-- Periodic bounded execution/dry-run, active backup and restore protection, restartable expiration and orphan cleanup.
+- Periodic bounded execution/dry-run, nonexpiring active backup/restore protection, permanent retirement metadata/WAL slots and gate-owned orphan cleanup. A new process may replan after a conclusively released batch, never take over an ambiguous destructive owner.
 - Respect stronger local dependency requirements when receiving CNPG first-required-WAL hints.
 - Missing metadata/storage uncertainty stops deletion; bucket age-only expiry of live data is documented as incompatible.
 
@@ -212,7 +212,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Depends on:** PR J; approved release gates.
 **Not included:** claiming Dell certification, a general-purpose chaos framework, unbounded or non-diagnostic retry loops or calling real distributed execution fully deterministic.
 
-## Proposed implementation graph
+## Implementation graph
 
 ```mermaid
 flowchart TD

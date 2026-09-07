@@ -39,7 +39,7 @@ Use a LOGIN/REPLICATION role and replication `pg_hba.conf` authorization. `-X st
 
 Supply libpq connection settings via a private `PGSERVICEFILE`/`PGPASSFILE` or certificate/key file paths and a sanitized environment; never secret-bearing `--dbname` arguments. Set `--no-password`, bounded connection timeout, `psql -X -A -t -v ON_ERROR_STOP=1`, a fixed search path and fixed SQL. For TLS connections use verified CA/hostname and client certificates as required by CNPG; the disposable Unix-socket trust experiment is not TLS evidence.
 
-Preflight and postflight query server version, `pg_is_in_recovery()`, `pg_postmaster_start_time()`, `pg_control_system()`, `pg_control_checkpoint()`, `pg_control_init()`, `clock_timestamp()`, relevant settings and tablespace OID/name/location mapping. Compare with CNPG pod/primary identity. Validate:
+Preflight and postflight query server version, `pg_is_in_recovery()`, `pg_postmaster_start_time()`, `clock_timestamp()`, relevant public settings and tablespace OID/name/location mapping. The reconciled CNPG contract uses its `streaming_replica` certificate, without assuming EXECUTE grants on SQL control functions: read system/checkpoint/checksum/WAL-size control metadata using `pg_controldata` on mounted/extracted control files, retrying or failing on inconsistent reads. Compare with CNPG pod/primary identity. Commit capture Pod UID and postmaster start time so reference eligibility can reject loss of checksum continuity across server restarts. Validate:
 
 - Major/minor = admitted PG18.6; normal 8 KiB database blocks, 1 GiB relation segments and matching physical architecture/build format. Initial binary experiment is Linux/amd64. WAL segment size comes from control metadata, not an assumed 16 MiB.
 - Primary throughout, `wal_level >= replica`, `full_page_writes=on`, expected system identifier/lineage, checksum mode 0 or 1, and allowed CNPG-managed tablespaces/WAL layout. Reject unknown layouts, not silently omit them.
@@ -75,10 +75,10 @@ Do not use `-D -`: stdout tar is incompatible with extra tablespaces and `-X str
    ```
 
 3. Require every parser exit to succeed. Catalog, label, control-file identity and the observed primary timeline must agree. First release expects a single range from primary capture; multiple ranges invalidate that support contract.
-4. Go streams each completed tar through gzip and bounded multipart upload, hashing compressed bytes and uncompressed archive bytes and recording exact lengths. Also record per-member lengths/counts while scanning. No compressed disk spool or whole-database memory buffer is needed. Original native per-file SHA256 verification and transport SHA256 serve different purposes. WAL is **not** individually covered by the native manifest's file checksums; range parsing plus artifact hashes are mandatory. [S2–S5]
+4. Go scans each completed tar, records per-member lengths/counts, and writes a bounded compressed disk spool while hashing both stored and raw archive bytes. Upload known-length seekable files with the explicit SDK Core multipart protocol in the storage resolution, not the SDK's auto-aborting high-level multipart path. Finalization reconciliation deliberately accepts the extra spool disk to provide exact pre-upload hashes/lengths, bounded file-backed reads and explicit error ownership; no whole-database memory buffer. Original native per-file SHA256 verification and transport SHA256 serve different purposes. WAL is **not** individually covered by the native manifest's file checksums; range parsing plus artifact hashes are mandatory. [S2–S5]
 5. Only after all native verification, metadata checks, postflight and durable object upload does the repository publish commit metadata. A differential publishes as differential or fails. Do not publish a full under its UID or retry without `--incremental`.
 
-Initial deadlines: connection 10s; fixed metadata query 30s; total capture/native verification 6h; whole backup operation including upload 12h. Cancel/reap the whole process group (including the WAL-streaming child); do not leave a slot/client running or classify timeouts as completed backups. Transfer rate is separately configurable; PG's `--max-rate` **does not throttle streamed WAL**. Deadlines, WAL budget and actual-volume limits, not rate estimates, bound scratch growth. [S2]
+Initial deadlines: connection 10s; fixed metadata query 30s; total capture/native verification 6h; whole backup/restore operation including transfer 24h (the shared validated operation timeout in the storage contract). Cancel/reap the whole process group (including the WAL-streaming child); do not leave a slot/client running or classify timeouts as completed backups. Transfer rate is separately configurable; PG's `--max-rate` **does not throttle streamed WAL**. Deadlines, WAL budget and actual-volume limits, not rate estimates, bound scratch growth. [S2]
 
 ## 3. Backup boundaries and required WAL
 
@@ -136,6 +136,7 @@ Use explicit byte budgets, not a presumed differential compression ratio. **Do n
 Definitions, all sums including tablespaces and metadata unless called out:
 
 - `A`: uncompressed tar artifacts plus original manifest; `W`: extracted bundled WAL.
+- `Cmax = Amax + max(1 GiB, ceil(Amax/100))`: enforced aggregate compressed-spool cap for capture (also valid for compression=none). Exceeding it fails the operation, rather than relying on a compression ratio. This disk-backed spool is the reconciled storage protocol's known-length/hash input.
 - `C_F`, `C_D`: completed compressed downloads (use exact committed lengths).
 - `E_F`, `E_D`: extracted input sizes, conservatively rounded per entry to filesystem allocation units; obtain lengths from bounded tar/original-manifest inventories, not native incremental semantics.
 - `Rmax`: configured **`maxRestoredBytes`**, a hard output budget covering PGDATA, all tablespaces, bootstrap WAL and generated manifest. It is not inferred from D's small byte size.
@@ -147,7 +148,7 @@ Peak conservative reservations:
 
 | Operation | Required capacity before phase starts |
 | --- | --- |
-| Capture | `Amax + Wmax + H + S(Amax + Wmax + H)`; no compressed-upload disk copy |
+| Capture | `Amax + Cmax + Wmax + H + S(Amax + Cmax + Wmax + H)`; includes bounded compressed spool |
 | Full restore | `C_F + E_F + L + H + S(...)`; E_F is extracted directly into isolated final destinations, not copied twice |
 | Differential restore | `C_F + C_D + E_F + E_D + Rmax + L + H + S(...)` |
 
@@ -166,7 +167,7 @@ Initial bounded configuration selected for implementation (limits are policy, no
 | Path bytes | 1,023, consistent with PG `MAXPGPATH`; reject unsupported names |
 | One regular file | 1 GiB + 1 MiB; enough for native relation/incremental-file overhead; unexpected larger arbitrary PGDATA files unsupported |
 | Concurrent native operation | 1 per instance/repository; WAL callbacks have independent bounded resources |
-| Native operation memory limit | 2 GiB initial; no whole-DB Go buffer; OOM is failure, never success |
+| Data-path cgroup memory limit | 3 GiB initial including Go and all native children; no fictional separately enforced per-child RSS limit; OOM is failure, never success |
 
 Set finite byte limits before launching native writers; no memory-backed emptyDir. Dedicated filesystem/PVC capacity or filesystem quota is the **hard stop** for native tools. `emptyDir.sizeLimit`, periodic `statfs`, Kubernetes ephemeral-storage eviction and process polling alone are **not instantaneous allocation enforcement**. Use an exclusive disk-backed workspace with a real finite filesystem/quota; preflight requires free bytes after margin and reservations for concurrent non-backup use. Poll actual use/free space at most once per second, stop at the budget/margin threshold, and let the hard backing capacity catch growth between polls. Shared unbounded scratch without a hard backing limit is unsupported. Do not assume Kubernetes PVC requests are filesystem quotas: inspect the mounted filesystem and storage provisioner's limit.
 
