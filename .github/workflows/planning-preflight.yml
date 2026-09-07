@@ -2,6 +2,7 @@ name: Disposable planning publication preflight
 on:
   push:
     branches: [planning/platform-preflight]
+    paths: [.github/workflows/planning-preflight.yml]
 permissions:
   contents: read
 jobs:
@@ -54,7 +55,9 @@ jobs:
           gh api "users/$GITHUB_REPOSITORY_OWNER/packages/container/cnpg-backup-planning-probe/versions" --jq '.[] | select(.metadata.container.tags | any(startswith("planning-probe-"))) | .id' > "$RUNNER_TEMP/probe-version-ids"
           while read -r version_id; do
             test -n "$version_id" || continue
-            gh api --method DELETE "users/$GITHUB_REPOSITORY_OWNER/packages/container/cnpg-backup-planning-probe/versions/$version_id"
+            if ! gh api --method DELETE "users/$GITHUB_REPOSITORY_OWNER/packages/container/cnpg-backup-planning-probe/versions/$version_id"; then
+              printf '::warning::GitHub refused deletion of synthetic probe version %s; retained non-product artifact, not a product delivery gate.\n' "$version_id"
+            fi
           done < "$RUNNER_TEMP/probe-version-ids"
       - name: Remove draft release
         if: always()
