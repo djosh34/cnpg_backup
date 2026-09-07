@@ -48,6 +48,12 @@ func main() {
 	if len(os.Args) < 2 {
 		fail()
 	}
+	// Never let the process-group actor run against a developer host or the
+	// PostgreSQL container. All commands require the selected sidecar PID NS.
+	comm, err := os.ReadFile("/proc/1/comm")
+	if err != nil || strings.TrimSpace(string(comm)) != "cnpg-backup" || os.Getenv("POD_UID") == "" {
+		fail()
+	}
 	switch os.Args[1] {
 	case "native":
 		json.NewEncoder(os.Stdout).Encode(native())
@@ -70,24 +76,15 @@ func main() {
 		if len(os.Args) != 3 {
 			fail()
 		}
-		b, e := os.ReadFile("/proc/1/comm")
-		if e != nil || strings.TrimSpace(string(b)) != "cnpg-backup" {
+		// Namespace-local SIGKILL cannot terminate namespace init. The harness
+		// uses an ancestor-namespace CRI PID for the independent death case.
+		if os.Args[2] != "TERM" {
 			fail()
 		}
-		signal := syscall.SIGTERM
-		if os.Args[2] == "KILL" {
-			signal = syscall.SIGKILL
-		} else if os.Args[2] != "TERM" {
-			fail()
-		}
-		if syscall.Kill(1, signal) != nil {
+		if syscall.Kill(1, syscall.SIGTERM) != nil {
 			fail()
 		}
 	case "oom":
-		b, e := os.ReadFile("/proc/1/comm")
-		if e != nil || strings.TrimSpace(string(b)) != "cnpg-backup" {
-			fail()
-		}
 		group, e := os.ReadFile("/sys/fs/cgroup/memory.oom.group")
 		if e != nil || strings.TrimSpace(string(group)) != "1" {
 			fail()

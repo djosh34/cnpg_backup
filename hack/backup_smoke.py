@@ -77,6 +77,14 @@ def _run(h, wal, report, data_image, metrics):
                  'CREATE TABLE full_load AS SELECT n, repeat(md5(n::text),128) payload FROM generate_series(1,5000) n;')
     expected = wal.sql(pod, "SELECT count(*)::text || ':' || md5(string_agg(id::text || ':' || value, ',' ORDER BY id)) FROM full_oracle")
     commits = []
+    journal = []
+    def acknowledge(value, capture_uid, native_active=False, after_native_capture=False):
+        item = {'id': value, 'capture_uid': capture_uid, 'native_active': native_active,
+                'after_native_capture': after_native_capture,
+                'after_commit_lsn': wal.sql(pod, 'SELECT pg_current_wal_insert_lsn()'), 'time': time.time()}
+        journal.append(item)
+        (h.OUT / 'full-acknowledged-workload.json').write_text(json.dumps(journal, indent=2))
+        return item
     wal_serviced = False
     for name, kind in [('full-demand', 'Backup'), ('full-schedule', 'ScheduledBackup')]:
         if kind == 'Backup':
@@ -98,6 +106,8 @@ def _run(h, wal, report, data_image, metrics):
                 # record and derive the just-switched filename from switch LSN,
                 # not a pre-switch boundary/current-LSN guess.
                 wal.sql(pod, 'INSERT INTO full_capture_writes VALUES (900000)')
+                uid = json.loads(h.kube('get', 'backup', name, '-n', h.NS, '-o', 'json'))['metadata']['uid']
+                acknowledge(900000, uid, after_native_capture=True)
                 segment = wal.sql(pod, 'SELECT pg_walfile_name(pg_switch_wal())')
                 pending = {'case': 'WAL-under-transfer', 'partial_artifact_body_forwarded': True,
                            'requested_segment': segment, 'started_epoch': time.time()}
@@ -124,7 +134,7 @@ def _run(h, wal, report, data_image, metrics):
             progress = wal.sql(pod, 'SELECT count(*) FROM pg_stat_progress_basebackup')
             value = len(writes) + (100000 if kind == 'ScheduledBackup' else 1)
             wal.sql(pod, f'INSERT INTO full_capture_writes VALUES ({value})')
-            writes.append({'id': value, 'native_active': progress == '1', 'time': time.time()})
+            writes.append(acknowledge(value, b['metadata']['uid'], native_active=progress == '1'))
             (h.OUT / (name + '-workload.json')).write_text(json.dumps(writes, indent=2))
             return False
         h.wait(completed, 'actual durable full Backup completion', 600)
@@ -145,7 +155,7 @@ def _run(h, wal, report, data_image, metrics):
     observations = []
     for index, key in enumerate(keys):
         commit = json.loads(wal.s3('GET', key))
-        observation = verify_restore(h, wal, root, driver, data_image, index, commit, expected)
+        observation = verify_restore(h, wal, root, driver, data_image, index, commit, expected, journal)
         observations.append(observation)
         (h.OUT / 'full-download-oracles.json').write_text(json.dumps(observations, indent=2))
     report['full_completed'].append('S3-only-download-native-verification-SQL')
@@ -219,15 +229,29 @@ def capture_faults(h, wal, report, metrics, control):
             records = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
             assert len(records) == 1 and records[0]['bounded_cgroup_precondition'], 'actual bounded OOM precondition missing'
             oom = records[0]
+        elif signal == 'KILL':
+            # PID-namespace init ignores namespace-local SIGKILL. Use the same
+            # independently scoped CRI/node actor as E, with native work paused
+            # so API/CRI lookup cannot race past the actual capture phase.
+            act('pause-native')
+            observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+            sidecar = next(c for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+            container_id = sidecar['containerID'].split('://')[1]
+            pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container_id))['info']['pid'])
+            assert pid > 1
+            h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-9', str(pid))
+            report['full_kill_precondition'] = {'container_id': container_id, 'node_pid': pid, 'native_paused': True}
         else:
             act('signal-sidecar', signal, check=False)
+        restarted(count)  # prove the fault actually hit before judging outcome
         failed(name)
-        restarted(count)
-        if signal == 'OOM':
+        if signal in ('KILL', 'OOM'):
             observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
             last = next(c['lastState']['terminated'] for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
-            assert last['reason'] == 'OOMKilled' and last['exitCode'] == 137, 'native sidecar was not actually OOM-killed'
-            oom['termination'] = {k: last.get(k) for k in ('reason', 'exitCode', 'signal')}
+            assert last['exitCode'] == 137, 'native sidecar was not killed'
+            if signal == 'OOM':
+                assert last['reason'] == 'OOMKilled', 'native sidecar was not actually OOM-killed'
+                oom['termination'] = {k: last.get(k) for k in ('reason', 'exitCode', 'signal')}
         assert wal.sql(pod, 'SELECT pg_postmaster_start_time()') == postmaster, 'fault accidentally restarted source PostgreSQL'
         assert not json.loads(act('native')), 'native child survived sidecar process death'
         no_commit(b['metadata']['uid'])
@@ -241,7 +265,9 @@ def capture_faults(h, wal, report, metrics, control):
     paused = json.loads(act('pause-native'))
     try:
         filled = json.loads(act('fill-workspace'))
-        assert filled['enospc'] and filled['free'] < 4096, 'bounded workspace did not actually reach ENOSPC'
+        # Successful native cancellation can already reclaim operation files
+        # between the kernel ENOSPC and this observation; don't reject cleanup.
+        assert filled['enospc'] and filled['allocated'] > 7 * 1024**3, 'bounded workspace did not actually reach ENOSPC'
         failed('full-workspace-exhaustion')
         assert not json.loads(act('native')), 'paused native writer was not killed/reaped at capacity limit'
         no_commit(b['metadata']['uid'])
@@ -256,7 +282,7 @@ def capture_faults(h, wal, report, metrics, control):
     # durable commit, not be relabeled from another SIGTERM test.
     old_pods = set(h.pod_uids())
     h.kube('patch', 'repository', 'destination', '-n', h.NS, '--type=merge', '-p',
-           json.dumps({'spec': {'io': {'operationTimeout': '1m'}}}))
+           json.dumps({'spec': {'io': {'operationTimeout': '1m', 'metadataTimeout': '1m'}}}))
     h.kube('annotate', 'cluster/database', '-n', h.NS, 'full-deadline-rollout=requested', '--overwrite')
     h.wait(lambda: len(h.pod_uids()) == 2 and old_pods.isdisjoint(h.pod_uids()), 'CNPG native operation-deadline rollout', 420)
     h.kube('wait', '-n', h.NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
@@ -267,6 +293,7 @@ def capture_faults(h, wal, report, metrics, control):
     before = metrics.snapshot('full')
     name = 'full-commit-response-loss'
     wal.control('hold-commit-response')
+    deadline_started = time.monotonic()
     try:
         original = start_native(name)
         h.kube('exec', '-i', '-n', h.NS, pod, '-c', 'postgres', '--', 'sh', '-ec', 'cat > ' + cluster_file,
@@ -280,6 +307,7 @@ def capture_faults(h, wal, report, metrics, control):
         commit = json.loads(wal.s3('GET', key))
         assert backup(name)['status']['phase'] != 'completed'
         failed(name)  # real operationTimeout cancels the held response
+        assert time.monotonic() - deadline_started >= 59, 'fault did not reach the configured native operation deadline'
         assert not json.loads(act('native')), 'deadline left a native child behind'
     finally:
         wal.control('')
@@ -332,7 +360,7 @@ def credential_failure(h, wal, report, metrics):
     report['full_remaining'].remove('credentials')
 
 
-def verify_restore(h, wal, root, driver, data_image, index, commit, expected):
+def verify_restore(h, wal, root, driver, data_image, index, commit, expected, journal):
     directory = root / str(index)
     tar_dir, base, wal_dir = directory / 'tar', directory / 'base', directory / 'wal'
     for d in (tar_dir, base, wal_dir):
@@ -410,9 +438,23 @@ def verify_restore(h, wal, root, driver, data_image, index, commit, expected):
         actual = query("SELECT count(*)::text || ':' || md5(string_agg(id::text || ':' || value, ',' ORDER BY id)) FROM full_oracle")
         assert actual == expected, 'downloaded native full tablespace SQL oracle mismatch'
         assert query("SELECT pg_tablespace_location(oid) FROM pg_tablespace WHERE spcname='fast_space'").startswith('/input/ts-')
+        def lsn(value):
+            high, low = value.split('/')
+            return (int(high, 16) << 32) | int(low, 16)
+        stop = lsn(commit['stop_lsn'])
+        required = {w['id'] for w in journal if lsn(w['after_commit_lsn']) <= stop}
+        during = {w['id'] for w in journal if w['capture_uid'] == commit['backup_uid'] and w['native_active']
+                  and lsn(w['after_commit_lsn']) <= stop}
+        excluded = {w['id'] for w in journal if w['capture_uid'] == commit['backup_uid'] and w['after_native_capture']}
+        recovered = {int(n) for n in query("SELECT id FROM full_capture_writes ORDER BY id").splitlines()}
+        assert during, 'no acknowledged native-phase transaction precedes captured stop LSN'
+        assert required <= recovered, 'downloaded recovery lost acknowledged capture-time transactions'
+        assert not excluded.intersection(recovered), 'oracle accidentally used later source data or later WAL'
         return {'backup_uid': commit['backup_uid'], 'manifest_sha256': commit['manifest_sha256'], 'sql_oracle': actual,
                 'native_range': native['WAL-Ranges'], 'missing_bootstrap_wal_rejected': True,
-                'input_integrity_verified': True, 'post_backup_PITR_claim': False}
+                'input_integrity_verified': True, 'acknowledged_capture_ids_required': sorted(required),
+                'native_phase_committed_ids': sorted(during), 'post_capture_ids_excluded': sorted(excluded),
+                'recovered_write_ids': sorted(recovered), 'post_backup_PITR_claim': False}
     finally:
         h.save_log(container + '.log', h.run('docker', 'logs', container, check=False))
         h.run('docker', 'rm', '-f', container, check=False)

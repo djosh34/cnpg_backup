@@ -84,6 +84,12 @@ credential generation. The harness now requires actual native projection recover
 not API Secret update acknowledgment. Earlier transfer evidence also exposed an
 empty-segment LSN guess; the oracle now inserts real WAL and uses the switch LSN.
 These failures remain in hosted artifacts, rather than being relabeled as passes.
+At `74fbb2d`, actual SIGTERM cancellation/restart also passed. The next case exposed
+that namespace-local SIGKILL does not kill PID-namespace init; the harness now uses
+E's established node/CRI PID actor and proves restart before judging the outcome.
+The downloaded SQL oracle also correlates capture-time acknowledged transactions
+with native stop LSN, and excludes a transaction written after artifact transfer
+began (without fetching later WAL).
 
 The harness records completed versus remaining fault families explicitly.
 Unexecuted SIGTERM/OOM/workspace/credential/late-commit and observability cases
