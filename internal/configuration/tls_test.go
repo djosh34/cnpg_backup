@@ -118,9 +118,9 @@ func TestManagerMTLSLeafAndPrivateCARotation(t *testing.T) {
 		t.Fatal("old snapshot lost")
 	}
 	files["tls.crt"], files["tls.key"] = newCA.leaf(t, "manager.test", x509.ExtKeyUsageServerAuth)
-	files["client-ca.crt"] = append(append([]byte(nil), oldCA.pem...), newCA.pem...)
+	files["client-ca-next.crt"] = newCA.pem
 	publish(t, dir, "overlap", files)
-	client.RootCAs, err = CAPool(files["client-ca.crt"], false)
+	client.RootCAs, err = CAPool(append(append([]byte(nil), oldCA.pem...), newCA.pem...), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +128,7 @@ func TestManagerMTLSLeafAndPrivateCARotation(t *testing.T) {
 		t.Fatal("CA overlap", err)
 	}
 	files["client-ca.crt"] = newCA.pem
+	delete(files, "client-ca-next.crt")
 	publish(t, dir, "retired-old", files)
 	if err := handshake(); err == nil {
 		t.Fatal("retired client CA accepted")

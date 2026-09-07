@@ -5,6 +5,7 @@ No model, production endpoint, mocked lifecycle or fabricated artifact pin.
 Additional mandatory private-CA/operator-wire recovery scenarios remain explicit.
 """
 import hashlib
+import base64
 import importlib.util
 import json
 import os
@@ -13,6 +14,7 @@ from pathlib import Path
 import subprocess
 import time
 import urllib.request
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / '.work/cnpg-smoke'
@@ -62,10 +64,10 @@ def download(name):
     return path
 
 
-def image_digest(flavor):
+def image_digest(flavor, source=None):
     sha = run('git', 'rev-parse', 'HEAD').strip()
     tag = f'cnpg-backup-smoke-{flavor}:{sha}'
-    run('docker', 'tag', f'cnpg-backup-foundation-{flavor}:test', tag)
+    run('docker', 'tag', source or f'cnpg-backup-foundation-{flavor}:test', tag)
     run(WORK / 'kind-linux-amd64', 'load', 'docker-image', '--name', NAME, tag)
     full = 'docker.io/library/' + tag
     lines = run('docker', 'exec', NAME + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'list').splitlines()
@@ -131,7 +133,7 @@ def bounded_workspaces():
     apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'cnpg-backup-bounded'},
            'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
     loop_diagnostics('before')
-    for i in range(12):
+    for i in range(40):
         path = f'/var/local/cnpg-backup-work-{i}'
         try:
             evidence = provision_filesystem(path)
@@ -144,6 +146,12 @@ def bounded_workspaces():
                         'storageClassName': 'cnpg-backup-bounded', 'persistentVolumeReclaimPolicy': 'Retain', 'local': {'path': path},
                         'nodeAffinity': {'required': {'nodeSelectorTerms': [{'matchExpressions': [
                             {'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': [NAME + '-control-plane']}]}]}}}})
+
+
+def admission_ready(result):
+    if 'spec.imageName:' in result and 'invalid' in result.lower():
+        raise RuntimeError('permanent CNPG image admission failure: ' + result[-4000:])
+    return 'serverside-applied (server dry run)' in result or 'created (server dry run)' in result
 
 
 def main_pods():
@@ -169,6 +177,202 @@ def assert_placement():
         assert sidecar['securityContext']['runAsUser'] == 26
         assert sidecar['securityContext']['readOnlyRootFilesystem']
         kube('exec', '-n', NS, pod['metadata']['name'], '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--probe')
+        kube('exec', '-n', NS, pod['metadata']['name'], '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-capacity')
+
+
+def repository_status_matrix(report):
+    def status_is(kind):
+        obj = json.loads(kube('get', 'repository', 'destination', '-n', NS, '-o', 'json'))
+        status = obj.get('status', {})
+        return status.get('observedGeneration') == obj['metadata']['generation'] and any(
+            c['type'] == kind and c['status'] == 'True' for c in status.get('conditions', []))
+    wait(lambda: status_is('Ready'), 'Repository observedGeneration and Ready')
+    kube('patch', 'secret', 's3-auth', '-n', NS, '--type=merge', '-p', json.dumps({'data': {'secret': ''}}))
+    wait(lambda: status_is('Invalid'), 'invalid credential rotation status')
+    def warnings():
+        return [e for e in json.loads(kube('get', 'events', '-n', NS, '-o', 'json'))['items']
+                if e.get('reason') == 'ConfigurationInvalid' and e.get('involvedObject', {}).get('name') == 'destination']
+    wait(lambda: len(warnings()) == 1, 'rate-limited Repository Warning')
+    time.sleep(12)  # multiple bounded reconciliation passes, not the state oracle
+    assert len(warnings()) == 1, 'Repository Warning storm'
+    kube('patch', 'secret', 's3-auth', '-n', NS, '--type=merge', '-p', json.dumps(
+        {'data': {'secret': base64.b64encode(b'disposable-test-only-secret').decode()}}))
+    wait(lambda: status_is('Ready'), 'credential rotation recovery')
+    report['completed'].append('real-Repository-status-generation-secret-rotation-and-Warning-throttle')
+
+
+def capacity_matrix(image, report):
+    for name, volume, success in [
+        ('finite', {'ephemeral': {'volumeClaimTemplate': {'spec': {'accessModes': ['ReadWriteOnce'],
+            'storageClassName': 'cnpg-backup-bounded', 'resources': {'requests': {'storage': '1Gi'}}}}}}, True),
+        ('emptydir', {'emptyDir': {'sizeLimit': '1Gi'}}, False),
+        ('localpath', {'ephemeral': {'volumeClaimTemplate': {'spec': {'accessModes': ['ReadWriteOnce'],
+            'storageClassName': 'standard', 'resources': {'requests': {'storage': '1Gi'}}}}}}, False),
+    ]:
+        podname = 'capacity-' + name
+        apply({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': podname, 'namespace': NS},
+               'data': {'capacity.json': json.dumps([{'mount': '/cnpg-backup/work', 'limitBytes': 1 << 30, 'requiredBytes': 0}])}})
+        apply({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': podname, 'namespace': NS}, 'spec': {
+            'restartPolicy': 'Never', 'securityContext': {'runAsUser': 26, 'runAsGroup': 26, 'fsGroup': 26},
+            'containers': [{'name': 'check', 'image': image, 'command': ['/usr/local/bin/cnpg-backup', 'instance', '--check-capacity'],
+                'securityContext': {'runAsNonRoot': True, 'readOnlyRootFilesystem': True, 'allowPrivilegeEscalation': False,
+                                    'capabilities': {'drop': ['ALL']}, 'seccompProfile': {'type': 'RuntimeDefault'}},
+                'volumeMounts': [{'name': 'work', 'mountPath': '/cnpg-backup/work'},
+                                 {'name': 'config', 'mountPath': '/cnpg-backup/projection', 'readOnly': True}]}],
+            'volumes': [{'name': 'work', **volume}, {'name': 'config', 'configMap': {'name': podname}}]}})
+        def done():
+            pod = json.loads(kube('get', 'pod', podname, '-n', NS, '-o', 'json'))
+            return pod.get('status', {}).get('phase') in ('Succeeded', 'Failed')
+        wait(done, 'actual kernel capacity check ' + name)
+        pod = json.loads(kube('get', 'pod', podname, '-n', NS, '-o', 'json'))
+        code = pod['status']['containerStatuses'][0]['state']['terminated']['exitCode']
+        assert (code == 0) == success, f'capacity {name} returned {code}'
+        (OUT / (podname + '.log')).write_text(kube('logs', podname, '-n', NS, check=False))
+        kube('delete', 'pod', podname, '-n', NS, '--wait=true')
+        report['completed'].append('actual-capacity-' + name + ('-accepted' if success else '-rejected'))
+
+
+def private_ca_rotation(discovered, report):
+    apply(renderer.resource('cert-manager.io/v1', 'Certificate', 'cnpg-backup-next-ca', 'cnpg-system', spec={
+        'isCA': True, 'commonName': 'next-private-ca', 'secretName': 'cnpg-backup-next-ca',
+        'privateKey': {'algorithm': 'ECDSA', 'size': 256}, 'issuerRef': {'name': 'cnpg-backup-selfsigned'}}))
+    apply(renderer.resource('cert-manager.io/v1', 'Issuer', 'cnpg-backup-next-ca', 'cnpg-system', spec={'ca': {'secretName': 'cnpg-backup-next-ca'}}))
+    kube('wait', '-n', 'cnpg-system', '--for=condition=Ready', 'certificate/cnpg-backup-next-ca', '--timeout=180s')
+    deployment = json.loads(kube('get', 'deployment', 'cnpg-backup', '-n', 'cnpg-system', '-o', 'json'))
+    volumes = deployment['spec']['template']['spec']['volumes']
+    tls = next(v for v in volumes if v['name'] == 'tls')['projected']
+    tls['sources'].append({'secret': {'name': 'cnpg-backup-next-ca', 'items': [{'key': 'tls.crt', 'path': 'client-ca-next.crt'}]}})
+    kube('patch', 'deployment', 'cnpg-backup', '-n', 'cnpg-system', '--type=merge', '-p',
+         json.dumps({'spec': {'template': {'spec': {'volumes': volumes}}}}))
+    kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
+    wait(discovered, 'old client under overlapping private CA trust')
+    for role in ('server', 'client'):
+        old = json.loads(kube('get', 'secret', f'cnpg-backup-{role}-tls', '-n', 'cnpg-system', '-o', 'json'))['data']['tls.crt']
+        kube('patch', 'certificate', f'cnpg-backup-{role}', '-n', 'cnpg-system', '--type=merge', '-p',
+             json.dumps({'spec': {'issuerRef': {'name': 'cnpg-backup-next-ca'}}}))
+        wait(lambda: json.loads(kube('get', 'secret', f'cnpg-backup-{role}-tls', '-n', 'cnpg-system', '-o', 'json'))['data']['tls.crt'] != old,
+             'cert-manager ' + role + ' switches private CA')
+        wait(discovered, 'actual operator discovery after ' + role + ' private CA switch')
+    # Retire old client trust only after both leaves and real operator RPCs work.
+    tls['sources'] = [s for s in tls['sources'] if s['secret']['name'] != 'cnpg-backup-next-ca']
+    trust = next(s for s in tls['sources'] if s['secret']['name'] == 'cnpg-backup-ca')
+    trust['secret']['name'] = 'cnpg-backup-next-ca'
+    kube('patch', 'deployment', 'cnpg-backup', '-n', 'cnpg-system', '--type=merge', '-p',
+         json.dumps({'spec': {'template': {'spec': {'volumes': volumes}}}}))
+    kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
+    wait(discovered, 'actual operator after old CA retirement')
+    assert_placement()
+    report['completed'].append('actual-operator-leaf-and-private-CA-overlap-rotation-and-retirement')
+
+
+def rollout_matrix(repository, report):
+    before = pod_uids()
+    kube('patch', 'repository', 'destination', '-n', NS, '--type=merge', '-p', '{"spec":{"compression":"none"}}')
+    kube('annotate', '-n', NS, 'cluster/database', 'configuration-rollout=requested', '--overwrite')
+    def replaced():
+        pods = main_pods()
+        return len(pods) == 2 and not set(before).intersection(p['metadata']['uid'] for p in pods)
+    wait(replaced, 'CNPG-owned configuration rollout of both defaulted live Pods', 420)
+    kube('wait', '-n', NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
+    assert_placement()
+    before = pod_uids()
+    # A real different immutable image manifest, same tested binary. This tests
+    # image rollout, not a fictional plugin release/version upgrade.
+    run('docker', 'build', '-t', 'cnpg-backup-rollout:test', '-', input=
+        'FROM cnpg-backup-foundation-pg18:test\nLABEL cnpg-backup.lifecycle-test=rollout\n')
+    next_image = image_digest('rollout', 'cnpg-backup-rollout:test')
+    manager = json.loads(kube('get', 'configmap', 'cnpg-backup-manager', '-n', 'cnpg-system', '-o', 'json'))
+    config = json.loads(manager['data']['config.json']); config['image'] = next_image
+    kube('patch', 'configmap', 'cnpg-backup-manager', '-n', 'cnpg-system', '--type=merge', '-p',
+         json.dumps({'data': {'config.json': json.dumps(config)}}))
+    kube('rollout', 'restart', '-n', 'cnpg-system', 'deployment/cnpg-backup')
+    kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
+    kube('annotate', '-n', NS, 'cluster/database', 'image-rollout=requested', '--overwrite')
+    wait(replaced, 'CNPG-owned immutable image rollout of both instances', 420)
+    kube('wait', '-n', NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
+    assert_placement()
+    assert all(next(c for c in p['spec']['initContainers'] if c['name'] == 'cnpg-backup')['image'] == next_image for p in main_pods())
+    before = pod_uids()
+    for i in range(3):
+        kube('annotate', '-n', NS, 'cluster/database', 'post-rollout-idempotency=' + str(i), '--overwrite')
+        time.sleep(5)
+        assert pod_uids() == before, 'defaulted live Pod caused perpetual churn'
+    report['rollout_image'] = next_image
+    report['completed'].append('real-defaulted-live-Pod-config-and-immutable-image-rollout-idempotency')
+
+
+def recovery_placement_matrix(cluster, repository, report):
+    # These are real CNPG-generated recovery Jobs and the actual CNPG binary,
+    # not guardfixture's replacement command. No Restore capability is added:
+    # clean cases must fail at unavailable materialization, after proving guard
+    # ownership covered CNPG's mutating pre-RPC preflight. Full replay belongs G.
+    for poison in ('pgdata', 'wal', 'tablespace', None):
+        name = 'recover-' + (poison or 'fresh')
+        target_repo = json.loads(json.dumps(repository))
+        target_repo['metadata']['name'] = name
+        target_repo['spec']['repositoryID'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'cnpg-backup-smoke/' + name))
+        apply(target_repo)
+        target = json.loads(json.dumps(cluster))
+        target['metadata'] = {'name': name, 'namespace': NS, 'annotations': {'cnpg.io/reconciliationLoop': 'disabled'}}
+        target['spec']['instances'] = 1
+        target['spec']['plugins'][0]['parameters']['repository'] = name
+        target['spec']['bootstrap'] = {'recovery': {'source': 'origin'}}
+        target['spec']['externalClusters'] = [{'name': 'origin', 'plugin': {
+            'name': 'cnpg-backup.djosh34.github.io', 'parameters': {'repository': 'destination'}}}]
+        apply(target)
+        volumes = [('pgdata', name + '-1', 'pgdata'), ('wal', name + '-1-wal', 'pg_wal'),
+                   ('tablespace', name + '-1-tbs-fast-space', 'data')]
+        backing = {}
+        for role, claim, directory in volumes:
+            available = [p for p in json.loads(kube('get', 'pv', '-o', 'json'))['items']
+                         if p['spec'].get('storageClassName') == 'cnpg-backup-bounded'
+                         and not p['spec'].get('claimRef') and p.get('status', {}).get('phase') == 'Available']
+            assert available, 'finite PV pool exhausted; never fall back to localpath'
+            pv = sorted(available, key=lambda p: p['metadata']['name'])[0]
+            kube('patch', 'pv', pv['metadata']['name'], '--type=merge', '-p',
+                 json.dumps({'spec': {'claimRef': {'name': claim, 'namespace': NS}}}))
+            path = pv['spec']['local']['path']; backing[role] = (path, directory)
+            # Isolated runner-owned backing files only. Seeding before the claim
+            # mounts gives an independent oracle for CNPG's destructive preflight.
+            script = 'mkdir -p "$1/$2"; printf sentinel > "$1/$2/preflight-sentinel"; chown -R 26:26 "$1"'
+            if poison == role:
+                script += '; mkdir -m 700 "$1/.cnpg-backup"; printf uncertain > "$1/.cnpg-backup/owner.json"; chmod 600 "$1/.cnpg-backup/owner.json"; chown -R 26:26 "$1/.cnpg-backup"'
+            run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec', script, 'seed-owned-fixture', path, directory)
+        kube('annotate', 'cluster/' + name, '-n', NS, 'cnpg.io/reconciliationLoop-', '--overwrite')
+        def terminated():
+            pods = json.loads(kube('get', 'pods', '-n', NS, '-l', 'cnpg.io/cluster=' + name, '-o', 'json'))['items']
+            return any(c['name'] == 'full-recovery' and 'terminated' in c.get('state', {})
+                       for p in pods for c in p.get('status', {}).get('containerStatuses', []))
+        wait(terminated, 'actual guarded CNPG recovery main ' + name, 240)
+        pods = json.loads(kube('get', 'pods', '-n', NS, '-l', 'cnpg.io/cluster=' + name, '-o', 'json'))['items']
+        job = next(p for p in pods if any(c['name'] == 'full-recovery' and 'terminated' in c.get('state', {})
+                                        for c in p.get('status', {}).get('containerStatuses', [])))
+        main = next(c for c in job['spec']['containers'] if c['name'] == 'full-recovery')
+        assert main['command'][:6] == ['/cnpg-backup/bin/cnpg-backup', 'recovery-guard', '--', '/controller/manager', 'instance', 'restore']
+        assert not job['spec'].get('hostPID') and not job['spec'].get('shareProcessNamespace')
+        logs = kube('logs', job['metadata']['name'], '-n', NS, '-c', 'full-recovery', check=False)
+        (OUT / (name + '-main.log')).write_text(logs[-128000:])
+        (OUT / (name + '-pod.json')).write_text(json.dumps(job, indent=2))
+        if poison:
+            assert 'TargetOwnershipUncertain' in logs, logs[-4000:]
+            assert 'cleaning up existing' not in logs
+            for path, directory in backing.values():
+                run('docker', 'exec', NAME + '-control-plane', 'test', '-f', path + '/' + directory + '/preflight-sentinel')
+            report['completed'].append('actual-CNPG-before-preflight-' + poison + '-poison-rejected-with-no-target-mutation')
+        else:
+            # This case distinguishes a working fence from a guard that never
+            # admits even a fresh owner. CNPG itself deletes the invalid seeded
+            # PGDATA/WAL, then reports unsupported plugin materialization.
+            assert 'cleaning up existing data directory' in logs and 'cleaning up existing WAL directory' in logs, logs[-6000:]
+            for role in ('pgdata', 'wal'):
+                path, directory = backing[role]
+                run('docker', 'exec', NAME + '-control-plane', 'test', '!', '-e', path + '/' + directory + '/preflight-sentinel')
+            for path, _ in backing.values():
+                run('docker', 'exec', NAME + '-control-plane', 'test', '!', '-e', path + '/.cnpg-backup/owner.json')
+            report['completed'].append('actual-fresh-Cluster-all-fresh-PVC-guard-Begin-CNPG-preflight-clean-Drain')
+        # Stop real Job retries; poison markers are never removed for reuse.
+        kube('annotate', 'cluster/' + name, '-n', NS, 'cnpg.io/reconciliationLoop=disabled', '--overwrite')
+        kube('delete', 'cluster/' + name, '-n', NS, '--wait=true', '--timeout=120s')
 
 
 def main():
@@ -227,8 +431,10 @@ def main():
         rejected = kube('apply', '--server-side', '--field-manager=cnpg-backup-smoke', '-f', '-', input=json.dumps(changed), check=False)
         assert 'immutable' in rejected, 'CEL immutable repository identity was not enforced'
         cluster = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster', 'metadata': {'name': 'database', 'namespace': NS},
-                   'spec': {'instances': 2, 'imageName': LOCK['database'], 'storage': {'size': '1Gi'}, 'walStorage': {'size': '1Gi'},
-                            'tablespaces': [{'name': 'fast_space', 'storage': {'size': '1Gi'}}],
+                   'spec': {'instances': 2, 'imageName': LOCK['database'],
+                            'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
+                            'walStorage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
+                            'tablespaces': [{'name': 'fast_space', 'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'}}],
                             'plugins': [{'name': 'cnpg-backup.djosh34.github.io', 'parameters': {'repository': 'destination'}}]}}
         # Discovery is asynchronous in the real operator. Use its actual
         # validating admission path as the startup barrier, before creating data.
@@ -238,12 +444,14 @@ def main():
                           input=json.dumps(cluster), check=False)
             admission_attempts.append(result[-4000:])
             (OUT / 'discovery.log').write_text('\n'.join(admission_attempts))
-            return 'serverside-applied (server dry run)' in result or 'created (server dry run)' in result
+            return admission_ready(result)
         wait(discovered, 'CNPG mTLS plugin discovery and validation')
         apply(cluster)
         kube('wait', '-n', NS, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
         assert_placement()
         report['completed'].append('real-CNPG-1.30-two-instance-initdb-join-WAL-tablespace-startup-and-CRD-CEL')
+        repository_status_matrix(report)
+        capacity_matrix(data, report)
         before = pod_uids()
         kube('rollout', 'restart', '-n', 'cnpg-system', 'deployment/cnpg-backup')
         kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
@@ -268,7 +476,11 @@ def main():
         kube('annotate', '-n', NS, 'cluster/database', 'leaf-rotation=observed', '--overwrite')
         assert_placement()
         assert pod_uids() == before
+        wait(discovered, 'actual operator validation after server leaf rotation')
         report['completed'].append('actual-operator-server-leaf-rotation')
+        private_ca_rotation(discovered, report)
+        rollout_matrix(repository, report)
+        recovery_placement_matrix(cluster, repository, report)
         kube('delete', '-n', NS, 'cluster/database', '--wait=true', '--timeout=120s')
         kube('delete', '-f', WORK / 'install.json', '--wait=true', '--timeout=120s')
         kube('delete', '-f', ROOT / 'config/repository-crd.json', '--wait=true', '--timeout=120s')

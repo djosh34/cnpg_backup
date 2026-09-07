@@ -9,6 +9,13 @@ import godeps
 
 
 class LifecycleHarness(unittest.TestCase):
+    def test_cnpg_image_keeps_version_tag_and_immutable_digest(self):
+        self.assertRegex(cnpg_smoke.LOCK['database'], r':18\.6@sha256:[0-9a-f]{64}$')
+        with self.assertRaises(RuntimeError):
+            cnpg_smoke.admission_ready('The Cluster "database" is invalid: spec.imageName: Invalid value: "digest": Can\'t use just the image sha as we can\'t detect upgrades')
+        self.assertTrue(cnpg_smoke.admission_ready('cluster.postgresql.cnpg.io/database serverside-applied (server dry run)'))
+        self.assertFalse(cnpg_smoke.admission_ready('plugin connection not ready'))
+
     def test_kernel_known_missing_loop_node_uses_same_minor(self):
         self.assertEqual(cnpg_smoke.loop_device('/dev/loop8 (lost)\n'), '/dev/loop8')
         self.assertEqual(cnpg_smoke.loop_device('/dev/loop37\n'), '/dev/loop37')

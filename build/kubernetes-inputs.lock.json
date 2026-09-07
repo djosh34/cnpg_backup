@@ -27,5 +27,5 @@
     "quay.io/jetstack/cert-manager-acmesolver:v1.21.1": "quay.io/jetstack/cert-manager-acmesolver@sha256:dbc7cc1354f603918e7c5af7f55a0a620537394452c93a565bde75c6f48e8837"
   },
   "kindNode": "kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0",
-  "database": "ghcr.io/cloudnative-pg/postgresql@sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4"
+  "database": "ghcr.io/cloudnative-pg/postgresql:18.6@sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4"
 }

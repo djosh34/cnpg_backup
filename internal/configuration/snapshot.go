@@ -147,6 +147,21 @@ func LoadManagerTLS(directory, clientName string) (*tls.Config, error) {
 	if err != nil || time.Now().Before(leaf.NotBefore) || !time.Now().Before(leaf.NotAfter) {
 		return nil, errors.New("invalid manager leaf")
 	}
+	// A second separately issued CA projection provides overlap without mutating
+	// cert-manager's issuer Secret. Only absence is optional; malformed/read errors
+	// fail closed. Remove the old source only after both operator leaves rotate.
+	if _, statErr := root.Stat("client-ca-next.crt"); statErr == nil {
+		next, readErr := Read(root, "client-ca-next.crt", 256<<10)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if _, parseErr := CAPool(next, false); parseErr != nil {
+			return nil, parseErr
+		}
+		ca = append(append(ca, '\n'), next...)
+	} else if !os.IsNotExist(statErr) {
+		return nil, errors.New("overlap trust projection unavailable")
+	}
 	roots, err := CAPool(ca, false)
 	if err != nil {
 		return nil, err
