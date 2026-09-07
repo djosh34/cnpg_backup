@@ -281,7 +281,7 @@ func TestVerifiedStreamingAndMissing(t *testing.T) {
 	_, _, e = s.Read(ctx, "absent", 100)
 	mustKind(t, e, NotFound, false)
 	_, e = s.Head(ctx, "absent")
-	mustKind(t, e, Unknown, false)
+	mustKind(t, e, HeadMissing, false)
 	for _, tc := range []struct {
 		status int
 		body   string

@@ -122,13 +122,17 @@ func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(400, "InvalidRequest")
 	}
 }
-func setup(t testing.TB, size int64) (Files, *backend) {
+func setup(t testing.TB, size int64, wrap ...func(http.Handler) http.Handler) (Files, *backend) {
 	t.Helper()
 	id := repository.Identity{Schema: 1, RepositoryID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", PostgresMajor: 18, SystemIdentifier: "123456", WALSegmentBytes: size, WriterClusterUID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", CreatedAt: "2026-09-07T00:00:00Z"}
 	identity, _ := json.Marshal(id)
 	gate, _ := json.Marshal(repository.Gate{Schema: 1, RepositoryID: id.RepositoryID, Generation: "0", Nonce: repository.UUID(), Holders: []repository.Holder{}})
 	b := &backend{objects: map[string]object{"v1/" + id.RepositoryID + "/repository.json": {b: identity}, "v1/" + id.RepositoryID + "/gate.json": {b: gate}}}
-	server := httptest.NewTLSServer(b)
+	var handler http.Handler = b
+	if len(wrap) == 1 {
+		handler = wrap[0](handler)
+	}
+	server := httptest.NewTLSServer(handler)
 	b.endpoint = server.URL
 	t.Cleanup(server.Close)
 	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})

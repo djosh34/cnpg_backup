@@ -39,6 +39,7 @@ type Admission struct {
 	drained         chan struct{}
 	ctx             context.Context
 	cancel          context.CancelFunc
+	afterDrain      func(context.Context) error
 }
 
 func NewAdmission(c Config, pod string) (*Admission, error) {
@@ -125,6 +126,19 @@ func (a *Admission) Close() {
 		close(a.drained)
 	}
 }
+
+// AfterDrain installs the one original-process source-reader cleanup before
+// Begin. It runs only after irreversible admission close and actual task drain,
+// never merely on control loss or server shutdown. Failure poisons the guard.
+func (a *Admission) AfterDrain(fn func(context.Context) error) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.started || a.closed || a.afterDrain != nil || fn == nil {
+		return errors.New("drain callback already bound")
+	}
+	a.afterDrain = fn
+	return nil
+}
 func (a *Admission) drain(ctx context.Context, tuple Tuple) error {
 	a.mu.Lock()
 	valid := a.started && !a.closed && tuple == a.tuple
@@ -137,6 +151,12 @@ func (a *Admission) drain(ctx context.Context, tuple Tuple) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-a.drained:
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if a.afterDrain != nil {
+			return a.afterDrain(ctx)
+		}
 		return nil
 	}
 }

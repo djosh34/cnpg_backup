@@ -5,8 +5,9 @@
     "name": "database-1",
     "namespace": "test",
     "annotations": {
-      "cnpg-backup.djosh34.github.io/config": "database-cb-1e3da321eb76",
-      "cnpg-backup.djosh34.github.io/owner": "11111111-1111-4111-8111-111111111111"
+      "cnpg-backup.djosh34.github.io/config": "database-cb-e3c5b64a0445",
+      "cnpg-backup.djosh34.github.io/owner": "11111111-1111-4111-8111-111111111111",
+      "cnpg-backup.djosh34.github.io/recovery": "9e254e1c-afb8-8b3e-a319-80caf40eb63c"
     }
   },
   "spec": {
@@ -44,7 +45,7 @@
       {
         "name": "cnpg-backup-state",
         "emptyDir": {
-          "sizeLimit": "16Mi"
+          "sizeLimit": "64Mi"
         }
       },
       {
@@ -53,7 +54,7 @@
           "sources": [
             {
               "configMap": {
-                "name": "database-cb-1e3da321eb76",
+                "name": "database-cb-e3c5b64a0445",
                 "items": [
                   {
                     "key": "capacity.json",
@@ -64,7 +65,7 @@
             },
             {
               "configMap": {
-                "name": "database-cb-1e3da321eb76",
+                "name": "database-cb-e3c5b64a0445",
                 "items": [
                   {
                     "key": "destination.json",
@@ -97,7 +98,7 @@
             },
             {
               "configMap": {
-                "name": "database-cb-1e3da321eb76",
+                "name": "database-cb-e3c5b64a0445",
                 "items": [
                   {
                     "key": "source.json",
@@ -124,6 +125,28 @@
                   {
                     "key": "secret",
                     "path": "source/secretKey"
+                  }
+                ]
+              }
+            },
+            {
+              "configMap": {
+                "name": "database-cb-e3c5b64a0445",
+                "items": [
+                  {
+                    "key": "recovery.json",
+                    "path": "recovery.json"
+                  }
+                ]
+              }
+            },
+            {
+              "configMap": {
+                "name": "database-cb-recovery",
+                "items": [
+                  {
+                    "key": "operation.json",
+                    "path": "operation.json"
                   }
                 ]
               }

@@ -191,6 +191,11 @@ func (w Files) metadata(name string, info s3store.Info) (s3store.Integrity, erro
 	return s3store.Integrity{Size: raw, SHA256: m["cnpg-raw-sha256"]}, nil
 }
 
+// Retrieve verifies one exact source file into an owned private spool. Recovery
+// callers must keep their repository reader admitted through this whole call.
+func (w Files) Retrieve(ctx context.Context, name string, out *os.File) (s3store.Integrity, error) {
+	return w.retrieve(ctx, name, out)
+}
 func (w Files) retrieve(ctx context.Context, name string, out *os.File) (s3store.Integrity, error) {
 	key, _, e := w.Limits(name)
 	if e != nil {
@@ -198,6 +203,11 @@ func (w Files) retrieve(ctx context.Context, name string, out *os.File) (s3store
 	}
 	info, e := w.Store.Head(ctx, key)
 	if e != nil {
+		// Preserve the FIRST non-absence failure. A later GET miss must never
+		// turn an earlier TLS/auth/transport/corruption error into archive EOF.
+		if !s3store.Is(e, s3store.HeadMissing) {
+			return s3store.Integrity{}, e
+		}
 		// HEAD404 has no authenticated error body. Only a consumed GET NoSuchKey
 		// can become absence. A race to a large live file fails closed, never EOF.
 		_, _, getErr := w.Store.Read(ctx, key, 64<<10)

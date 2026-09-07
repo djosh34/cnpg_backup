@@ -101,6 +101,10 @@ func timeTarget(s string) (time.Time, error) {
 	}
 	return t, nil
 }
+
+// ValidateTarget checks the frozen CNPG target contract. Timeline must already
+// be numeric; callers may substitute a temporary numeric value for syntax checks.
+func ValidateTarget(t Target) error { return t.validate() }
 func (t Target) validate() error {
 	if t.Timeline == 0 || (t.BackupUID != nil && !validID(*t.BackupUID)) {
 		return ErrInvalid

@@ -80,7 +80,19 @@ func fixture(t *testing.T, recovery bool) (*API, Cluster, core.Pod) {
 		uid := []string{"44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"}[index]
 		objects = append(objects, unstruct(&core.PersistentVolumeClaim{TypeMeta: meta.TypeMeta{APIVersion: "v1", Kind: "PersistentVolumeClaim"}, ObjectMeta: meta.ObjectMeta{Name: target.name, Namespace: "test", UID: types.UID(uid), OwnerReferences: []meta.OwnerReference{{APIVersion: c.APIVersion, Kind: c.Kind, Name: c.Metadata.Name, UID: c.Metadata.UID, Controller: ptr(true)}}}, Spec: core.PersistentVolumeClaimSpec{VolumeMode: ptr(core.PersistentVolumeFilesystem)}}))
 	}
-	api := &API{Client: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...), Namespaces: []string{"test"}, SecretNames: map[string][]string{"test": {"auth", "database-replication", "database-ca"}}}
+	scheme := runtime.NewScheme()
+	if e := core.AddToScheme(scheme); e != nil {
+		t.Fatal(e)
+	}
+	if e := batch.AddToScheme(scheme); e != nil {
+		t.Fatal(e)
+	}
+	monitorCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	api := &API{Client: dynamicfake.NewSimpleDynamicClient(scheme, objects...), Namespaces: []string{"test"}, SecretNames: map[string][]string{"test": {"auth", "database-replication", "database-ca"}}, recoveryContext: monitorCtx}
+	// Placement tests replace only remote gate I/O. Actual LIST/WATCH, owned CM
+	// bootstrap binding and terminal-state validation still execute.
+	api.recoveryLifetime = func(context.Context, Cluster, configuration.Spec, bool) error { return nil }
 	return api, c, pod
 }
 func apply(t *testing.T, object, patch []byte) []byte {

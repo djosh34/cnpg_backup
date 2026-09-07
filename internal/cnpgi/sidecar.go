@@ -1,6 +1,5 @@
 // Copyright 2026 cnpg_backup contributors. All rights reserved.
-// Package cnpgi implements lifecycle and the available CNPG-I WAL wire surface.
-// Primary backup/restore capabilities remain unadvertised until implemented.
+// Package cnpgi implements lifecycle, full backup and protected recovery.
 package cnpgi
 
 import (
@@ -13,6 +12,7 @@ import (
 
 	wirebackup "github.com/cloudnative-pg/cnpg-i/pkg/backup"
 	"github.com/cloudnative-pg/cnpg-i/pkg/identity"
+	job "github.com/cloudnative-pg/cnpg-i/pkg/restore/job"
 	wirewal "github.com/cloudnative-pg/cnpg-i/pkg/wal"
 	"github.com/djosh34/cnpg_backup/internal/postgres"
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
@@ -28,12 +28,13 @@ type Identity struct {
 	Revision string
 	WAL      bool
 	Backup   bool
+	Restore  bool
 }
 
 func (s Identity) GetPluginMetadata(context.Context, *identity.GetPluginMetadataRequest) (*identity.GetPluginMetadataResponse, error) {
 	return &identity.GetPluginMetadataResponse{
 		Name: recoveryguard.PluginName, Version: "development-" + s.Revision,
-		DisplayName: "CNPG Backup", Description: "CNPG backup lifecycle and synchronous WAL",
+		DisplayName: "CNPG Backup", Description: "CNPG full backup, synchronous WAL and protected recovery",
 		ProjectUrl: "https://github.com/djosh34/cnpg_backup", RepositoryUrl: "https://github.com/djosh34/cnpg_backup",
 		License: "All rights reserved", LicenseUrl: "https://github.com/djosh34/cnpg_backup/blob/main/LICENSE", Maturity: "alpha",
 	}, nil
@@ -45,6 +46,9 @@ func (s Identity) GetPluginCapabilities(context.Context, *identity.GetPluginCapa
 	}
 	if s.Backup {
 		result.Capabilities = append(result.Capabilities, &identity.PluginCapability{Type: &identity.PluginCapability_Service_{Service: &identity.PluginCapability_Service{Type: identity.PluginCapability_Service_TYPE_BACKUP_SERVICE}}})
+	}
+	if s.Restore {
+		result.Capabilities = append(result.Capabilities, &identity.PluginCapability{Type: &identity.PluginCapability_Service_{Service: &identity.PluginCapability_Service{Type: identity.PluginCapability_Service_TYPE_RESTORE_JOB}}})
 	}
 	return result, nil
 }
@@ -62,12 +66,18 @@ func (s Identity) Probe(context.Context, *identity.ProbeRequest) (*identity.Prob
 func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.Admission, revision string, wal ...*WALService) error {
 	server := grpc.NewServer(grpc.MaxRecvMsgSize((2<<20)+(64<<10)), grpc.MaxSendMsgSize(256<<10), grpc.MaxConcurrentStreams(16), grpc.WaitForHandlers(true))
 	enabled := len(wal) == 1 && wal[0] != nil && admission == nil
-	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: enabled, Backup: enabled})
+	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: enabled || admission != nil, Backup: enabled, Restore: admission != nil})
 	if enabled {
 		wirewal.RegisterWALServer(server, wal[0])
 		wirebackup.RegisterBackupServer(server, &BackupService{})
 	}
 	if admission != nil {
+		recovery, err := NewRecoveryService(admission)
+		if err != nil {
+			return err
+		}
+		job.RegisterRestoreJobHooksServer(server, recovery)
+		wirewal.RegisterWALServer(server, &recoveryWAL{recovery: recovery})
 		recoveryguard.RegisterControl(server, admission)
 	}
 	done := make(chan struct{})

@@ -44,7 +44,7 @@
       {
         "name": "cnpg-backup-state",
         "emptyDir": {
-          "sizeLimit": "16Mi"
+          "sizeLimit": "64Mi"
         }
       },
       {

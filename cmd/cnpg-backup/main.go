@@ -34,10 +34,11 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 	if len(args) > 0 {
 		switch args[0] {
 		case "wal-fetch":
-			// Ordinary exit 1 means allowed WAL absence to PostgreSQL. Until the
-			// real helper is implemented, every invocation must be fatal.
-			fmt.Fprintln(errOut, "wal-fetch: not implemented")
-			return 255
+			code := cnpgi.WALFetch(context.Background(), args[1:])
+			if code == 255 {
+				fmt.Fprintln(errOut, "wal-fetch: recovery fetch failed")
+			}
+			return code
 		case "instance", "recovery-job":
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -92,7 +93,7 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 			return 0
 		}
 	}
-	fmt.Fprintln(errOut, "usage: cnpg-backup version|manager|instance|recovery-job|recovery-guard|wal-fetch (primary backup/restore and wal-fetch recovery plans not implemented)")
+	fmt.Fprintln(errOut, "usage: cnpg-backup version|manager|instance|recovery-job|recovery-guard|wal-fetch (PG18 full backup and protected recovery; differential not implemented)")
 	return 2
 }
 

@@ -51,6 +51,16 @@ type Tuple struct {
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var tablespacePattern = regexp.MustCompile(`^/var/lib/postgresql/tablespaces/[a-zA-Z_][a-zA-Z0-9_$]{0,62}$`)
 
+// Validate checks tuple syntax only, never establishes or adopts ownership.
+func (t Tuple) Validate() error {
+	for _, id := range []string{t.Owner.ClusterUID, t.Owner.OperationUID, t.Owner.PodUID, t.Owner.GuardUID, t.SidecarUID} {
+		if !uuidPattern.MatchString(id) {
+			return errors.New("invalid recovery tuple")
+		}
+	}
+	return nil
+}
+
 func NewUUID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

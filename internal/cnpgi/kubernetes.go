@@ -8,6 +8,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/djosh34/cnpg_backup/internal/configuration"
@@ -32,6 +33,11 @@ type API struct {
 	Client            dynamic.Interface
 	Namespaces        []string
 	SecretNames       map[string][]string
+	recoveryMu        sync.Mutex
+	recovery          *recoveryCoordinator
+	recoveryContext   context.Context
+	// Sole storage I/O seam for manager source lifetime operations.
+	recoveryLifetime func(context.Context, Cluster, configuration.Spec, bool) error
 }
 
 func (a *API) Get(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error) {

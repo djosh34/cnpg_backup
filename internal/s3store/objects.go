@@ -174,8 +174,8 @@ func (r contextReader) Read(p []byte) (int, error) {
 	return r.r.Read(p)
 }
 
-// Head is metadata only, never content verification. A bare HEAD 404 remains
-// unknown: callers use GET to establish authenticated NoSuchKey.
+// Head is metadata only, never content verification. A bare HEAD404 reports
+// HeadMissing, not NotFound: callers use GET to establish authenticated absence.
 func (s *Store) Head(ctx context.Context, key string) (Info, error) {
 	k, e := s.key(key)
 	if e != nil {

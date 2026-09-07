@@ -247,6 +247,11 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	}
 	if src != nil {
 		projection["source.json"] = jsonText(src)
+		placement := RecoveryPlacement{ClusterUID: string(c.Metadata.UID), Namespace: c.Metadata.Namespace, Cluster: c.Metadata.Name, OperationID: c.OperationUID(), BootstrapSHA256: c.BootstrapFingerprint(), Source: source, Destination: destination, SourceConfigSHA256: src.Hash(), DestinationConfigSHA256: dst.Hash()}
+		if err := api.ensureRecovery(ctx, c, placement, guard, *src); err != nil {
+			return err
+		}
+		projection["recovery.json"] = jsonText(placement)
 	}
 	sum := sha256.Sum256([]byte(jsonText(projection)))
 	configName := fmt.Sprintf("%s-cb-%x", c.Metadata.Name, sum[:6])
@@ -271,6 +276,7 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	addRole("destination", dst)
 	if src != nil {
 		addRole("source", *src)
+		sources = append(sources, core.VolumeProjection{ConfigMap: &core.ConfigMapProjection{LocalObjectReference: core.LocalObjectReference{Name: configName}, Items: []core.KeyToPath{{Key: "recovery.json", Path: "recovery.json"}}}}, core.VolumeProjection{ConfigMap: &core.ConfigMapProjection{LocalObjectReference: core.LocalObjectReference{Name: operationName(c)}, Items: []core.KeyToPath{{Key: "operation.json", Path: "operation.json"}}}})
 	}
 	// Native capture uses only the replication client identity and public server
 	// CA. Never mirror the main container's application/superuser/server-key mounts.
@@ -300,7 +306,7 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	volumes := []core.Volume{
 		{Name: "cnpg-backup-plugins", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{SizeLimit: ptr(resource.MustParse("1Mi"))}}},
 		{Name: "cnpg-backup-bin", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{SizeLimit: ptr(resource.MustParse("128Mi"))}}},
-		{Name: "cnpg-backup-state", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{SizeLimit: ptr(resource.MustParse("16Mi"))}}},
+		{Name: "cnpg-backup-state", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{SizeLimit: ptr(resource.MustParse("64Mi"))}}},
 		{Name: "cnpg-backup-projection", VolumeSource: core.VolumeSource{Projected: &core.ProjectedVolumeSource{DefaultMode: ptr(int32(0440)), Sources: sources}}},
 		{Name: "cnpg-backup-work", VolumeSource: core.VolumeSource{Ephemeral: &core.EphemeralVolumeSource{VolumeClaimTemplate: &core.PersistentVolumeClaimTemplate{Spec: core.PersistentVolumeClaimSpec{AccessModes: []core.PersistentVolumeAccessMode{core.ReadWriteOnce}, VolumeMode: ptr(core.PersistentVolumeFilesystem), StorageClassName: &dst.Workspace.StorageClassName, Resources: core.VolumeResourceRequirements{Requests: core.ResourceList{core.ResourceStorage: resource.MustParse(dst.Workspace.Size)}}}}}}},
 	}
@@ -372,6 +378,9 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	}
 	if metadata.Annotations == nil {
 		metadata.Annotations = map[string]string{}
+	}
+	if recovery {
+		metadata.Annotations[operationAnnotation] = c.OperationUID()
 	}
 	metadata.Annotations[ownedAnnotation] = string(c.Metadata.UID)
 	metadata.Annotations[configAnnotation] = configName
