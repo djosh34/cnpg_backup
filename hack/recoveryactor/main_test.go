@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -57,6 +59,31 @@ func TestRelocateSocketUsesFullVolumeAliasAndPreservesListener(t *testing.T) {
 	if err := relocateSocket(filepath.Join(volume, "upstream.sock"), volume); err == nil {
 		t.Fatal("wrong alias accepted")
 	}
+}
+
+func TestWALObservationHashesActualBytesWithoutMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "RECOVERYXLOG")
+	data := bytes.Repeat([]byte("actual-archive"), 8192)
+	if e := os.WriteFile(path, data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	digest, size := walDigest(path)
+	if digest != fmt.Sprintf("%x", sha256.Sum256(data)) || size != int64(len(data)) {
+		t.Fatal(digest, size)
+	}
+	observed, e := os.ReadFile(path)
+	if e != nil || !bytes.Equal(data, observed) {
+		t.Fatal("observation changed delivered WAL", e)
+	}
+	if e := os.Truncate(path, (64<<20)+1); e != nil {
+		t.Fatal(e)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("unbounded WAL observation accepted")
+		}
+	}()
+	walDigest(path)
 }
 
 // Real local socket/protobuf interoperability for the observer transport. This

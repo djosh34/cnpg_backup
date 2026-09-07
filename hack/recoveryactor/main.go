@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -254,8 +255,15 @@ func serveProxy() {
 						return
 					}
 				}
-				if method == wire.WAL_Restore_FullMethodName && exists("incorrect-bundle-success") && bundled(name) {
-					copyBundle(name)
+				if method == wire.WAL_Restore_FullMethodName {
+					observedName, _ := os.ReadFile(root + "/observe-wal")
+					if string(observedName) == name {
+						digest, size := walDigest("/var/lib/postgresql/wal/pg_wal/RECOVERYXLOG")
+						event(map[string]any{"event": "actual-upstream-WAL", "name": name, "sha256": digest, "bytes": size})
+					}
+					if exists("incorrect-bundle-success") && bundled(name) {
+						copyBundle(name)
+					}
 				}
 				if e = down.SendMsg(&b); e != nil {
 					errors <- e
@@ -351,6 +359,22 @@ func bundled(name string) bool {
 	_, ok := p.Bundled[name]
 	return ok
 }
+
+// Observe delivered bytes before the deliberately wrong negative can replace
+// them. Bounded read-only test evidence, never a subject-image service.
+func walDigest(path string) (string, int64) {
+	f, e := os.Open(path)
+	must(e)
+	defer f.Close()
+	hash := sha256.New()
+	n, e := io.Copy(hash, io.LimitReader(f, (64<<20)+1))
+	must(e)
+	if n > 64<<20 {
+		panic("observed WAL exceeds campaign bound")
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), n
+}
+
 func copyBundle(name string) {
 	if !bundled(name) || len(name) != 24 {
 		panic("invalid controlled bundle name")

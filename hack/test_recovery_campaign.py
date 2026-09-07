@@ -163,14 +163,108 @@ class CampaignTests(unittest.TestCase):
              patch.object(campaign, 'gate', return_value={'holders': [{'id': 'unrelated'}]}) as gate:
             campaign.ordinary_completion(state)  # Job/Pod naturally gone, proof survives
             for bad in ({**proof, 'state': 'uncertain'}, {**proof, 'completedJobUID': 'other'},
-                        {**proof, 'terminatedPodUIDs': []}, {**proof, 'lifetimeReleased': False}):
+                        {**proof, 'terminatedPodUIDs': []}, {**proof, 'terminatedPodUIDs': ['other']},
+                        {**proof, 'lifetimeReleased': False}):
                 operation.return_value = bad
                 with self.assertRaises(AssertionError):
                     campaign.ordinary_completion(state)
             operation.return_value = proof
-            gate.return_value = {'holders': [{'id': 'stable'}]}
+            for holder in ('stable', 'reader'):
+                gate.return_value = {'holders': [{'id': holder}]}
+                with self.assertRaises(AssertionError):
+                    campaign.ordinary_completion(state)
+
+    def test_ordinary_finish_survives_cleanup_after_exact_durable_proof(self):
+        from recovery_cases import Campaign, BASE, SOURCE_ID
+        campaign = Campaign(None, None)
+        state = {'name': 'g-001', 'pod': 'original-pod-name', 'pod_uid': 'original-pod',
+                 'job_uid': 'original-job', 'repository_id': 'destination',
+                 'plan': {'plan': {'reader_hold_id': 'reader', 'lifetime_hold_id': 'stable',
+                                   'target': {'timeline': 1}}}}
+        proof = {'state': 'completed', 'lifetimeReleased': True,
+                 'completedJobUID': 'original-job', 'terminatedPodUIDs': ['original-pod']}
+        shutdown = []
+        def release(pod, barrier):
+            if barrier == 'release-shutdown':
+                shutdown.append(True)  # natural Job/Pod cleanup now wins every LIST
+        def wait(predicate, *args):
+            self.assertTrue(predicate())
+        def kube(*args, **kwargs):
+            self.assertNotEqual(args[:2], ('get', 'jobs'))
+            self.assertNotEqual(args[0], 'annotate')  # ordinary operator never paused
+            return '/var/lib/postgresql/wal/pg_wal' if args[0] == 'exec' else ''
+        segment = '000000020000000000000003'
+        def inventory(prefix):
+            return [] if SOURCE_ID in prefix else [prefix + segment[:8] + '/' + segment]
+        with tempfile.TemporaryDirectory() as tmp, patch('recovery_cases.OUT', Path(tmp)), \
+             patch('recovery_cases.h.wait', side_effect=wait), patch('recovery_cases.h.kube', side_effect=kube), \
+             patch('recovery_cases.h.save_log'), patch.object(campaign, 'event'), \
+             patch.object(campaign, 'release', side_effect=release), patch.object(campaign, 'barrier'), \
+             patch.object(campaign, 'file', return_value=json.dumps({'event': 'actual-cnpg-exit', 'exit': 0})), \
+             patch.object(campaign, 'holds'), patch.object(campaign, 'pods', return_value=[]), \
+             patch.object(campaign, 'markers', side_effect=lambda s: ['absent' if shutdown else 'present'] * 3), \
+             patch.object(campaign, 'operation_state', return_value=proof), \
+             patch.object(campaign, 'gate', return_value={'holders': [{'id': 'unrelated'}]}), \
+             patch.object(campaign, 'terminated', side_effect=AssertionError('ephemeral termination LIST after proof')) as terminated, \
+             patch.object(campaign, 'primary', return_value='new-primary'), \
+             patch.object(campaign, 'sql', side_effect=['1:base', 'f', 'f', '/var/lib/postgresql/tablespaces/fast_space/data', '2', '', segment]), \
+             patch.object(campaign, 'inventory', side_effect=inventory), patch.object(campaign, 'retire_target'):
+            self.assertIs(campaign.finish(state, BASE, ordinary=True), state)
+            terminated.assert_not_called()
+            self.assertEqual(json.loads((Path(tmp) / 'g-001-ordinary-operation.json').read_text()), proof)
+
+    def test_real_switch_witness_requires_post_end_bytes_in_final_filename(self):
+        from recovery_cases import switch_witness
+        commit = {'backup_uid': 'full', 'timeline': 1, 'bundled_wal_end_lsn': '0/2000120'}
+        dump = 'rmgr: XLOG len (rec/tot): 24/24, tx: 0, lsn: 0/02000120, prev 0/020000F8, desc: SWITCH \n'
+        witness = switch_witness(commit, dump)
+        self.assertEqual(witness['filename'], '000000010000000000000002')
+        self.assertEqual(witness['replay_end_lsn'], '0/3000000')
+        self.assertEqual(witness['switch_start'], '0/02000120')
+        for bad in ('', dump.replace('SWITCH', 'RESTORE_POINT named'),
+                    dump.replace('0/02000120', '0/02000118'), dump.replace('0/02000120', '0/03000120'),
+                    dump + dump):
             with self.assertRaises(AssertionError):
-                campaign.ordinary_completion(state)
+                switch_witness(commit, bad)
+        with self.assertRaises(AssertionError):
+            switch_witness({**commit, 'bundled_wal_end_lsn': '0/3000000'}, dump)
+
+    def test_durable_history_oracle_rejects_wrong_bundle_despite_identical_sql(self):
+        from recovery_cases import history_fork, lsn
+        path = [{'id': 1}]
+        healthy = '1\t0/3000000\tno recovery target specified\n'
+        wrong = '1\t0/2000120\tno recovery target specified\n'
+        floor = lsn('0/3000000')
+        self.assertGreaterEqual(history_fork(healthy, 2, path), floor)
+        self.assertLess(history_fork(wrong, 2, path), floor)
+        for text, timeline in ((healthy, 1), ('2 0/3000000 wrong-parent', 3),
+                               ('', 2), (healthy + healthy, 2), ('1 nonsense reason', 2)):
+            with self.assertRaises((AssertionError, ValueError)):
+                history_fork(text, timeline, path)
+
+    def test_same_file_fault_stays_active_through_actual_replay_failure(self):
+        from recovery_cases import Campaign
+        campaign = Campaign(None, None)
+        from unittest.mock import Mock
+        campaign.wal = Mock()
+        active = []
+        name = '000000010000000000000002'
+        state = {'pod': 'pod', 'name': 'g-001'}
+        def control(*args):
+            if args:
+                active[:] = list(args)
+            return {'blocked': 1}
+        campaign.wal.control.side_effect = control
+        def barrier(*args):
+            self.assertEqual(active, ['missing-wal-get', name])
+        trace = '\n'.join(json.dumps(e) for e in [{'event': 'wal-request', 'name': name},
+                                                    {'event': 'actual-cnpg-exit', 'exit': 1}])
+        with patch.object(campaign, 'release'), patch.object(campaign, 'barrier', side_effect=barrier), \
+             patch.object(campaign, 'file', return_value=trace), patch.object(campaign, 'holds'), \
+             patch.object(campaign, 'event'), patch.object(campaign, 'retire_target'), \
+             patch('recovery_cases.h.save_log'), patch('recovery_cases.h.kube', return_value='FATAL restore command exit 255'):
+            campaign.fatal_replay(state, name, 'missing-wal-get', 'same-segment')
+        self.assertEqual(active, [''])
 
     def test_budget_rejects_fault_before_it_is_generated(self):
         with tempfile.TemporaryDirectory() as tmp:

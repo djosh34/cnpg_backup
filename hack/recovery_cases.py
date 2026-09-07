@@ -11,7 +11,6 @@ import re
 import shutil
 import subprocess
 import time
-import threading
 import tarfile
 import io
 from types import SimpleNamespace
@@ -45,6 +44,39 @@ VOLUMES = ('/var/lib/postgresql/data', '/var/lib/postgresql/wal',
 def lsn(text):
     hi, lo = text.split('/')
     return int(hi, 16) << 32 | int(lo, 16)
+
+
+def switch_witness(commit, dump):
+    """Independent native-record precondition; never alter native EndLSN."""
+    size = 16 << 20  # This campaign's explicitly checked source segment size.
+    end = lsn(commit['bundled_wal_end_lsn'])
+    segment = (end - 1) // size
+    matches = re.findall(r'len \(rec/tot\):\s*24/\s*24,.*lsn: ([0-9A-F]+/[0-9A-F]+).*desc: SWITCH\s*$', dump, re.M)
+    assert len(matches) == 1, 'ineffective S1 fixture: no unique real SWITCH in final bundle filename'
+    start = lsn(matches[0])
+    assert end % size and end <= start and start // size == segment, 'ineffective S1 fixture: SWITCH not after native EndLSN in same file'
+    boundary = (segment + 1) * size
+    return {'backup_uid': commit['backup_uid'], 'timeline': commit['timeline'],
+            'end_lsn': commit['bundled_wal_end_lsn'], 'switch_start': matches[0],
+            'replay_end_lsn': f'{boundary >> 32:X}/{boundary & 0xffffffff:X}',
+            'filename': f"{commit['timeline']:08X}{segment // 256:08X}{segment % 256:08X}"}
+
+
+def history_fork(text, new_timeline, source_path):
+    """PostgreSQL-generated immediate-parent fork, not current write/checkpoint LSN."""
+    assert len(text.encode()) <= 65536
+    entries = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        fields = line.split(None, 2)
+        assert len(fields) >= 2 and re.fullmatch(r'[0-9A-F]+/[0-9A-F]+', fields[1])
+        entries.append((int(fields[0]), lsn(fields[1])))
+    assert entries and [e[0] for e in entries] == [p['id'] for p in source_path], 'history does not belong to selected source ancestry'
+    assert new_timeline > entries[-1][0] and len({e[0] for e in entries}) == len(entries)
+    for i in range(len(entries) - 1):
+        assert entries[i][1] == lsn(source_path[i + 1]['fork_lsn']), 'history source fork changed'
+    return entries[-1][1]
 
 
 def registry_pull_secrets():
@@ -263,6 +295,9 @@ class Campaign:
         segment = self.sql(SOURCE, pod, 'SELECT pg_walfile_name(pg_switch_wal())')
         h.wait(lambda: self.sql(SOURCE, pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + segment + ".done'") == '1',
                'known durable archive boundary', 120)
+        return self.fetch_archive(segment)
+
+    def fetch_archive(self, segment):
         path = WORK / segment
         self.wal.s3('GET', self.wal_key(segment), path)
         raw = path.read_bytes()
@@ -336,52 +371,26 @@ class Campaign:
             self.capture_same_segment()
 
     def capture_same_segment(self):
-        # Bounded fixture construction, not randomized substitution for S1. A
-        # backup-END / restore-point / switch interleaving must actually occur.
-        # Ineffective attempts are retained separately from any product failure.
-        pod = self.primary()
-        for attempt in range(1, 7):
-            stop = threading.Event()
-            points, failures = [], []
-            lock = threading.Lock()
-            def writer(worker):
-                try:
-                    for batch in range(64):
-                        if stop.is_set():
-                            return
-                        prefix = f'g_same_{attempt}_{worker}_{batch}_'
-                        result = self.sql(SOURCE, pod, "SELECT n::text||'|'||pg_create_restore_point('" + prefix + "'||n::text)::text FROM generate_series(1,5000) n")
-                        observed = []
-                        for line in result.splitlines():
-                            index, position = line.split('|')
-                            observed.append({'name': prefix + index, 'lsn': position})
-                        with lock:
-                            points.extend(observed)
-                        time.sleep(.01)
-                except Exception as e:
-                    failures.append(type(e).__name__)
-            threads = [threading.Thread(target=writer, args=(n,), daemon=True) for n in range(3)]
-            for thread in threads:
-                thread.start()
-            try:
-                commit = self.full('g-same-' + str(attempt))
-            finally:
-                stop.set()
-                for thread in threads:
-                    thread.join(timeout=60)
-            assert not failures and not any(t.is_alive() for t in threads), 'same-segment SQL journal incomplete/ambiguous'
-            end = lsn(commit['bundled_wal_end_lsn'])
-            candidates = [p for p in points if lsn(p['lsn']) > end and lsn(p['lsn']) // (16 << 20) == (end - 1) // (16 << 20)]
-            atomic_json(OUT / ('same-segment-attempt-' + str(attempt) + '.json'),
-                        {'backup_uid': commit['backup_uid'], 'end_lsn': commit['bundled_wal_end_lsn'],
-                         'observed_points': len(points), 'same_segment_candidates': candidates[:128],
-                         'effective': bool(candidates), 'product_failure_claim': False})
-            self.archive()
-            if candidates:
-                self.same_commit = commit
-                self.same_point = min(candidates, key=lambda p: lsn(p['lsn']))
-                return
-        raise AssertionError('ineffective S1 same-segment capture after six bounded arrangements; retain evidence, do not count product failure or skip')
+        # Fresh PRODUCT capture, not a retained planning fixture. Native stop
+        # normally appends a real SWITCH after EndLSN; observe, never assume it.
+        commit = self.full('g-same-switch')
+        assert self.sql(SOURCE, self.primary(), 'SHOW wal_segment_size') == '16MB'
+        end = lsn(commit['bundled_wal_end_lsn'])
+        segment = (end - 1) // (16 << 20)
+        name = f"{commit['timeline']:08X}{segment // 256:08X}{segment % 256:08X}"
+        h.wait(lambda: self.sql(SOURCE, self.primary(), "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '1',
+               'actual product same-final-file archive durable', 120)
+        self.fetch_archive(name)  # no extra switch or invented frontier
+        dump = h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL',
+                     '--mount', 'type=bind,source=' + str(WORK) + ',target=/fixture,readonly',
+                     '--entrypoint=/usr/lib/postgresql/18/bin/pg_waldump', self.args.data_image,
+                     '--path=/fixture', '--rmgr=XLOG', '--start=' + commit['bundled_wal_end_lsn'], name)
+        h.save_log('same-segment-switch-waldump.log', dump)
+        self.same_witness = switch_witness(commit, dump)
+        self.same_witness['archive_sha256'] = hashlib.sha256((WORK / name).read_bytes()).hexdigest()
+        self.same_commit = commit
+        atomic_json(OUT / 'same-segment-witness.json', self.same_witness)
+        self.event('same-segment-real-switch-observed', **self.same_witness, original_manifest_unchanged=True)
 
     def pods(self, name):
         return json.loads(h.kube('get', 'pods', '-n', TARGET, '-l', 'cnpg.io/cluster=' + name, '-o', 'json'))['items']
@@ -483,6 +492,7 @@ class Campaign:
         events = [json.loads(x) for x in self.file(pod, '/controller/campaign/rpc.jsonl').splitlines()]
         assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] == 0 for x in events), 'actual CNPG recovery failed'
         h.save_log(state['name'] + '-rpc.jsonl', json.dumps(events))
+        state['recovery_events'] = events
         self.holds(state, 'actual-CNPG-exited-before-guard-drain')
         # Resolve/validate immutable PVC backing paths while the original Pod
         # still exists. Ordinary CNPG cleanup may remove it before the final
@@ -500,9 +510,13 @@ class Campaign:
             assert not stable_retained, 'ordinary normal-completion case requires automatic stable release'
             self.event('ordinary-CNPG-cleanup-uninterrupted', cluster=state['name'])
         self.release(pod, 'release-shutdown')
-        # Observe immediately, concurrently with uninterrupted CNPG reconciliation
-        # in the ordinary case—not a post-Ready LIST of already deleted Pods.
-        self.terminated(state, stable_retained=stable_retained)
+        # The ordinary observer's durable exact-UID proof survives natural
+        # cleanup. Do not first require ephemeral Job/Pod LIST evidence after
+        # that proof. Paused/retry cases still inspect every live API status.
+        if ordinary:
+            self.ordinary_completion(state)
+        else:
+            self.terminated(state, stable_retained=stable_retained)
         assert self.markers(state) == ['absent'] * 3, 'successful Job did not cleanly release every target marker'
         if not ordinary:
             h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop-', '--overwrite')
@@ -519,6 +533,15 @@ class Campaign:
         assert wal_path == '/var/lib/postgresql/wal/pg_wal'
         timeline = int(self.sql(TARGET, primary, 'SELECT timeline_id FROM pg_control_checkpoint()'))
         assert timeline > state['plan']['plan']['target']['timeline']
+        if 'same_segment_floor' in state:
+            history = h.kube('exec', '-n', TARGET, primary, '-c', 'postgres', '--', 'cat',
+                             f'/var/lib/postgresql/wal/pg_wal/{timeline:08X}.history')
+            state['replay_endpoint'] = history_fork(history, timeline, state['plan']['plan']['path'])
+            h.save_log(state['name'] + '-promotion.history', history)
+            self.event('actual-promotion-endpoint', cluster=state['name'], cluster_uid=state['cluster_uid'],
+                       source_timeline=state['plan']['plan']['target']['timeline'], new_timeline=timeline,
+                       history=history, history_sha256=hashlib.sha256(history.encode()).hexdigest(),
+                       endpoint=state['replay_endpoint'], admitted_frontier=state['same_segment_floor'])
         self.event('recovered-SQL', cluster=state['name'], rows=actual, drop_present=drop_present, timeline=timeline, wal_path=wal_path)
         # New lineage archives through ordinary instance mode, source declaration
         # remains in Cluster. S3 source inventory must not change from that write.
@@ -528,8 +551,6 @@ class Campaign:
         key = 'smoke/v1/' + state['repository_id'] + '/wal/' + segment[:8] + '/' + segment
         h.wait(lambda: key in self.inventory('smoke/v1/' + state['repository_id'] + '/wal/'), 'new lineage archive', 120)
         assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == before, 'destination write changed source archive'
-        if ordinary:
-            self.ordinary_completion(state)
         self.retire_target(state)
         return state
 
@@ -859,7 +880,7 @@ class Campaign:
         segno = (end - 1) // (16 << 20)
         name = f"{commit['timeline']:08X}{segno // 256:08X}{segno % 256:08X}"
         target_offset = end % (16 << 20)
-        assert target_offset > 0 and lsn(self.same_point['lsn']) > end
+        assert target_offset > 0 and lsn(self.same_witness['switch_start']) >= end
         output = io.BytesIO()
         found = False
         with tarfile.open(fileobj=io.BytesIO(raw)) as source, tarfile.open(fileobj=output, mode='w', format=tarfile.USTAR_FORMAT) as dest:
@@ -883,7 +904,7 @@ class Campaign:
             self.put_fixture(key, changed)
             self.put_fixture(prefix + 'commit.json', changed_commit)
             self.event('same-segment-padding-arranged', filename=name, end_lsn=commit['bundled_wal_end_lsn'],
-                       target=self.same_point, original_manifest_unchanged=True,
+                       target=self.same_witness, original_manifest_unchanged=True,
                        synthetic_padding=True, original_object_sha256=hashlib.sha256(old.read_bytes()).hexdigest(),
                        padded_object_sha256=hashlib.sha256(stored).hexdigest())
             yield commit, name
@@ -891,38 +912,51 @@ class Campaign:
             self.put_fixture(key, old)
             self.put_fixture(prefix + 'commit.json', old_commit)
 
+    def same_segment_plan(self, state):
+        self.materialize(state)
+        plan = state['plan']['plan']
+        witness = self.same_witness
+        assert plan['target']['kind'] == 'latest' and plan['target']['timeline'] == witness['timeline']
+        assert plan['chain'][-1]['backup_uid'] == witness['backup_uid']
+        assert witness['filename'] in state['plan']['bundled']
+        required = plan['required_archive']
+        assert any(w['timeline'] == witness['timeline'] and lsn(w['start_lsn']) <= lsn(witness['end_lsn'])
+                   and lsn(w['end_lsn']) >= lsn(witness['replay_end_lsn']) for w in required), 'actual plan does not require same-file post-EndLSN interval'
+        # Actual admitted frontier, not a shortened/invented S1 plan.
+        state['same_segment_floor'] = lsn(required[-1]['end_lsn'])
+        self.file(state['pod'], '/controller/campaign/observe-wal', witness['filename'])
+        self.event('same-segment-required-plan', cluster=state['name'], required=required, witness=witness)
+
+    def same_endpoint_reached(self, state):
+        return state['replay_endpoint'] >= max(state['same_segment_floor'], lsn(self.same_witness['replay_end_lsn']))
+
     def same_segment(self):
         with self.m.case('same-bundled-segment-post-EndLSN-archive-preferred'):
             with self.padded_same_bundle() as (commit, name):
-                target = {'backupID': commit['backup_uid'], 'targetName': self.same_point['name']}
-                state = self.start(target)
-                self.materialize(state)
-                assert name in state['plan']['bundled']
-                self.helper(state, name, 0)
-                self.finish(state, LATEST)
-                # Exact SAME bundled filename now absent remotely, with intact
-                # verified padded bundle: required post-EndLSN interval is fatal.
-                state = self.start(target)
-                self.materialize(state)
-                self.wal.control('missing-wal-get', name)
-                try:
-                    self.helper(state, name, 255)
-                    assert self.wal.control()['blocked'] > 0
-                finally:
-                    self.wal.control('')
-                self.finish(state, LATEST)
-                # Oracle negative: return the shorter bundle as archive success
-                # after the real sidecar read, not a production test toggle.
-                state = self.start(target)
-                self.materialize(state)
-                self.release(state['pod'], 'incorrect-bundle-success')
-                self.release(state['pod'], 'release-response')
-                self.barrier(state['pod'], 'cnpg-exited', 300)
-                trace = [json.loads(x) for x in self.file(state['pod'], '/controller/campaign/rpc.jsonl').splitlines()]
-                assert any(x.get('event') == 'deliberately-incorrect-bundle-as-archive-success' and x['name'] == name for x in trace)
-                assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in trace), 'negative bundle-as-success oracle was insensitive'
-                self.event('distinguishing-bundle-as-success-negative', trace=trace)
-                self.retire_target(state)
+                target = {'backupID': commit['backup_uid']}  # explicit-base/latest; no equality LSN target
+                for control in ('healthy', 'wrong-bundle', 'healthy-after-negative'):
+                    state = self.start(target)
+                    self.same_segment_plan(state)
+                    if control == 'wrong-bundle':
+                        self.release(state['pod'], 'incorrect-bundle-success')
+                    self.finish(state, LATEST)
+                    trace = state['recovery_events']
+                    assert any(x.get('event') == 'actual-upstream-WAL' and x['name'] == name
+                               and x['sha256'] == self.same_witness['archive_sha256'] for x in trace), 'real archive delivery identity not observed during replay'
+                    reached = self.same_endpoint_reached(state)
+                    if control == 'wrong-bundle':
+                        assert any(x.get('event') == 'deliberately-incorrect-bundle-as-archive-success' and x['name'] == name for x in trace)
+                        assert not reached, 'negative bundle-as-success oracle was insensitive'
+                    else:
+                        assert reached, 'latest recovery did not reach actual admitted archive frontier'
+                    self.event('same-segment-endpoint-oracle', control=control, reached=reached,
+                               endpoint=state['replay_endpoint'], frontier=state['same_segment_floor'])
+                # All faults act on this SAME required bundled filename and stay
+                # active through actual PostgreSQL replay/terminal observation.
+                for mode in ('missing-wal-get', 'corrupt-wal-get', 'auth-wal-get', 'reset-wal-get', 'tls-wal-get'):
+                    state = self.start(target)
+                    self.same_segment_plan(state)
+                    self.fatal_replay(state, name, mode, 'same-segment-' + mode)
         with self.m.case('negative-controls-EOF-and-bundle-as-success'):
             # Same-segment negative above must already have passed.
             assert self.m.data['scenarios']['same-bundled-segment-post-EndLSN-archive-preferred']['status'] == 'passed'
@@ -952,22 +986,28 @@ class Campaign:
                 state = self.start({'backupID': self.base['backup_uid']})
                 self.materialize(state)
                 requested = self.remote if family.startswith('required-') else sorted(state['plan']['bundled'])[0]
-                self.wal.control(mode, requested)
-                try:
-                    self.release(state['pod'], 'release-response')
-                    self.barrier(state['pod'], 'cnpg-exited', 240)
-                    logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
-                    trace = self.file(state['pod'], '/controller/campaign/rpc.jsonl')
-                    assert self.wal.control()['blocked'] > 0, 'ineffective fault injection is not product failure'
-                    assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
-                    assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
-                    assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in map(json.loads, trace.splitlines()))
-                    self.holds(state, 'fatal-source-WAL-with-intact-bundle')
-                    self.event('effective-fatal-WAL', family=family, proxy=self.wal.control())
-                    h.save_log(state['name'] + '-fatal-main.log', logs)
-                finally:
-                    self.wal.control('')
-                self.retire_target(state)
+                self.fatal_replay(state, requested, mode, family)
+
+    def fatal_replay(self, state, requested, mode, family):
+        self.wal.control(mode, requested)
+        try:
+            self.release(state['pod'], 'release-response')
+            self.barrier(state['pod'], 'cnpg-exited', 240)
+            logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
+            trace = self.file(state['pod'], '/controller/campaign/rpc.jsonl')
+            assert self.wal.control()['blocked'] > 0, 'ineffective fault injection is not product failure'
+            assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
+            assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
+            events = [json.loads(x) for x in trace.splitlines()]
+            assert any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
+            assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events)
+            self.holds(state, 'fatal-source-WAL-with-intact-bundle')
+            self.event('effective-fatal-WAL', family=family, filename=requested, proxy=self.wal.control())
+            h.save_log(state['name'] + '-fatal-main.log', logs)
+            h.save_log(state['name'] + '-fatal-rpc.jsonl', trace)
+        finally:
+            self.wal.control('')
+        self.retire_target(state)
 
     def ownership(self):
         # Real guard and actual CNPG original command, with external pauses at

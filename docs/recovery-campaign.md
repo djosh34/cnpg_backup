@@ -92,7 +92,7 @@ unchanged. Portable release archives and qualification remain later delivery wor
 | Inclusive/exclusive, newer base, unreachable target | Time/LSN/XID recover on both sides of the same committed transaction. A later full is ineligible for the older target; automatic selection chooses the older base and an explicitly too-new base fails. Missing named target must fail with PostgreSQL's target-unreached diagnostic. |
 | Remote WAL, source disaster and new lineage | Commit before/after sentinels only after the selected base finishes, beyond its bundled segment. Observe actual archive `.done` plus independently downloaded bytes. Delete the entire source namespace/catalog before any recovery. Target archives into a different UUID and cannot change the frozen source inventory. |
 | S1 local fallback and fatal failures | Withhold actual archive objects, preserving/restoring exact payload and integrity metadata. Intact bundle + authenticated absence must give helper exit1 and actual immediate recovery; missing local file must give255. Incorrect all-required255 is an actual failing-recovery negative control. Missing required archive, payload corruption with intact metadata, auth, socket reset and TLS-handshake faults must give255/no latest promotion despite a bundle. |
-| Same final bundled segment | A bounded concurrent native capture/restore-point workload must observe a post-EndLSN point in the **same final filename**. Ineffective arrangements are recorded, never called a product failure or passed as coverage. Test-only padding changes bytes strictly after the native range and reconciles fixture artifact hashes; original native manifest/SQL bytes are unchanged. Actual product recovery must prefer archive bytes; required absence is255. A deliberately incorrect observer returning padded bundle bytes as archive success must make PostgreSQL fail its target. |
+| Same final bundled segment | A **new actual product full** must have an independently decoded real following SWITCH at/after unchanged native EndLSN in the same final filename. Explicit-backup/latest uses the actual admitted frontier; test-only padding outside the native range leaves original manifest/archive/SQL bytes unchanged. Product replay must deliver the original archive hash, recover SQL/promote, and reach the frontier through a PostgreSQL-generated new-timeline history fork with exact source ancestry. The same endpoint oracle must reject wrong padded-bundle-as-archive-success, even if PG promotes with identical rows; a subsequent healthy control must pass. Same-file missing/corrupt/auth/TLS/transport faults remain255/no promotion throughout actual replay. [Native red/green and source semantics](research/s1-switch-latest.md); old ineffective named-point trials remain evidence, not waived coverage. |
 | Unsafe EOF negative | A deliberately faulty test-only RPC mapping converts a required error to NotFound. Actual PG can promote with only the base rows; the independently expected latest rows distinguish that loss. Product faults retain their real status in positive/safety cases. |
 | R0 | Export the selected data image to check no shell; verify its real downloaded original tar via `pg_verifybackup --no-parse-wal` and the existing direct-Go WAL verifier. Missing/corrupt required bundled ranges must fail. Actual G materialization also executes in that unchanged shell-free image. |
 | K1/S2 | A test-only admission observer in the disposable target namespace installs a wrapper on CNPG's controller **volume**, preserves the original pinned CNPG executable and executes it. The unchanged product guard remains private-namespace PID1. Pause after Begin/before original preflight, delay the real RestoreResponse, hold actual replay and pause after CNPG shutdown. Same-PVC replacement runs the actual guard and must fail without any directory/inode/content changes on all three target filesystems. |
@@ -132,7 +132,11 @@ claim that eager Pod events solve every cleanup ordering.
 The automatic-latest case additionally runs **without pausing CNPG**, with normal
 Job cleanup. It requires surviving durable completion for the exact preobserved
 Job/Pod UIDs, actual removal of its stable/own-reader source holders, clean target
-markers and recovered SQL. If natural cleanup wins before durable observation,
+markers and recovered SQL. This ordinary path waits directly on that surviving
+proof, without first requiring a separate live Job/Pod LIST after cleanup. The
+paused all-container/retry observation paths remain unchanged. A call-site
+regression covers cleanup after durable proof; uncertain/wrong-UID/retained-hold
+proof still fails. If natural cleanup wins before durable observation,
 record that real uncertainty boundary and fail this normal-release case; neither
 readiness nor missing objects is fabricated release evidence. No pause/shutdown recovery-target API is
 advertised by this test. This is a single-node kind experiment, not multi-node
@@ -157,7 +161,7 @@ its recorded cluster can be deleted with the downloaded kind executable; never
 clear a product poison marker to rerun a case.
 
 The first integrated run must validate the observer's actual CNPG mount/command
-placement, bounded same-segment interleaving, real PG descendant isolation,
+placement, same-segment SWITCH/history endpoint distinction, real PG descendant isolation,
 Job retry scheduling, source-reader lifetime and terminal-controller evidence.
 None of these was executed by the disjoint writer. Preserve the first failure and
 distinguish ineffective test injection from product failure. If the fixed matrix

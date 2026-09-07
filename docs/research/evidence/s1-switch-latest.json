@@ -1,0 +1,220 @@
+{
+  "scope": "fresh native primitive only; not CNPG/Go/MinIO product acceptance",
+  "harness_base": "1b4823d42c3a5056898aeaf49caaa528400cc001",
+  "postgres_source": "724edf9bde9d356724ad384a2e196edc3c9f80f7",
+  "actual_native_version": "18.6 (Ubuntu 18.6-3.pgdg24.04+1)",
+  "script": "hack/s1_switch_probe.py",
+  "script_sha256": "7866b233bf54b95da2e5c61e1601c11716da73c20522f8028046e91b1ae19e49",
+  "trials": [
+    {
+      "trial": 1,
+      "range": {
+        "Timeline": 1,
+        "Start-LSN": "0/2000028",
+        "End-LSN": "0/2000120"
+      },
+      "filename": "000000010000000000000002",
+      "expected_latest_replay_lsn": "0/3000000",
+      "original_manifest_sha256": "93afef5121f3692dc9199a1647f106cd12a69a3d8f4be546d0942cbcc0624dd9",
+      "source_final_wal_sha256": "512c8516c21fa83367e0f4848b0bfb4aecd29edb8c7a1b6b00b7ceb12e502cf0",
+      "original_bundle_sha256": "512c8516c21fa83367e0f4848b0bfb4aecd29edb8c7a1b6b00b7ceb12e502cf0",
+      "padded_bundle_sha256": "df223c6c590ba06b2fc4c0c9fbcf64b73f5ccf11f69e14fc7331c8968d70df58",
+      "native_original_and_padded_range_verified": true,
+      "cases": {
+        "archive": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/3000000",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": true,
+          "new_timeline": 2,
+          "history": "1\t0/3000000\tno recovery target specified\n",
+          "history_sha256": "8c31988d7213139b8abecc89825cebdb5b0dd6ea7bd4433af74d5b02a0547cca",
+          "normal_restart_replay_lsn": "NULL",
+          "redo_done": [
+            "0/2000120"
+          ],
+          "requested_final_filename": true
+        },
+        "wrong-bundle": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/2000120",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": false,
+          "new_timeline": 2,
+          "history": "1\t0/2000120\tno recovery target specified\n",
+          "history_sha256": "b0856745915b3b899a1ad33d6f0967b7ecc154657fb8dba147be66f715e8dab1",
+          "redo_done": [
+            "0/20000F8"
+          ],
+          "requested_final_filename": true
+        },
+        "required-missing": {
+          "pg_ctl_exit": 1,
+          "replay_lsn": null,
+          "promoted": false,
+          "position_oracle_pass": false,
+          "redo_done": [],
+          "requested_final_filename": true
+        },
+        "archive-after-negative": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/3000000",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": true,
+          "new_timeline": 2,
+          "history": "1\t0/3000000\tno recovery target specified\n",
+          "history_sha256": "8c31988d7213139b8abecc89825cebdb5b0dd6ea7bd4433af74d5b02a0547cca",
+          "normal_restart_replay_lsn": "NULL",
+          "redo_done": [
+            "0/2000120"
+          ],
+          "requested_final_filename": true
+        }
+      },
+      "product_acceptance": false
+    },
+    {
+      "trial": 2,
+      "range": {
+        "Timeline": 1,
+        "Start-LSN": "0/2000028",
+        "End-LSN": "0/2000120"
+      },
+      "filename": "000000010000000000000002",
+      "expected_latest_replay_lsn": "0/3000000",
+      "original_manifest_sha256": "db66790ff163e5442544272a476ae2cd3688fe515430e42e2f0962a38b22df12",
+      "source_final_wal_sha256": "7f4b99b3ad32e9813c514de76610daaf180ecbf12a38170f148b6d3c4ae6d7a5",
+      "original_bundle_sha256": "7f4b99b3ad32e9813c514de76610daaf180ecbf12a38170f148b6d3c4ae6d7a5",
+      "padded_bundle_sha256": "817a60afbfe1a126c6ecd3cd3f55bc5ae454638aacfe46845f77c83c1bd8624c",
+      "native_original_and_padded_range_verified": true,
+      "cases": {
+        "archive": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/3000000",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": true,
+          "new_timeline": 2,
+          "history": "1\t0/3000000\tno recovery target specified\n",
+          "history_sha256": "8c31988d7213139b8abecc89825cebdb5b0dd6ea7bd4433af74d5b02a0547cca",
+          "normal_restart_replay_lsn": "NULL",
+          "redo_done": [
+            "0/2000120"
+          ],
+          "requested_final_filename": true
+        },
+        "wrong-bundle": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/2000120",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": false,
+          "new_timeline": 2,
+          "history": "1\t0/2000120\tno recovery target specified\n",
+          "history_sha256": "b0856745915b3b899a1ad33d6f0967b7ecc154657fb8dba147be66f715e8dab1",
+          "redo_done": [
+            "0/20000F8"
+          ],
+          "requested_final_filename": true
+        },
+        "required-missing": {
+          "pg_ctl_exit": 1,
+          "replay_lsn": null,
+          "promoted": false,
+          "position_oracle_pass": false,
+          "redo_done": [],
+          "requested_final_filename": true
+        },
+        "archive-after-negative": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/3000000",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": true,
+          "new_timeline": 2,
+          "history": "1\t0/3000000\tno recovery target specified\n",
+          "history_sha256": "8c31988d7213139b8abecc89825cebdb5b0dd6ea7bd4433af74d5b02a0547cca",
+          "normal_restart_replay_lsn": "NULL",
+          "redo_done": [
+            "0/2000120"
+          ],
+          "requested_final_filename": true
+        }
+      },
+      "product_acceptance": false
+    },
+    {
+      "trial": 3,
+      "range": {
+        "Timeline": 1,
+        "Start-LSN": "0/2000028",
+        "End-LSN": "0/2000120"
+      },
+      "filename": "000000010000000000000002",
+      "expected_latest_replay_lsn": "0/3000000",
+      "original_manifest_sha256": "8fe6ef5e32785cba67c67a04f80702c9d11d3b1d52b59a9d64dc129a92ff3dbc",
+      "source_final_wal_sha256": "fe827a6c6992f17bd23ae6f35b38c31c587fce962bf8eac98f7874aa0a847e13",
+      "original_bundle_sha256": "fe827a6c6992f17bd23ae6f35b38c31c587fce962bf8eac98f7874aa0a847e13",
+      "padded_bundle_sha256": "0091e7568757a6f356020955cd9385e8c508ac9d6da7026b959d6ee9a1decef4",
+      "native_original_and_padded_range_verified": true,
+      "cases": {
+        "archive": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/3000000",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": true,
+          "new_timeline": 2,
+          "history": "1\t0/3000000\tno recovery target specified\n",
+          "history_sha256": "8c31988d7213139b8abecc89825cebdb5b0dd6ea7bd4433af74d5b02a0547cca",
+          "normal_restart_replay_lsn": "NULL",
+          "redo_done": [
+            "0/2000120"
+          ],
+          "requested_final_filename": true
+        },
+        "wrong-bundle": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/2000120",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": false,
+          "new_timeline": 2,
+          "history": "1\t0/2000120\tno recovery target specified\n",
+          "history_sha256": "b0856745915b3b899a1ad33d6f0967b7ecc154657fb8dba147be66f715e8dab1",
+          "redo_done": [
+            "0/20000F8"
+          ],
+          "requested_final_filename": true
+        },
+        "required-missing": {
+          "pg_ctl_exit": 1,
+          "replay_lsn": null,
+          "promoted": false,
+          "position_oracle_pass": false,
+          "redo_done": [],
+          "requested_final_filename": true
+        },
+        "archive-after-negative": {
+          "pg_ctl_exit": 0,
+          "replay_lsn": "0/3000000",
+          "promoted": true,
+          "rows": "1:before-full",
+          "position_oracle_pass": true,
+          "new_timeline": 2,
+          "history": "1\t0/3000000\tno recovery target specified\n",
+          "history_sha256": "8c31988d7213139b8abecc89825cebdb5b0dd6ea7bd4433af74d5b02a0547cca",
+          "normal_restart_replay_lsn": "NULL",
+          "redo_done": [
+            "0/2000120"
+          ],
+          "requested_final_filename": true
+        }
+      },
+      "product_acceptance": false
+    }
+  ]
+}
