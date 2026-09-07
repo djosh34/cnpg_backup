@@ -14,7 +14,7 @@ A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S
 
 See [build inputs, dependency inventories and recovery evidence](docs/build-and-harness.md) for prerequisites, local diagnostics and exact scope.
 
-**New agent thread:** start with [docs/EXECUTE.md](docs/EXECUTE.md). It requires a finalized READY design, then covers Paseo-only Astra/high workers, a five-child instruction limit, mandatory archival, independent review, automatic PR delivery and resumable progress.
+**New agent thread:** start with [docs/EXECUTE.md](docs/EXECUTE.md). It requires a finalized READY design, then covers Paseo-only role-based thinking, 1800-second waits, local-first test feedback, a five-child instruction limit, mandatory archival, independent review, automatic PR delivery and resumable progress.
 
 ## Planning
 

@@ -145,6 +145,8 @@ Ship Warning `BackupFailed`, separate full/differential missing/overdue/failure 
 
 ## 7. Security, test evidence and adaptation
 
+Agent role settings and 30-minute observation policy live in [Paseo lifecycle](agents/paseo.md); they do not alter the Go manager runtime. Follow the [local-first feedback ladder](testing.md#local-first-feedback) before hosted matrices. Keep one test/review subject association rather than repeated SHA bookkeeping; exact qualified artifact digests and product/input checksums remain binding.
+
 Narrow namespace/RBAC and Secret get-only allowlists, non-root matching CNPG UID, read-only root, dropped capabilities/seccomp, same-namespace explicit projections, and no application/superuser/private-server-key mounts. Manager cert-manager mTLS and leaf/CA reload follow exact pinned CNPG behavior. New operations load a complete validated Secret/CA snapshot; running work retains its snapshot, so credentials/trust overlap must last through draining work. An invalid rotation fails closed rather than using stale credentials indefinitely or dropping holds.
 
 [Release policy](release-policy.md) fixes endpoints, immutable publication, licensing, scans/SBOM/provenance and resource evidence. [Testing](testing.md) requires per-feature tests, real-module DST with independent oracles, fuzzing, and actual CNPG/PG18/MinIO SQL recovery at exact subject image digests. Post-backup archive replay and missing/corrupt required-segment failures, failover, both signatures/private CA, tablespaces/separate WAL, retries/retention/restore races and metrics are mandatory. First release has no predecessor; it establishes fixtures, not a fake upgrade result.

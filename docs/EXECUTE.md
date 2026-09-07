@@ -24,7 +24,7 @@ Newest owner directions override stale proposals. Git, issue resolutions, curren
 
 ## Model and child lifecycle — mandatory
 
-**Every role uses GPT-6 Astra with `high` thinking**, including the orchestrator, researchers, implementers, both reviewers and adjudicators. No lower or higher reasoning tier and no silent model substitution. In this environment the verified Paseo provider/model selection is `--provider pi --model openai-codex/gpt-6-astra --thinking high`.
+**Agent managers/coordinators use Astra/medium; implementers and reviewers use Astra/high.** The exact role table, explicit separate Luna/xhigh cleanup exception, effective-setting verification and 1800-second event-driven waits are authoritative in [agents/paseo.md](agents/paseo.md). These are agent settings, not changes to production Go manager mode.
 
 **Use Paseo for every subagent.** Do not bypass it with raw `pi` subprocesses. The orchestrator enforces **at most five concurrent child agents in total** across every role/task in this effort, by instruction and its task ledger—not a new limiter service or code. Count a spawned child until it has been archived successfully; idle/completed-but-unarchived children still consume a slot. Only the orchestrator spawns children; workers/reviewers do not recursively delegate. One writer per worktree.
 
@@ -62,13 +62,13 @@ Follow [agents/review.md](agents/review.md): two **fresh Paseo Astra/high** revi
 
 Fix substantiated findings with regressions; reject incorrect/unjustified findings with code or test evidence. Use a fresh adjudicator for substantive disputes. Resolve uncertainty by diagnosis and distinguishing tests, not by demanding the owner decide ordinary technical arguments. Serious unresolved defects keep the PR unmerged while agents investigate.
 
-**Done:** every finding has a disposition tied to the current SHA, relevant fixes are independently rechecked and all review/adjudication children are archived. No "find N issues" quota or endless stylistic rewrite loop.
+**Done:** every finding has a disposition under one current review target, relevant fixes are independently rechecked and all review/adjudication children are archived. No "find N issues" quota or endless stylistic rewrite loop.
 
 ### 4. Run CI and merge
 
-Open/update the PR with its issue and evidence. Run applicable checks and automated recovery campaigns. Recheck the current HEAD and merge result after fixes/base changes. Merge once the independent reviews are addressed and required checks pass; close the delivery issue and record the merged SHA. Do not ask the owner to click merge or dispatch a routine test.
+Open/update the PR with its issue and evidence. Run the [local feedback ladder](testing.md#local-first-feedback) before expensive hosted matrices, then applicable CI and automated recovery campaigns. Recheck the current HEAD and changed merge behavior after fixes/base changes; reuse evidence for unchanged content as described in [agents/review.md](agents/review.md). Observe long CI jobs at 1800-second intervals per [tracker operations](agents/issue-tracker.md), not repeated short polls. Merge once the independent reviews are addressed and required checks pass; close the delivery issue and record the merged SHA. Do not ask the owner to click merge or dispatch a routine test.
 
-**Done:** merged code, current review dispositions and exact-SHA CI evidence are linked. Never bypass branch protection or count same-account agent comments as another human's GitHub approval; any incompatible rule should already have been resolved during planning preflight.
+**Done:** merged code, current review dispositions and CI evidence are linked to the tested subject. Never bypass branch protection or count same-account agent comments as another human's GitHub approval; any incompatible rule should already have been resolved during planning preflight.
 
 ### 5. Advance and qualify
 
@@ -78,7 +78,7 @@ Repeat through the entire graph. Exercise recovery continuously, not just at the
 
 ## Adaptation, fault handling and continuity
 
-- Maintain a short progress comment per transition: issue, branch/worktree, base/head, PR/review/CI links, active/archived Paseo IDs, next action and blockers. Use the existing tracker; no custom task database or orchestration platform.
+- Maintain one short progress comment per meaningful transition: issue, branch/worktree, current subject, PR/review/CI links, active/archived Paseo IDs, next action and blockers. Link the existing evidence record instead of copying SHAs into every finding/log/comment. Update active run briefs/checkpoints with current role and wait policy before resume; historical observations remain historical. Use the existing tracker; no custom task database or orchestration platform.
 - New evidence may change internal algorithms, package seams, test arrangements or PR boundaries while preserving the frozen external contract and safety. Record why, update affected graph edges/docs and rerun the relevant independent review/regressions. This is autonomous engineering, not a return to an open-ended design interview.
 - After repeated no-progress attempts, switch to focused diagnosis/fresh adjudication rather than blind reruns. Continue independent unblocked work. Archive failed/superseded workers before replacing them.
 - Unexpected infrastructure/authentication loss or a proven contradiction that prevents safe delivery is a genuine blocker, not a planned human approval step. Repair within existing authority, retain evidence and stop the affected operation if no safe path exists; never weaken durability, disable failing tests or invent permission to claim completion.
@@ -87,4 +87,4 @@ Repeat through the entire graph. Exercise recovery continuously, not just at the
 
 ## Launch prompt — valid only after READY
 
-> Read `docs/EXECUTE.md` and the READY resolution on the design/handoff issue. Implement the complete finalized design and delivery graph autonomously: Paseo subagents only, GPT-6 Astra/high for every role, at most five concurrent children total, and mandatory verified archival after every task. Run independent fresh reviews, address or reject findings with evidence, run CI/recovery qualification and merge the PRs without routine human intervention. Complete the agreed delivery endpoint. Adapt internal details to new evidence without weakening the approved contract; checkpoint and resume when necessary.
+> Read `docs/EXECUTE.md` and the READY resolution on the design/handoff issue. Implement the complete finalized design and delivery graph autonomously: Paseo subagents only, managers/coordinators Astra/medium and implementers/reviewers Astra/high with the explicit cleanup exception in `docs/agents/paseo.md`, 1800-second event-driven waits, at most five concurrent children total, and mandatory verified archival after every task. Run independent fresh reviews, address or reject findings with evidence, run CI/recovery qualification and merge the PRs without routine human intervention. Complete the agreed delivery endpoint. Adapt internal details to new evidence without weakening the approved contract; checkpoint and resume when necessary.

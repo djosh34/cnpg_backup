@@ -4,7 +4,7 @@ Load from `docs/EXECUTE.md` when a PR is ready for review, findings arrive, or m
 
 ## Pin the review target
 
-The orchestrator records base SHA/merge-base, HEAD SHA, commit list, changed paths and `git diff <base>...<head>`. Fetch the originating delivery issue, prerequisite decisions and relevant repo standards. Provide a scoped brief and a clean snapshot/diff file to each reviewer. The snapshot must include context needed to trace behavior beyond changed lines.
+The medium-thinking orchestrator records **one review target**: base/merge-base, HEAD and `git diff <base>...<head>` (or a pinned snapshot). Derive the commit list and changed paths from Git when needed rather than duplicating them in every report. Fetch the originating delivery issue, prerequisite decisions and relevant repo standards. Provide a scoped brief and a clean snapshot/diff file to each reviewer. The snapshot must include context needed to trace behavior beyond changed lines.
 
 Start **two independent fresh Paseo sessions**, neither forked/resumed from the author nor supplied the author's private reasoning or the other reviewer's findings. Follow [paseo.md](paseo.md): Astra/high for both, at most five concurrent children total across the effort, and collect → archive → verify immediately after each reviewer finishes.
 
@@ -23,9 +23,11 @@ Required checks live in CI; avoid flooding the report with already-enforced form
 
 The orchestrator reads the code/evidence and records each finding on the PR:
 
-| Finding | Disposition | Evidence | Current SHA |
-| --- | --- | --- | --- |
-| review ID | accepted/fixed, rejected, superseded, or deferred nonblocking | regression/result, code trace or explicit trade-off | SHA |
+Name the current review target once above the dispositions; individual findings inherit it.
+
+| Finding | Disposition | Evidence |
+| --- | --- | --- |
+| review ID | accepted/fixed, rejected, superseded, or deferred nonblocking | regression/result, code trace or explicit trade-off |
 
 - **Accept/fix:** implement the smallest safe correction, add the relevant regression and rerun affected checks. Authors may rebut with evidence; they do not have the final word on their own correctness.
 - **Reject:** cite why the scenario is impossible, already covered, outside approved scope, factually wrong or costs more complexity than its justified benefit. "I disagree", "too much work" or "CI is green" alone are insufficient. Preserve the original finding and response.
@@ -36,6 +38,8 @@ A follow-up fresh review verifies material fixes and interactions against the ne
 
 ## Merge gate
 
-The orchestrator verifies current-HEAD evidence, required CI, all blocking findings resolved with reasons, no unrelated change and approved merge authority. If the base changed, update/recheck the merge result and seek review of changed behavior. Keep review reports small; logs and reproducible evidence are linked.
+The orchestrator verifies evidence applies to current HEAD, required CI passes, all blocking findings are resolved with reasons, no unrelated change and approved merge authority. If the base changed, inspect the merge diff and seek review/tests of changed behavior. A changed commit ID alone (message-only change or identical tested merge tree) does not require repeating the same expensive matrix: record the content comparison once and link the prior result, while still satisfying platform-required checks. Material source/harness changes require relevant new evidence; local dirty-tree results are diagnostics, not a clean release candidate.
+
+Keep one subject association in the run/review record, and record a distinct harness revision only when it differs. Avoid per-finding SHA columns, repeated hash-format assertions and copying full evidence inventories into transition comments. Preserve exact immutable **image digest** selection, build/input/backup checksums, provenance and promotion of the same qualified bytes: these establish integrity, unlike string-shape bookkeeping. Release qualification never transfers to a rebuilt image merely because its source SHA matches. Keep reports small; link logs and reproducible evidence.
 
 The same GitHub account may create the PR and post agent review comments. That supplies independent **contexts**, not independent human identities or platform approvals. Planning preflight must establish that repository protections permit the agreed autonomous workflow. If an unexpected protection requires another person's approval, report a genuine infrastructure blocker without pretending it is satisfied; do not design that human step into the normal delivery loop. Never manufacture approvals or claim the author self-review fulfilled the two-context requirement.

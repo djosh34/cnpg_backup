@@ -25,7 +25,7 @@ Original project work is **all rights reserved**. Do not add Apache/MIT/another 
 
 ## Qualification contract
 
-[testing.md](testing.md) remains authoritative. Every feature lands with its tests; no final-PR-only harness. Release requires current-SHA two-context independent review dispositions, all relevant PR checks and exact-image recovery qualification. Mandatory recovery scenarios cannot be traded for a timer or green unit tests.
+[testing.md](testing.md) remains authoritative. Every feature lands with its tests; no final-PR-only harness. Release requires two-context independent review dispositions applicable to the current subject, all relevant PR checks and exact-image recovery qualification. Associate evidence once with that subject and the actual image digests; identical source revisions do not authorize qualification of rebuilt bytes. Use local feedback first per testing.md without replacing trusted publication/provenance or mandatory recovery/security/resource gates. Mandatory recovery scenarios cannot be traded for a timer or green unit tests.
 
 Initial measurable execution targets and ceilings:
 
