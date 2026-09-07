@@ -60,6 +60,28 @@ func TestWALPathsFailBeforeAnyProjectionOrStorageIO(t *testing.T) {
 		t.Fatal("foreign target writer accepted")
 	}
 }
+func TestConfiguredSingleWALSlotCoversClientSnapshots(t *testing.T) {
+	first := walOperation{single: true, ctx: context.Background()}
+	release, e := first.dataSlot()
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	second := walOperation{single: true, ctx: ctx}
+	if unlock, e := second.dataSlot(); e == nil {
+		unlock()
+		t.Fatal("second client snapshot bypassed one-slot limit")
+	}
+	release()
+	second.ctx = context.Background()
+	release, e = second.dataSlot()
+	if e != nil {
+		t.Fatal(e)
+	}
+	release()
+}
+
 func TestWALMissingErrorClassificationAndCapabilities(t *testing.T) {
 	for _, tc := range []struct {
 		e    error

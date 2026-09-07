@@ -162,7 +162,7 @@ class WALFixture:
         result = self.h.kube('exec', '-n', self.h.NS, pod, '-c', 'postgres', '--', *arguments,
                              expect_failure=expect is not None)
         if expect is not None:
-            assert expect in result and 'NotFound' not in result, 'fault was misclassified: ' + result
+            assert expect in result and (expect == 'NotFound' or 'NotFound' not in result), 'fault was misclassified: ' + result
         return result
 
     def control(self, mode=None):
@@ -185,6 +185,9 @@ class WALFixture:
         h = self.h
         pod = self.primary()
         self.install_driver(pod)
+        self.rpc(pod, 'restore', '7FFFFFFE.history', expect='NotFound')
+        failed_before = int(self.sql(pod, 'SELECT failed_count FROM pg_stat_archiver'))
+        self.report['wal_failures_before_kill'] = failed_before
         self.control('hold-wal-put')
         try:
             self.sql(pod, 'INSERT INTO wal_e_oracle VALUES (1001)')
@@ -216,9 +219,9 @@ class WALFixture:
         h.wait(lambda: self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '1', 'actual retry after killed partial upload', 180)
         self.verify(pod, name)
         self.completed(SCENARIOS[2])
-        h.wait(lambda: int(self.sql(pod, 'SELECT failed_count FROM pg_stat_archiver')) > 0, 'PostgreSQL failure counter observes killed upload')
+        h.wait(lambda: int(self.sql(pod, 'SELECT failed_count FROM pg_stat_archiver')) > failed_before, 'PostgreSQL failure counter observes killed upload')
         self.report['wal_metrics_after_retry'] = self.metrics(pod)
-        assert any(line.startswith('cnpg_pg_stat_archiver_failed_count') and float(line.split()[-1]) > 0 for line in self.report['wal_metrics_after_retry'])
+        assert any(line.startswith('cnpg_pg_stat_archiver_failed_count') and float(line.split()[-1]) > failed_before for line in self.report['wal_metrics_after_retry'])
         self.completed(SCENARIOS[5])
         self.control('fail-wal-get')
         try:
@@ -231,6 +234,8 @@ class WALFixture:
         d = self.directory
         h.run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj', '/CN=Unrelated WAL test CA',
               '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', d / 'unrelated.key', '-out', d / 'unrelated.crt')
+        before_tls = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+        sidecar_before_tls = next(c['containerID'] for c in before_tls['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
         try:
             h.kube('patch', 'configmap', 'wal-minio-ca', '-n', h.NS, '--type=merge', '-p', json.dumps({'data': {'ca.crt': (d / 'unrelated.crt').read_text()}}))
             def rejected_tls():
@@ -243,6 +248,12 @@ class WALFixture:
                 return False
             h.wait(rejected_tls, 'current invalid S3 trust fails actual WAL callback', 120)
             self.rpc(pod, 'archive', name, expect='Unavailable')
+            # Distinguish TLS rejection from an unrelated process/network outage.
+            during_tls = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+            assert next(c['containerID'] for c in during_tls['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup') == sidecar_before_tls
+            h.kube('exec', '-n', h.NS, pod, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native')
+            assert self.control()['mode'] == ''
+            self.s3('GET', 'smoke/v1/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/wal/' + name[:8] + '/' + name, d / 'available-during-TLS-fault')
         finally:
             h.kube('patch', 'configmap', 'wal-minio-ca', '-n', h.NS, '--type=merge', '-p', json.dumps({'data': {'ca.crt': (d / 'ca.crt').read_text()}}))
         def trust_recovered():

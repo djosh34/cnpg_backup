@@ -36,6 +36,7 @@ type WALPlacement struct {
 // Two entire callbacks (including local spools/native checks) per process,
 // independent of artifact transfer capacity. No pending durability queue.
 var walCallbacks = make(chan struct{}, 2)
+var singleWALData = make(chan struct{}, 1)
 
 type WALService struct{ wire.UnimplementedWALServer }
 
@@ -133,9 +134,24 @@ type walOperation struct {
 	placement WALPlacement
 	ctx       context.Context
 	cancel    context.CancelFunc
+	single    bool
 }
 
 func (o *walOperation) close() { o.cancel(); o.root.Close(); o.store.Close() }
+
+// The public per-Pod IO configuration is immutable; Secret/CA rotation does not
+// change it. Honor a lower one-transfer setting across fresh client snapshots.
+func (o *walOperation) dataSlot() (func(), error) {
+	if !o.single {
+		return func() {}, nil
+	}
+	select {
+	case singleWALData <- struct{}{}:
+		return func() { <-singleWALData }, nil
+	case <-o.ctx.Done():
+		return nil, o.ctx.Err()
+	}
+}
 func openWAL(ctx context.Context, cluster []byte, archive bool) (result *walOperation, err error) {
 	started := time.Now()
 	root, e := configuration.Projection(projectionPath)
@@ -247,7 +263,7 @@ func openWAL(ctx context.Context, cluster []byte, archive bool) (result *walOper
 		}
 		return fail(e)
 	}
-	return &walOperation{files: files.Files{Repository: repo, Store: store, Workspace: workspacePath, Compression: snap.Repository.Spec.Compression}, root: local, store: store, placement: p, ctx: ctx, cancel: cancel}, nil
+	return &walOperation{files: files.Files{Repository: repo, Store: store, Workspace: workspacePath, Compression: snap.Repository.Spec.Compression}, root: local, store: store, placement: p, ctx: ctx, cancel: cancel, single: snap.Repository.Spec.IO.WALUploads == 1}, nil
 }
 func acquireWAL(ctx context.Context) error {
 	select {
@@ -275,6 +291,11 @@ func (*WALService) Archive(ctx context.Context, r *wire.WALArchiveRequest) (*wir
 	o, e := openWAL(ctx, r.ClusterDefinition, true)
 	if e == nil {
 		defer o.close()
+		release, se := o.dataSlot()
+		if se != nil {
+			return nil, walError(se)
+		}
+		defer release()
 		var name string
 		name, e = walBasename(r.SourceFileName, o.placement)
 		if e == nil {
@@ -314,6 +335,11 @@ func (*WALService) Restore(ctx context.Context, r *wire.WALRestoreRequest) (*wir
 		return nil, walError(e)
 	}
 	defer o.close()
+	release, e := o.dataSlot()
+	if e != nil {
+		return nil, walError(e)
+	}
+	defer release()
 	name, e := walBasename(r.DestinationFileName, o.placement)
 	if e == nil {
 		e = o.files.Restore(o.ctx, r.SourceWalName, o.root, name)

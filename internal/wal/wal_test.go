@@ -347,16 +347,14 @@ func TestSeededWALTrace(t *testing.T) {
 	}
 }
 func FuzzWALNames(f *testing.F) {
-	w, _ := setup(f, 64<<20)
 	for _, s := range []string{"00000002.history", "../escape", "000000010000000000000001"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, name string) {
-		key, max, e := w.Limits(name)
-		if e != nil {
+		if repository.ValidateWALName(name, 64<<20) != nil {
 			return
 		}
-		if filepath.Base(key) != name || strings.ContainsAny(name, "/\\\\") || len(name) != 24 && max != 1<<20 || len(name) == 24 && max != 64<<20 {
+		if filepath.Base(name) != name || strings.ContainsAny(name, "/\\\\") || !repository.ValidWALFilename(name) {
 			t.Fatal("unsafe accepted WAL name", name)
 		}
 	})

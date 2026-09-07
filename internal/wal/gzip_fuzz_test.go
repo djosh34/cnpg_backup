@@ -11,7 +11,7 @@ import (
 )
 
 func FuzzVerifiedGzipPublication(f *testing.F) {
-	w, b := setup(f, 1<<20)
+	w, b := simulatedWAL(f)
 	name := "00000002.history"
 	raw := []byte("1\t0/100000\tfixture\n")
 	key, _ := w.Repository.WALKey(name)
@@ -33,9 +33,7 @@ func FuzzVerifiedGzipPublication(f *testing.F) {
 		if len(compressed) > 1<<20 {
 			return
 		}
-		b.mu.Lock()
 		b.objects[key] = object{b: compressed, metadata: map[string]string{"cnpg-format": "wal-v1", "cnpg-system-id": w.Repository.Identity().SystemIdentifier, "cnpg-raw-bytes": strconv.Itoa(len(raw)), "cnpg-raw-sha256": hash(raw), "cnpg-stored-sha256": hash(compressed), "cnpg-compression": "gzip"}}
-		b.mu.Unlock()
 		original := []byte("not a verified output")
 		if e := os.WriteFile(filepath.Join(directory, name), original, 0600); e != nil {
 			t.Fatal(e)

@@ -94,11 +94,20 @@ metric ownership.
 byte oracles, gzip/truncation/multiple-member/corruption rejection, path/symlink
 confinement, local failure, retired slots, lost/killed requests, TLS and transient
 classification, immutable writer binding, fixed-seed72-operation replay and
-independent artifact-saturation barriers. Two real SDK artifact streams/four
+independent artifact-saturation barriers. A separate controlled-storage DST
+executes each of three24-operation traces twice, preserves durable state across
+fresh Repository opens, and compares identical traces and independent raw-byte
+oracles. A dishonest test store acknowledging nonexistent data is a negative
+control. Two real SDK artifact streams/four
 part requests stay blocked while the same production WAL module archives and
-restores. Fuzz targets cover WAL names and actual verified gzip publication.
-The seeded HTTP replay is reproducible input/protocol evidence, not deterministic
-kernel/network scheduling or PostgreSQL recovery.
+restores. Fuzz targets cover WAL names and actual verified gzip publication;
+the latter uses the controlled store to avoid spending its exploration budget
+on HTTP/TLS machinery. The seeded HTTP replay is reproducible input/protocol
+evidence, not deterministic kernel/network scheduling or PostgreSQL recovery.
+`hack/test integration` additionally requires actual MinIO WAL tests under both
+V2 and V4: nondefault1MiB segments, compression-changing identical retries,
+conflicts, history/backup-history, authenticated absence, and actual repository
+GC same-key retirement followed by rejected late publication.
 
 `hack/test cnpg-smoke` extends the existing actual kind1.35.8/CNPG1.30.0/PG18.6
 matrix, without replacing any of D's15 required families. It builds checksum-pinned
@@ -120,7 +129,10 @@ First actual E segment/retry/conflict/failover-history plus all D15 families:
 [run34097048872](https://github.com/djosh34/cnpg_backup/actions/runs/34097048872),
 subject `dd0663871606e72c32d9f4ea35cd92fddf6ee992`, PASS. Foundation and real guard
 namespace runs at that SHA also passed. This predates the expanded fault matrix;
-current-SHA results/image digests belong to the delivery report/CI artifacts.
+The expanded six-family E matrix and all D15 also passed at
+`291847c2c283809419c82ed5a72a69abc574e186` in
+[run34099228544](https://github.com/djosh34/cnpg_backup/actions/runs/34099228544).
+Current-SHA results/image digests belong to the delivery report/CI artifacts.
 Local Docker/GCC/MinIO execution is unavailable; hosted checks provide those
 separate system/race results. No Dell, full primary restore, SQL PITR replay,
 source-plan materialization, retention policy or release qualification is claimed.
@@ -131,3 +143,13 @@ the saturation mock returned another object's multipart-initiation Key and the
 real adapter correctly rejected it before any part. The corrected test returns
 the exact requested Key and reports early upload errors at its barrier. No
 production integrity check, concurrency bound or test timeout was weakened.
+
+Foundation34099228512 failed in the preexisting adapter's bucket setup before
+product assertions: its product transport sanitized MinIO's startup503 to
+TransientStorageFailure, hiding the exact XMinioServerNotInitialized code from
+the narrow test barrier. A local regression reproduced one attempt/failure on
+that exact caller. Setup now uses the same verified TLS transport with an
+explicit-credential, single-attempt plain SDK fixture client. Only that startup
+code is retried; auth, unrelated503 and already-owned-bucket negatives still
+fail immediately. Product transport classification/retries are unchanged. The
+original hosted log/artifacts and local red/green evidence are retained.
