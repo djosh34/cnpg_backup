@@ -484,6 +484,10 @@ class Campaign:
         assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] == 0 for x in events), 'actual CNPG recovery failed'
         h.save_log(state['name'] + '-rpc.jsonl', json.dumps(events))
         self.holds(state, 'actual-CNPG-exited-before-guard-drain')
+        # Resolve/validate immutable PVC backing paths while the original Pod
+        # still exists. Ordinary CNPG cleanup may remove it before the final
+        # read-only marker check; disappearance is not a new mount authority.
+        assert self.markers(state) == ['present'] * 3, 'live guard must own every target before shutdown'
         # CNPG automatically deletes completed Jobs. Hold ONLY its reconciliation
         # while the real Job controller completes and the original plugin watch
         # records all terminal containers. This controlled completion barrier is
@@ -496,9 +500,11 @@ class Campaign:
             assert not stable_retained, 'ordinary normal-completion case requires automatic stable release'
             self.event('ordinary-CNPG-cleanup-uninterrupted', cluster=state['name'])
         self.release(pod, 'release-shutdown')
+        # Observe immediately, concurrently with uninterrupted CNPG reconciliation
+        # in the ordinary case—not a post-Ready LIST of already deleted Pods.
+        self.terminated(state, stable_retained=stable_retained)
+        assert self.markers(state) == ['absent'] * 3, 'successful Job did not cleanly release every target marker'
         if not ordinary:
-            self.terminated(state, stable_retained=stable_retained)
-            assert self.markers(state) == ['absent'] * 3, 'successful Job did not cleanly release every target marker'
             h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop-', '--overwrite')
         h.kube('wait', '-n', TARGET, '--for=condition=Ready', 'cluster/' + state['name'], '--timeout=360s', timeout=400)
         primary = self.primary(state['name'], TARGET)

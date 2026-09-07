@@ -28,7 +28,14 @@ func TestNativeProcessHelper(t *testing.T) {
 		if e := child.Start(); e != nil {
 			os.Exit(5)
 		}
-		if os.WriteFile(os.Getenv("PID_FILE"), []byte(strconv.Itoa(child.Process.Pid)), 0600) != nil {
+		// File existence is the parent test's readiness barrier. Publish the
+		// complete PID atomically: WriteFile creates an observable empty file
+		// before its write, which previously broke that precondition in CI.
+		file := os.Getenv("PID_FILE")
+		if os.WriteFile(file+".tmp", []byte(strconv.Itoa(child.Process.Pid)), 0600) != nil {
+			os.Exit(6)
+		}
+		if os.Rename(file+".tmp", file) != nil {
 			os.Exit(6)
 		}
 		for {

@@ -112,6 +112,15 @@ class CampaignTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 campaign.terminated(state, stable_retained=True)
 
+    def test_marker_recheck_after_cleanup_uses_previously_resolved_mounts(self):
+        from recovery_cases import Campaign
+        campaign = Campaign(None, None)
+        state = {'backing_paths': ['/var/local/cnpg-backup-work-' + str(i) for i in range(3)]}
+        with patch.object(campaign, 'pods', side_effect=AssertionError('original Pod was naturally deleted')), \
+             patch('recovery_cases.h.run', return_value='absent\nabsent\nabsent\n') as run:
+            self.assertEqual(campaign.markers(state), ['absent'] * 3)
+            self.assertEqual(list(run.call_args.args[-3:]), state['backing_paths'])
+
     def test_terminal_pods_wait_for_asynchronous_job_complete_condition(self):
         from recovery_cases import Campaign
         campaign = Campaign(None, None)
