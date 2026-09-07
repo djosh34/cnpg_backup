@@ -298,17 +298,36 @@ def private_ca_rotation(discovered, report):
     report['completed'].append('actual-operator-leaf-and-private-CA-overlap-rotation-and-retirement')
 
 
+def placement_snapshot(pod):
+    # Preserve the entire plugin containers, including API defaults/webhook fields,
+    # all projected/target volumes, and immutable delivery identity. Do not just
+    # test one serviceaccount mount: image/config changes must also await rollout.
+    return {'containers': [c for c in pod['spec']['initContainers']
+                           if c['name'] in ('cnpg-backup', 'cnpg-backup-socket-init')],
+            'volumes': pod['spec']['volumes'],
+            'annotations': {key: pod['metadata']['annotations'][key] for key in (
+                'cnpg-backup.djosh34.github.io/owner', 'cnpg-backup.djosh34.github.io/config')}}
+
+
+def assert_live_snapshots(before, pods):
+    for pod in pods:
+        uid = pod['metadata']['uid']
+        if uid in before:
+            assert placement_snapshot(pod) == before[uid], 'live Pod image/config/admission fields changed before CNPG replacement: ' + uid
+
+
 def rollout_matrix(repository, report):
-    before = pod_uids()
+    before = {p['metadata']['uid']: placement_snapshot(p) for p in main_pods()}
     kube('patch', 'repository', 'destination', '-n', NS, '--type=merge', '-p', '{"spec":{"compression":"none"}}')
     kube('annotate', '-n', NS, 'cluster/database', 'configuration-rollout=requested', '--overwrite')
     def replaced():
         pods = main_pods()
+        assert_live_snapshots(before, pods)
         return len(pods) == 2 and not set(before).intersection(p['metadata']['uid'] for p in pods)
     wait(replaced, 'CNPG-owned configuration rollout of both defaulted live Pods', 420)
     kube('wait', '-n', NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
     assert_placement()
-    before = pod_uids()
+    before = {p['metadata']['uid']: placement_snapshot(p) for p in main_pods()}
     # A real different immutable image manifest, same tested binary. This tests
     # image rollout, not a fictional plugin release/version upgrade.
     run('docker', 'build', '-t', 'cnpg-backup-rollout:test', '-', input=
@@ -325,11 +344,12 @@ def rollout_matrix(repository, report):
     kube('wait', '-n', NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
     assert_placement()
     assert all(next(c for c in p['spec']['initContainers'] if c['name'] == 'cnpg-backup')['image'] == next_image for p in main_pods())
-    before = pod_uids()
+    before = {p['metadata']['uid']: placement_snapshot(p) for p in main_pods()}
     for i in range(3):
         kube('annotate', '-n', NS, 'cluster/database', 'post-rollout-idempotency=' + str(i), '--overwrite')
         time.sleep(5)
-        assert pod_uids() == before, 'defaulted live Pod caused perpetual churn'
+        assert_live_snapshots(before, main_pods())
+        assert pod_uids() == sorted(before), 'defaulted live Pod caused perpetual churn'
     report['rollout_image'] = next_image
     report['completed'].append('real-defaulted-live-Pod-config-and-immutable-image-rollout-idempotency')
 

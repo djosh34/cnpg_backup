@@ -1,3 +1,4 @@
+import copy
 import os
 from pathlib import Path
 import subprocess
@@ -15,6 +16,36 @@ class LifecycleHarness(unittest.TestCase):
             cnpg_smoke.admission_ready('The Cluster "database" is invalid: spec.imageName: Invalid value: "digest": Can\'t use just the image sha as we can\'t detect upgrades')
         self.assertTrue(cnpg_smoke.admission_ready('cluster.postgresql.cnpg.io/database serverside-applied (server dry run)'))
         self.assertFalse(cnpg_smoke.admission_ready('plugin connection not ready'))
+
+    def test_live_rollout_oracle_rejects_in_place_snapshot_rewrites(self):
+        pod = {'metadata': {'uid': 'old', 'annotations': {
+            'cnpg-backup.djosh34.github.io/owner': 'cluster',
+            'cnpg-backup.djosh34.github.io/config': 'original-config'}},
+            'spec': {'initContainers': [{'name': 'cnpg-backup', 'image': 'original-image',
+                'admissionField': {'opaque': 'preserve'}, 'volumeMounts': [
+                    {'name': 'kube-api-access-test', 'mountPath': '/var/run/secrets/kubernetes.io/serviceaccount'}]}],
+                'volumes': [{'name': 'config', 'projected': {'sources': ['original-config']}}]}}
+        before = {'old': cnpg_smoke.placement_snapshot(pod)}
+        cnpg_smoke.assert_live_snapshots(before, [copy.deepcopy(pod)])
+        for change in ('image', 'admission', 'mount', 'volume', 'config'):
+            with self.subTest(change=change):
+                changed = copy.deepcopy(pod)
+                sidecar = changed['spec']['initContainers'][0]
+                if change == 'image':
+                    sidecar['image'] = 'new-image'
+                elif change == 'admission':
+                    del sidecar['admissionField']
+                elif change == 'mount':
+                    sidecar['volumeMounts'] = []
+                elif change == 'volume':
+                    changed['spec']['volumes'][0]['projected']['sources'] = ['new-config']
+                else:
+                    changed['metadata']['annotations']['cnpg-backup.djosh34.github.io/config'] = 'new-config'
+                with self.assertRaises(AssertionError):
+                    cnpg_smoke.assert_live_snapshots(before, [changed])
+                # A replacement Pod may (and must) use the newly evaluated spec.
+                changed['metadata']['uid'] = 'replacement'
+                cnpg_smoke.assert_live_snapshots(before, [changed])
 
     def test_kernel_known_missing_loop_node_uses_same_minor(self):
         self.assertEqual(cnpg_smoke.loop_device('/dev/loop8 (lost)\n'), '/dev/loop8')
