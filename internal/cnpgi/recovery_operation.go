@@ -270,45 +270,52 @@ func (a *API) observeRecovery(ctx context.Context, c Cluster, source configurati
 				return
 			}
 			pods[string(o.GetUID())] = o.GetResourceVersion()
-		case <-ticker.C:
-			pass, cancel := context.WithTimeout(ctx, 20*time.Second)
-			job, podIDs, e := a.recoveryTermination(pass, c, pods)
-			if e != nil {
-				cancel()
-				uncertain()
-				return
-			}
-			if job == "" {
-				cancel()
+			phase, _, _ := unstructured.NestedString(o.Object, "status", "phase")
+			if phase != string(core.PodSucceeded) && phase != string(core.PodFailed) {
 				continue
 			}
-			o, e := a.Get(pass, coreResource("configmaps"), c.Metadata.Namespace, operationName(c))
-			if e != nil {
-				cancel()
-				uncertain()
-				return
-			}
-			got, e := operationFrom(o, c)
-			if e != nil || got.State != "active" || got.ObserverID != state.ObserverID {
-				cancel()
-				uncertain()
-				return
-			}
-			got.State = "completed"
-			got.CompletedJobUID = job
-			got.TerminatedPodUIDs = podIDs
-			e = a.writeOperation(pass, c, o, got)
+			// Delivered terminal updates are an immediate opportunity to run the
+			// SAME predicate. Work stays serial/bounded; no second controller.
+		case <-ticker.C:
+			// Fallback is required when Job Complete follows the final Pod event.
+		}
+		pass, cancel := context.WithTimeout(ctx, 20*time.Second)
+		job, podIDs, e := a.recoveryTermination(pass, c, pods)
+		if e != nil {
 			cancel()
-			if e != nil {
-				uncertain()
-				return
-			}
-			// Durable terminal close precedes release. Retry only the stable holder;
-			// an uncertain/crashed process-reader is never removed by this manager.
-			durablyClosed = true
-			a.releaseCompletedRecovery(ctx, c, source)
+			uncertain()
 			return
 		}
+		if job == "" {
+			cancel()
+			continue
+		}
+		o, e := a.Get(pass, coreResource("configmaps"), c.Metadata.Namespace, operationName(c))
+		if e != nil {
+			cancel()
+			uncertain()
+			return
+		}
+		got, e := operationFrom(o, c)
+		if e != nil || got.State != "active" || got.ObserverID != state.ObserverID {
+			cancel()
+			uncertain()
+			return
+		}
+		got.State = "completed"
+		got.CompletedJobUID = job
+		got.TerminatedPodUIDs = podIDs
+		e = a.writeOperation(pass, c, o, got)
+		cancel()
+		if e != nil {
+			uncertain()
+			return
+		}
+		// Durable terminal close precedes release. Retry only the stable holder;
+		// an uncertain/crashed process-reader is never removed by this manager.
+		durablyClosed = true
+		a.releaseCompletedRecovery(ctx, c, source)
+		return
 	}
 }
 func (a *API) releaseCompletedRecovery(ctx context.Context, c Cluster, source configuration.Spec) {

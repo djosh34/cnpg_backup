@@ -120,9 +120,15 @@ Jobs: normal-completion cases pause only CNPG reconciliation at this barrier,
 let the real Job controller finish and the original plugin observer record all
 Pod/container terminations, then resume CNPG for normal instance SQL. The Job
 controller and plugin manager remain active; no missing/deleted-object evidence
-is certified. The first uncontrolled cleanup failure is preserved in run34148247516.
-A dedicated runtime streaming client fixes that run's separate10s HTTP WATCH
-termination; actual watch loss still closes observation without reconnect.
+is certified. Run34148247516 preserves the post-Ready harness failure to find
+completed Pods; its runtime uncertainty occurred35s BEFORE Job Complete, not a
+proof that cleanup raced a healthy observer.
+A dedicated runtime streaming client fixes that run's10s HTTP WATCH termination;
+actual watch loss still closes observation without reconnect. Terminal Pod events
+also eagerly run the existing bounded completion predicate, retaining the2s
+fallback. API-seam tests distinguish delivered proof before cleanup, Job Complete
+after the final Pod event, and disappeared/running Pod uncertainty. They do not
+claim that eager Pod events solve every cleanup ordering.
 The automatic-latest case additionally runs **without pausing CNPG**, with normal
 Job cleanup. It requires surviving durable completion for the exact preobserved
 Job/Pod UIDs, actual removal of its stable/own-reader source holders, clean target
