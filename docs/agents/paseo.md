@@ -16,7 +16,15 @@ Inspect installed help if versions change. This environment provides `paseo run`
 
 Planning preflight successfully dispatched two independent review agents, retrieved their reports, and verified `Archived: true` for both after cleanup. This verifies the local Paseo mechanism, not design readiness or product correctness.
 
-Every child: `--provider pi --model openai-codex/gpt-6-astra --thinking high`. Confirm the effective selection in the new agent's inspection/result. An empty model-list response alone is not proof the provider cannot select the model; verify an explicit lightweight dispatch before the planning readiness gate closes. Do not silently change the model/reasoning tier.
+Select thinking by **agent role**, not the production Go `manager` mode:
+
+| Role | Provider/model | Thinking |
+| --- | --- | --- |
+| Supervisor, orchestrator, manager, coordinator, dispatcher, planning/research runner | `pi` / `openai-codex/gpt-6-astra` | `medium` |
+| Implementer, correctness/spec or KISS reviewer, substantive review adjudicator | `pi` / `openai-codex/gpt-6-astra` | `high` |
+| Separately assigned, non-delegating reference-cleanup implementer (explicit owner exception) | `pi` / `openai-codex/gpt-5.6-luna` | `xhigh` |
+
+Confirm effective model/thinking and Cwd in `inspect`, including the exception; no silent substitution. Coordination does not become high-thinking work just because it oversees implementation. Use supported live settings for an active coordinator when available; otherwise leave a durable checkpoint for the parent's medium successor, without recursive dispatch or daemon resets. Preserve historical actual model observations; these role settings govern new/resumed work.
 
 Paseo may require a daemon password via `PASEO_PASSWORD`. Resolve existing local credentials without printing them or putting them in command arguments, repo files, prompts or GitHub. Keep daemon control credentials in the orchestrator's environment; do not explicitly forward them through child `--env`. Do not reset/restart the user's daemon or change its password as an authentication workaround.
 
@@ -33,7 +41,7 @@ paseo run --background --json \
   --title 'CNPG: task name' \
   --label cnpg_effort=stable-effort-id --label role=review \
   'Read the task brief at /absolute/private/brief.md. Complete only that task. Do not spawn agents.'
-paseo wait AGENT_ID --timeout 300 --json
+paseo wait AGENT_ID --timeout 1800 --json
 paseo logs AGENT_ID --tail 100
 paseo inspect AGENT_ID --json
 # Capture report/results before archival; then always perform cleanup.
@@ -42,6 +50,12 @@ paseo inspect AGENT_ID --json
 ```
 
 Each independent review is a newly created Paseo agent with a clean context, not a fork/resume of the author. Run reviewers on a pinned snapshot/worktree; explicitly prohibit edits and delegation in the brief. CLI/prompt restrictions are not a security sandbox. Workers write only their assigned worktree. Avoid access to production credentials; keep test environments disposable.
+
+## Wait for events, not short polling
+
+Use **1800-second (30-minute) waits everywhere in agent orchestration**. `paseo wait ID --timeout 1800 --json` is event-driven: the installed CLI sends `wait_for_finish_request`; the daemon waits on an agent event and cancels the deadline when it responds. Idle/closed completion, error or a permission request can return before the timeout. A read-only bounded check against an already archived planning agent returned `idle` well before 1800 seconds; no new child was created. This is not a 30-minute sleep.
+
+Read the returned status, not just the CLI exit code. `timeout` means observation expired, not that work stopped or finished: inspect and repeat the 1800-second wait for still-owned active work. `permission`, `error` and `idle` require inspection and evidence collection, not automatic success. Set the calling tool's timeout above the wait plus transport/collection overhead. Use `send --no-wait` for instructions, or explicitly set its wait duration; use `run --background` rather than the short default foreground wait. Long CI observations follow [issue-tracker.md](issue-tracker.md). Fast local assertions, subprocess deadlines and product reconciliation are not agent polling and keep their appropriate short bounds.
 
 ## Collect → archive → verify, on every outcome
 

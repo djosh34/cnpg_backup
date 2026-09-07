@@ -1,6 +1,6 @@
 # Testing and recovery campaigns
 
-Status: implementation specification. Disposable planning experiments have run and are linked from [design.md](design.md); no product implementation or qualified product artifacts are implied by those results. Required backend is **real MinIO**, accessed through the maintained Go SDK with SigV2/SigV4. **Dell hardware/access/version discovery and Dell-specific tests are not required.** Compatibility claims distinguish MinIO-tested behavior from intended standard-S3 deployments.
+Status: implementation specification. Disposable planning experiments have run and are linked from [design.md](design.md); no product implementation or qualified product artifacts are implied by those results. Required backend is **real MinIO**, accessed through the maintained Go SDK with SigV2/SigV4. Compatibility claims distinguish MinIO-tested behavior from intended standard-S3 deployments.
 
 ## Keep the product small; exercise it hard
 
@@ -24,6 +24,29 @@ Three complementary methods:
 Durations are execution targets, not excuses to skip a slow required scenario. This public repository uses GitHub-hosted CI for automatic checks and qualification; no owner dispatch or financial approval step is required. Short profiles may pass their own scope but must report **not release-qualified**. Every product PR adds regression coverage immediately. PR A lays the harness foundation, PR C adds DST against real module logic, later feature PRs extend both real-system and simulated scenarios; the final certification PR completes automation/evidence.
 
 Use `CGO_ENABLED=0` for production builds and runtime-dependency validation. A separate Go race-detector job may use its required C toolchain/test-only CGO setting; that does not authorize CGO application dependencies or native libraries in the shipped Go executable. Document this tooling distinction rather than turn off race detection or relax release builds.
+
+## Local-first feedback
+
+Run the cheapest distinguishing check **locally before pushing an expensive matrix**, using the same `hack/test` and test modules as CI:
+
+```sh
+./hack/test harness                         # Python/curl loopback fixtures, metrics self-test, CRD; no tool downloads/Docker
+./hack/test harness test_lifecycle_harness  # targeted unittest module, class or method
+./hack/test unit                            # above + pinned Go vet/unit/DST corpus and Promtool; no native/image build
+./hack/test fast                            # also native input/build/runtime-closure checks
+./hack/test integration --seed 1806         # actual host PG18 + MinIO, no Docker
+./hack/test integration --seed 1806 --images # same integration plus actual shell-free images
+./hack/test guard                           # actual Docker PID1/namespace tests
+./hack/test cnpg-smoke                      # actual Docker/kind/CNPG/MinIO
+```
+
+For a Go regression, run the relevant package/test directly with the pinned toolchain after bootstrap, then `unit`/`fast`. For a campaign oracle, run its `test_*.py` module through `harness` before provisioning; new harness tests are automatically discovered locally and in CI. Keep negative controls that catch wrong SQL, missing faults or unsafe cleanup. Python fixtures do not establish real Kubernetes/recovery coverage. `unit` and `harness` are feedback profiles, not qualification or substitutes for required CI.
+
+See [build-and-harness.md](build-and-harness.md#run) for prerequisites and native-only diagnostics. Check actual capabilities (Docker socket/daemon access, rootless namespaces/cgroups, kernel restrictions, CPU/RAM/disk) before choosing local real-system profiles. A missing Docker CLI or a blocked kernel feature is a **current-host limitation**, not proof local integration is permanently impossible; do not install/reset a daemon or provision the system as a workaround. Run the existing harness unchanged on a suitable disposable local host when available.
+
+On the assessed Fedora worker host, unprivileged user namespaces work, but Docker/Podman/kind and Docker sockets are absent; the pinned MinIO binary fails even `--version` because route netlink is unavailable. Native PG tools can use the harness's private extracted libraries. Thus Python/Go/native diagnostics are feasible here, but real MinIO, Docker PID1/shell-free-image and kind/CNPG acceptance still need a capable host (currently hosted Linux CI). Preserve failed-attempt evidence; a native-only run never counts as MinIO/CNPG coverage. Recheck resources: this host's free disk is shared with active work and `/tmp` is tmpfs.
+
+The mandatory hosted checks still run; avoid using them to discover simple fixture/assertion bugs. Release/security/resource gates remain: exact candidate image recovery/fault/layout/version matrices, race tooling where a C toolchain is available, vulnerability scans, measured cgroup/workspace behavior and trusted Actions OIDC/publication. Most tests can also run locally with the same prerequisites; trusted release authority/provenance is not replaced by a local green run. Long agent/CI observations use [1800-second waits](agents/paseo.md#wait-for-events-not-short-polling); local assertions and scenario readiness keep short, meaningful deadlines.
 
 ## Deterministic simulation contract
 
@@ -94,10 +117,12 @@ Use least-privilege `GITHUB_TOKEN`, `contents: read` by default, minimal explici
 
 Each campaign writes a machine-readable manifest and concise job summary:
 
-- run ID/attempt, subject SHA and image digests, harness revision, all version pins, seed(s), operation count, selected profile, observed resource limits and phase timings;
+- one run record associating run ID/attempt with the subject revision and actual image digests; record a distinct harness revision when different, all version pins, seed(s), operation count, selected profile, observed resource limits and phase timings;
 - requested/executed/skipped scenarios and fault-precondition evidence; test exit codes, assertions, independent workload journal, minimized DST/fuzz reproductions;
 - redacted plugin/PostgreSQL/MinIO/operator logs, Kubernetes events, backup metadata/inventory and relevant metrics; small failure fixtures where safe and useful;
 - exact local replay command and Actions inputs. A seed alone is insufficient for real-system failures; retain the observed event/fault trace too.
+
+Keep subject identity once in the run record and link it from summaries/reviews; do not add repeated SHA-format tests or per-assertion revision fields. Trusted-ref validation, input/backup checksums and exact qualified image digests remain safety checks. Dirty local source is labeled diagnostic; a source SHA alone cannot identify dirty bytes or authorize release of rebuilt images.
 
 Capture evidence on success and failure, with bounded artifact size and configurable retention (propose 14 days for ordinary runs; release summaries and minimized regressions persist in the repo/release evidence). Runner artifacts are not permanent release evidence. Do not publish credentials, raw agent sessions or unrelated production data; fixtures are synthetic.
 
@@ -105,7 +130,7 @@ Capture evidence on success and failure, with bounded artifact size and configur
 
 Release-qualified means the exact candidate artifact passed every applicable mandatory scenario, required unit/integration/DST corpus, required fuzz duration, upgrade fixtures and current independent review gates. Record completed workload and scenario counts; elapsed two hours alone is not evidence. A deliberate corrupt-input test passes only when the expected failure is detected safely. Unexpected timeout/flake is triaged; retain the first failure and replay evidence instead of hiding it behind an eventual green rerun. Stable regressions become mandatory corpus cases.
 
-The initial campaign duration fits under GitHub-hosted runners' documented six-hour job limit; recheck current platform execution limits when implementing. No claim that CI chaos simulates physical power failure, every network interleaving or Dell-specific implementation behavior.
+The initial campaign duration fits under GitHub-hosted runners' documented six-hour job limit; recheck current platform execution limits when implementing. No claim that CI chaos simulates physical power failure or every network interleaving.
 
 ## PR G campaign implementation notes
 

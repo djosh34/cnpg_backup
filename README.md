@@ -1,6 +1,6 @@
 # cnpg_backup
 
-A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for intended deployments including Dell ECS. Dell access/testing is not required.
+A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for S3-compatible deployments that satisfy the documented capability contract. Claims are limited to tested behavior and stated capability requirements.
 
 **Status:** [READY](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5564016816) authorized implementation. Repository/storage primitives, CNPG lifecycle and [synchronous WAL Archive/Restore](docs/wal-implementation.md) are implemented. Full backup capture and primary restore/PITR remain unimplemented and unadvertised; no qualified release is claimed.
 
@@ -14,7 +14,7 @@ A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S
 
 See [build inputs, dependency inventories and recovery evidence](docs/build-and-harness.md) for prerequisites, local diagnostics and exact scope.
 
-**New agent thread:** start with [docs/EXECUTE.md](docs/EXECUTE.md). It requires a finalized READY design, then covers Paseo-only Astra/high workers, a five-child instruction limit, mandatory archival, independent review, automatic PR delivery and resumable progress.
+**New agent thread:** start with [docs/EXECUTE.md](docs/EXECUTE.md). It requires a finalized READY design, then covers Paseo-only role-based thinking, 1800-second waits, local-first test feedback, a five-child instruction limit, mandatory archival, independent review, automatic PR delivery and resumable progress.
 
 ## Planning
 

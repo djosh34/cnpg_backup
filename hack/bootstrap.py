@@ -3,6 +3,7 @@
 No package installation, maintainer scripts, daemon, or ambient apt resolution.
 Python >=3.12 + dpkg-deb, or Python >=3.14 (zstd support), required.
 """
+import argparse
 import hashlib
 import io
 import json
@@ -63,7 +64,10 @@ def deb_extract(package, root):
     raise RuntimeError(f'no data archive: {package}')
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--go-only', action='store_true', help='unit feedback: verify Go without fetching native/MinIO inputs')
+    args = parser.parse_args(argv)
     os.umask(0o022)
     if os.uname().machine != 'x86_64' or sys.platform != 'linux':
         raise RuntimeError('initial build supports Linux amd64 only')
@@ -72,6 +76,9 @@ def main():
     if not (CACHE / 'go/bin/go').exists():
         with tarfile.open(go) as tar:
             tar.extractall(CACHE, filter='data')
+    if args.go_only:
+        print(f'Go input verified in {CACHE}; native/MinIO inputs not requested')
+        return
     minio = download(LOCK['minio'], 'minio')
     minio.chmod(0o755)
     root = CACHE / 'pgroot'

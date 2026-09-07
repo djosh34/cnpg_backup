@@ -1,8 +1,8 @@
 # PR delivery plan
 
-Status: **implementation graph, activated only by READY**, governed by the frozen [design](design.md), [release policy](release-policy.md) and issue #14 READY gate. PR means a planned implementation slice, not a pull request already opened. The [separate GitHub delivery epic](https://github.com/djosh34/cnpg_backup/issues/3) is the executable backlog; the [Wayfinder map](https://github.com/djosh34/cnpg_backup/issues/1) resolves design decisions. All technical/design blockers and the final owner grill are resolved before the READY handoff. Read [EXECUTE.md](EXECUTE.md) for autonomous implementation, Paseo Astra/high workers, independent reviews, automatic merges and restart behavior. This graph may be adjusted when evidence changes the best PR boundary; safety and acceptance goals remain binding.
+Status: **implementation graph, activated only by READY**, governed by the frozen [design](design.md), [release policy](release-policy.md) and issue #14 READY gate. PR means a planned implementation slice, not a pull request already opened. The [separate GitHub delivery epic](https://github.com/djosh34/cnpg_backup/issues/3) is the executable backlog; the [Wayfinder map](https://github.com/djosh34/cnpg_backup/issues/1) resolves design decisions. All technical/design blockers and the final owner grill are resolved before the READY handoff. Read [EXECUTE.md](EXECUTE.md) for autonomous implementation, Paseo role-based thinking and 1800-second waits, independent reviews, automatic merges and restart behavior. This graph may be adjusted when evidence changes the best PR boundary; safety and acceptance goals remain binding.
 
-Each PR includes its own documentation and tests. [testing.md](testing.md) defines mandatory test tiers and the two-hour manual/reusable GitHub Actions recovery campaign; [agents/review.md](agents/review.md) defines two independent reviews and evidence-based disposition. All Go runtime builds use `CGO_ENABLED=0`; justify PostgreSQL tool exceptions. Keep simulation machinery in test code, not the product. Planning source/PG18/MinIO experiments already exist under docs/research; reuse their distinguishing assertions in the real harness without counting research scripts as product qualification. Finish independent final design review and commit/push before READY. Do not schedule a redundant initial documentation PR if the required plan is already in git.
+Each PR includes its own documentation and tests. Run the [local-first feedback ladder](testing.md#local-first-feedback) before expensive hosted matrices; keep a single subject association per test/review record and preserve exact release-image identity. [testing.md](testing.md) defines mandatory test tiers and the two-hour manual/reusable GitHub Actions recovery campaign; [agents/review.md](agents/review.md) defines two independent reviews and evidence-based disposition. All Go runtime builds use `CGO_ENABLED=0`; justify PostgreSQL tool exceptions. Keep simulation machinery in test code, not the product. Planning source/PG18/MinIO experiments already exist under docs/research; reuse their distinguishing assertions in the real harness without counting research scripts as product qualification. Finish independent final design review and commit/push before READY. Do not schedule a redundant initial documentation PR if the required plan is already in git.
 
 ## PR A — Establish build, dependency policy and recovery test harness
 
@@ -33,7 +33,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 
 **Acceptance**
 - HTTP fault tests cover response loss after committed upload, interrupted multipart, auth/TLS failure, rate limiting, pagination and checksum mismatch.
-- Real MinIO integration exercises SDK SigV2/SigV4, private CA, multipart and every storage primitive used by publication/deletion. Record standard-S3 assumptions and exact tested versions; no Dell access, test or certification gate.
+- Real MinIO integration exercises SDK SigV2/SigV4, private CA, multipart and every storage primitive used by publication/deletion. Record standard-S3 assumptions and exact tested versions.
 - Buffer use stays bounded for objects larger than configured buffers; aborted work cannot be confused with committed data.
 
 **Depends on:** PR A; approved S3 compatibility and repository protocol decisions.
@@ -200,18 +200,18 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 
 **Requirements**
 - End-to-end crash/fault matrix, prolonged archive outage/backlog, multi-instance failover/timelines, retention/restore races and supported filesystem layouts.
-- Real MinIO SigV2/SigV4/private CA integration; no Dell testing requirement. Complete manual two-hour seeded recovery campaign, production-module DST, long Go fuzzing and exact-artifact release qualification using the common harness.
+- Real MinIO SigV2/SigV4/private CA integration. Complete manual two-hour seeded recovery campaign, production-module DST, long Go fuzzing and exact-artifact release qualification using the common harness.
 - N+1 reads N backup/WAL fixtures, resource/restore benchmarks, operational drills and published exact compatibility matrix. For the first release only, previous-release upgrade evidence is explicitly inapplicable; establish initial-format fixtures for the next release and keep all first-release recovery scenarios mandatory.
 - Review unresolved security findings, known limitations and unsupported topologies; final approval is evidence-based.
 
 **Acceptance**
 - All supported full/differential/PITR and retention scenarios pass with recovered SQL assertions, not only successful process exits.
 - No injected crash boundary produces false archive acknowledgment, committed-but-incomplete backup or deletion of an active dependency.
-- MinIO evidence, subject/harness SHAs and image digests, seeds/event traces, scenario counts, resource measurements, restore timings, alert/runbook drills and upgrade results are attached to the release checklist. Replay a saved failure; preserve its minimized regression.
+- MinIO evidence linked to one subject record (distinct harness revision when needed) and actual image digests, seeds/event traces, scenario counts, resource measurements, restore timings, alert/runbook drills and upgrade results are attached to the release checklist. Replay a saved failure; preserve its minimized regression.
 - Production release is blocked on failing, skipped or unexecuted mandatory scenarios. A 120-minute timer or green rerun that hides a flake is not qualification. Use the same reusable workflow to test new candidates and already released image digests; automatically publish versioned releases and qualified images without another approval ceremony or production deployment. Original project work remains all rights reserved; preserve third-party licenses/notices.
 
 **Depends on:** PR J; approved release gates.
-**Not included:** claiming Dell certification, a general-purpose chaos framework, unbounded or non-diagnostic retry loops or calling real distributed execution fully deterministic.
+**Not included:** a general-purpose chaos framework, unbounded or non-diagnostic retry loops or calling real distributed execution fully deterministic.
 
 ## Implementation graph
 

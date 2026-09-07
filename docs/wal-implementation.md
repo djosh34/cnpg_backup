@@ -158,7 +158,7 @@ The expanded six-family E matrix and all D15 also passed at
 [run34099228544](https://github.com/djosh34/cnpg_backup/actions/runs/34099228544).
 Current-SHA results/image digests belong to the delivery report/CI artifacts.
 Local Docker/GCC/MinIO execution is unavailable; hosted checks provide those
-separate system/race results. No Dell, full primary restore, SQL PITR replay,
+separate system/race results. No full primary restore, SQL PITR replay,
 source-plan materialization, retention policy or release qualification is claimed.
 
 Preserved local first failures: the placement golden initially lacked the new
