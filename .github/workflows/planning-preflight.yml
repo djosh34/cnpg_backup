@@ -11,6 +11,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -29,6 +31,10 @@ jobs:
           printf 'Disposable access probe. NOT a qualified product. Run %s\n' "$GITHUB_RUN_ID" > "$RUNNER_TEMP/probe.txt"
           gh release create "$PROBE_TAG" --draft --target "$GITHUB_SHA" --title 'Disposable planning access probe' --notes 'Not a product release. Automatically deleted by planning preflight.' "$RUNNER_TEMP/probe.txt"
           gh release view "$PROBE_TAG" --json isDraft,assets,targetCommitish
+      - name: Verify ephemeral OIDC provenance (synthetic text only)
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: ${{ runner.temp }}/probe.txt
       - name: Verify GHCR publication with disposable scratch image
         run: |
           set -euo pipefail
@@ -41,6 +47,15 @@ jobs:
           docker push "$IMAGE"
           docker image inspect "$IMAGE" --format '{{json .RepoDigests}}'
           docker logout ghcr.io
+      - name: Clean up this effort's disposable probe package versions
+        if: always()
+        run: |
+          set -euo pipefail
+          gh api "users/$GITHUB_REPOSITORY_OWNER/packages/container/cnpg-backup-planning-probe/versions" --jq '.[] | select(.metadata.container.tags | any(startswith("planning-probe-"))) | .id' > "$RUNNER_TEMP/probe-version-ids"
+          while read -r version_id; do
+            test -n "$version_id" || continue
+            gh api --method DELETE "users/$GITHUB_REPOSITORY_OWNER/packages/container/cnpg-backup-planning-probe/versions/$version_id"
+          done < "$RUNNER_TEMP/probe-version-ids"
       - name: Remove draft release
         if: always()
         run: |
