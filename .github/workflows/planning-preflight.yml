@@ -1,0 +1,50 @@
+name: Disposable planning publication preflight
+on:
+  push:
+    branches: [planning/platform-preflight]
+permissions:
+  contents: read
+jobs:
+  publication-access:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PROBE_TAG: planning-probe-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Verify hosted tools and resources
+        run: |
+          set -euo pipefail
+          docker version
+          gh --version
+          free -h
+          df -h "$RUNNER_TEMP"
+      - name: Verify draft release create and asset upload (not a product release)
+        run: |
+          set -euo pipefail
+          printf 'Disposable access probe. NOT a qualified product. Run %s\n' "$GITHUB_RUN_ID" > "$RUNNER_TEMP/probe.txt"
+          gh release create "$PROBE_TAG" --draft --target "$GITHUB_SHA" --title 'Disposable planning access probe' --notes 'Not a product release. Automatically deleted by planning preflight.' "$RUNNER_TEMP/probe.txt"
+          gh release view "$PROBE_TAG" --json isDraft,assets,targetCommitish
+      - name: Verify GHCR publication with disposable scratch image
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cnpg-backup-planning-probe:$PROBE_TAG"
+          mkdir -p "$RUNNER_TEMP/probe-image"
+          cp "$RUNNER_TEMP/probe.txt" "$RUNNER_TEMP/probe-image/NOTICE"
+          printf 'FROM scratch\nCOPY NOTICE /NOTICE\n' > "$RUNNER_TEMP/probe-image/Dockerfile"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --label 'org.opencontainers.image.description=Disposable planning permission probe; not product code' -t "$IMAGE" "$RUNNER_TEMP/probe-image"
+          docker push "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{json .RepoDigests}}'
+          docker logout ghcr.io
+      - name: Remove draft release
+        if: always()
+        run: |
+          set -euo pipefail
+          if gh release view "$PROBE_TAG" >/dev/null 2>&1; then
+            gh release delete "$PROBE_TAG" --yes
+          fi
