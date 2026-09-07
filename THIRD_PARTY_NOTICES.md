@@ -12,6 +12,10 @@ Original project work is all rights reserved; this is not a project license.
   the CNPG wire and local control services. The generated runtime inventory is
   authoritative for the transitive linked subset; dependency test libraries
   are not shipped.
+- Kubernetes API/apimachinery/client-go v0.35.8 (Apache-2.0) supply typed Pod/Job
+  objects, resource quantities and the uncached API client. Their actually linked
+  dependency closure and notices are included by the same generated inventory;
+  fake clients, Ginkgo/Gomega and JSON-patch regression tooling are test-only.
 - PostgreSQL 18.6: PostgreSQL Global Development Group / Regents of the
   University of California, PostgreSQL License. The data image includes exactly
   six tools, not the database server. PGDG package copyright notices accompany

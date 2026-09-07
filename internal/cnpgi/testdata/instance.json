@@ -1,0 +1,336 @@
+{
+  "kind": "Pod",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "database-1",
+    "namespace": "test",
+    "annotations": {
+      "cnpg-backup.djosh34.github.io/config": "database-cb-2904883a57b5",
+      "cnpg-backup.djosh34.github.io/owner": "11111111-1111-4111-8111-111111111111"
+    }
+  },
+  "spec": {
+    "volumes": [
+      {
+        "name": "pgdata",
+        "persistentVolumeClaim": {
+          "claimName": "pgdata"
+        }
+      },
+      {
+        "name": "pg-wal",
+        "persistentVolumeClaim": {
+          "claimName": "pg-wal"
+        }
+      },
+      {
+        "name": "tbs-fast-space",
+        "persistentVolumeClaim": {
+          "claimName": "tbs-fast-space"
+        }
+      },
+      {
+        "name": "cnpg-backup-plugins",
+        "emptyDir": {
+          "sizeLimit": "1Mi"
+        }
+      },
+      {
+        "name": "cnpg-backup-bin",
+        "emptyDir": {
+          "sizeLimit": "128Mi"
+        }
+      },
+      {
+        "name": "cnpg-backup-state",
+        "emptyDir": {
+          "sizeLimit": "16Mi"
+        }
+      },
+      {
+        "name": "cnpg-backup-projection",
+        "projected": {
+          "sources": [
+            {
+              "configMap": {
+                "name": "database-cb-2904883a57b5",
+                "items": [
+                  {
+                    "key": "destination.json",
+                    "path": "destination/repository.json"
+                  }
+                ]
+              }
+            },
+            {
+              "secret": {
+                "name": "auth",
+                "items": [
+                  {
+                    "key": "access",
+                    "path": "destination/accessKey"
+                  }
+                ]
+              }
+            },
+            {
+              "secret": {
+                "name": "auth",
+                "items": [
+                  {
+                    "key": "secret",
+                    "path": "destination/secretKey"
+                  }
+                ]
+              }
+            },
+            {
+              "secret": {
+                "name": "database-replication",
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "native/tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "native/tls.key"
+                  }
+                ]
+              }
+            },
+            {
+              "secret": {
+                "name": "database-ca",
+                "items": [
+                  {
+                    "key": "ca.crt",
+                    "path": "native/ca.crt"
+                  }
+                ]
+              }
+            }
+          ],
+          "defaultMode": 288
+        }
+      },
+      {
+        "name": "cnpg-backup-work",
+        "ephemeral": {
+          "volumeClaimTemplate": {
+            "metadata": {},
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              },
+              "storageClassName": "bounded-disk",
+              "volumeMode": "Filesystem"
+            }
+          }
+        }
+      }
+    ],
+    "initContainers": [
+      {
+        "name": "bootstrap-controller",
+        "command": [
+          "/manager",
+          "bootstrap",
+          "/controller/manager"
+        ],
+        "resources": {}
+      },
+      {
+        "name": "cnpg-backup-socket-init",
+        "image": "test-only-image",
+        "command": [
+          "/usr/local/bin/cnpg-backup",
+          "instance",
+          "--prepare-socket"
+        ],
+        "resources": {
+          "limits": {
+            "cpu": "2",
+            "memory": "3Gi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "cnpg-backup-plugins",
+            "mountPath": "/cnpg-backup/socket-root"
+          }
+        ],
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "imagePullPolicy": "IfNotPresent",
+        "securityContext": {
+          "capabilities": {
+            "drop": [
+              "ALL"
+            ]
+          },
+          "runAsUser": 26,
+          "runAsGroup": 26,
+          "runAsNonRoot": true,
+          "readOnlyRootFilesystem": true,
+          "allowPrivilegeEscalation": false,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        }
+      },
+      {
+        "name": "cnpg-backup",
+        "image": "test-only-image",
+        "command": [
+          "/usr/local/bin/cnpg-backup",
+          "instance"
+        ],
+        "env": [
+          {
+            "name": "POD_UID",
+            "valueFrom": {
+              "fieldRef": {
+                "apiVersion": "v1",
+                "fieldPath": "metadata.uid"
+              }
+            }
+          }
+        ],
+        "resources": {
+          "limits": {
+            "cpu": "2",
+            "memory": "3Gi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          }
+        },
+        "restartPolicy": "Always",
+        "volumeMounts": [
+          {
+            "name": "pgdata",
+            "mountPath": "/var/lib/postgresql/data"
+          },
+          {
+            "name": "pg-wal",
+            "mountPath": "/var/lib/postgresql/wal"
+          },
+          {
+            "name": "tbs-fast-space",
+            "mountPath": "/var/lib/postgresql/tablespaces/fast_space"
+          },
+          {
+            "name": "cnpg-backup-plugins",
+            "mountPath": "/plugins",
+            "subPath": "plugins"
+          },
+          {
+            "name": "cnpg-backup-bin",
+            "mountPath": "/cnpg-backup/bin"
+          },
+          {
+            "name": "cnpg-backup-state",
+            "mountPath": "/cnpg-backup/state"
+          },
+          {
+            "name": "cnpg-backup-projection",
+            "readOnly": true,
+            "mountPath": "/cnpg-backup/projection"
+          },
+          {
+            "name": "cnpg-backup-work",
+            "mountPath": "/cnpg-backup/work"
+          }
+        ],
+        "startupProbe": {
+          "exec": {
+            "command": [
+              "/usr/local/bin/cnpg-backup",
+              "instance",
+              "--probe"
+            ]
+          },
+          "timeoutSeconds": 4,
+          "periodSeconds": 1,
+          "successThreshold": 1,
+          "failureThreshold": 60
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "imagePullPolicy": "IfNotPresent",
+        "securityContext": {
+          "capabilities": {
+            "drop": [
+              "ALL"
+            ]
+          },
+          "runAsUser": 26,
+          "runAsGroup": 26,
+          "runAsNonRoot": true,
+          "readOnlyRootFilesystem": true,
+          "allowPrivilegeEscalation": false,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        }
+      }
+    ],
+    "containers": [
+      {
+        "name": "postgres",
+        "command": [
+          "/controller/manager",
+          "instance",
+          "run"
+        ],
+        "resources": {},
+        "volumeMounts": [
+          {
+            "name": "pgdata",
+            "mountPath": "/var/lib/postgresql/data"
+          },
+          {
+            "name": "pg-wal",
+            "mountPath": "/var/lib/postgresql/wal"
+          },
+          {
+            "name": "tbs-fast-space",
+            "mountPath": "/var/lib/postgresql/tablespaces/fast_space"
+          },
+          {
+            "name": "cnpg-backup-plugins",
+            "mountPath": "/plugins",
+            "subPath": "plugins"
+          },
+          {
+            "name": "cnpg-backup-bin",
+            "readOnly": true,
+            "mountPath": "/cnpg-backup/bin"
+          },
+          {
+            "name": "cnpg-backup-state",
+            "readOnly": true,
+            "mountPath": "/cnpg-backup/state"
+          }
+        ]
+      }
+    ],
+    "securityContext": {
+      "runAsUser": 26,
+      "runAsGroup": 26,
+      "fsGroup": 26
+    }
+  },
+  "status": {}
+}

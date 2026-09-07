@@ -75,6 +75,29 @@ func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.
 	return err
 }
 
+// PrepareSocket creates a private UID-owned directory below the kubelet-owned
+// emptyDir root. A non-root container cannot chmod that root. Subsequent main
+// and sidecar mounts select this directory with subPath after this init exits.
+func PrepareSocket() error {
+	path := "/cnpg-backup/socket-root/plugins"
+	if err := os.Mkdir(path, 0700); err != nil && !os.IsExist(err) {
+		return err
+	}
+	fd, err := unix.Open(path, unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return err
+	}
+	if int(st.Uid) != os.Geteuid() {
+		return errors.New("private socket directory owner mismatch")
+	}
+	return unix.Fchmod(fd, 0700)
+}
+
 func RunSidecar(ctx context.Context, recovery bool, revision string) error {
 	var admission *recoveryguard.Admission
 	if recovery {

@@ -41,7 +41,9 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			var err error
-			if len(args) == 2 && args[1] == "--probe" {
+			if len(args) == 2 && args[1] == "--prepare-socket" && args[0] == "instance" {
+				err = cnpgi.PrepareSocket()
+			} else if len(args) == 2 && args[1] == "--probe" {
 				err = cnpgi.Probe(ctx)
 			} else if len(args) == 1 {
 				err = cnpgi.RunSidecar(ctx, args[0] == "recovery-job", revision)
@@ -72,8 +74,17 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 			}
 			return code
 		case "manager":
-			fmt.Fprintln(errOut, "manager: not implemented")
-			return 2
+			if len(args) != 1 {
+				fmt.Fprintln(errOut, "invalid manager arguments")
+				return 2
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			if err := cnpgi.RunManager(ctx, revision); err != nil {
+				fmt.Fprintln(errOut, "manager: configuration or service failure")
+				return 2
+			}
+			return 0
 		}
 	}
 	fmt.Fprintln(errOut, "usage: cnpg-backup version|manager|instance|recovery-job|recovery-guard|wal-fetch (lifecycle and data services not implemented)")

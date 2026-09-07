@@ -49,7 +49,7 @@ type Tuple struct {
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-var tablespacePattern = regexp.MustCompile(`^/var/lib/postgresql/tablespaces/[a-z][a-z0-9_]{0,62}$`)
+var tablespacePattern = regexp.MustCompile(`^/var/lib/postgresql/tablespaces/[a-zA-Z_][a-zA-Z0-9_$]{0,62}$`)
 
 func NewUUID() string {
 	var b [16]byte
@@ -132,8 +132,28 @@ func WrapArgv(command, args []string, separateWAL bool) ([]string, error) {
 	if separateWAL {
 		expected = append(expected, "--pg-wal", "/var/lib/postgresql/wal/pg_wal")
 	}
-	if !slices.Equal(original, expected) {
+	if len(original) < len(expected) || !slices.Equal(original[:len(expected)], expected) {
 		return nil, errors.New("unexpected CNPG recovery argv")
+	}
+	// jobs.go also calls addManagerLoggingOptions; machinery v0.5.0 emits
+	// these optional flags in this exact order. Preserve their original bytes.
+	remaining := original[len(expected):]
+	for _, flag := range []string{"--log-level=", "--log-field-level=", "--log-field-timestamp="} {
+		if len(remaining) == 0 || !strings.HasPrefix(remaining[0], flag) {
+			continue
+		}
+		value := strings.TrimPrefix(remaining[0], flag)
+		if flag == "--log-level=" {
+			if !slices.Contains([]string{"error", "warning", "info", "debug", "trace"}, value) {
+				return nil, errors.New("unexpected CNPG log level")
+			}
+		} else if !regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$`).MatchString(value) {
+			return nil, errors.New("unsupported CNPG log field")
+		}
+		remaining = remaining[1:]
+	}
+	if len(remaining) != 0 {
+		return nil, errors.New("unexpected CNPG recovery flags")
 	}
 	return append([]string{HelperPath, "recovery-guard", "--"}, original...), nil
 }
