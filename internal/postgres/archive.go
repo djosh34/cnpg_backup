@@ -153,6 +153,7 @@ func ScanManifest(r io.Reader) (NativeManifest, error) {
 
 type archiveInventory struct {
 	files   map[string]int64
+	dirs    []string
 	entries int
 	bytes   int64
 }
@@ -206,6 +207,9 @@ func scanArchive(ctx context.Context, r io.Reader, limit int64, visit func(strin
 		inv.bytes += h.Size
 		if inv.entries > maxEntries || inv.bytes > limit || h.Typeflag == tar.TypeDir && h.Size != 0 {
 			return inv, ErrInput
+		}
+		if h.Typeflag == tar.TypeDir {
+			inv.dirs = append(inv.dirs, name)
 		}
 		if h.Typeflag == tar.TypeReg {
 			inv.files[name] = h.Size
