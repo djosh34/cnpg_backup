@@ -647,7 +647,8 @@ def main():
                             'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
                             'walStorage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
                             'tablespaces': [{'name': 'fast_space', 'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'}}],
-                            'postgresql': {'parameters': {'summarize_wal': 'on', 'wal_summary_keep_time': '14d', 'archive_timeout': '60s'}},
+                            'postgresql': {'parameters': {'summarize_wal': 'on', 'wal_summary_keep_time': '14d', 'archive_timeout': '60s',
+                                                          'log_timezone': 'America/New_York'}},
                             'plugins': [{'name': 'cnpg-backup.djosh34.github.io', 'isWALArchiver': True, 'parameters': {'repository': 'destination'}}]}}
         # Discovery is asynchronous in the real operator. Use its actual
         # validating admission path as the startup barrier, before creating data.

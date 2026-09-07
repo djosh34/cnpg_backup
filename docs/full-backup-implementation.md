@@ -23,6 +23,18 @@ inputs. Every native tar/manifest is bounded and scanned before verification;
 primary-only format rejects multiple WAL ranges explicitly, not by skipping later
 ranges. Go compresses to known-length gzip level1 or uncompressed disk spools.
 
+Native `START TIME` uses PostgreSQL's `log_timezone`, not the SQL session or Go
+host timezone. The original label bytes remain unchanged. Authenticated source
+SQL formats the bounded capture interval (at most 21,601 whole seconds) using
+PostgreSQL's own timezone rules and requires exactly one match, including the
+abbreviation. This handles DST folds and non-hour offsets without guessing `CST`
+or using Go's unknown-abbreviation zero offset. Nonexistent/ambiguous matches
+fail. Source clocks bracket the native command; the completion upper bound stays
+the first source postflight, not normalization/upload time. Pre/post checks also
+compare `log_timezone` and `pg_conf_load_time()`: any configuration reload during
+the operation conservatively fails it, including an unrelated reload or a
+change-away-and-back. No source setting is forced to UTC.
+
 ## Capacity adaptation
 
 The frozen capture formula reserves Amax+Cmax+Wmax+H+S. The existing repository
@@ -34,6 +46,20 @@ or emptyDir is a quota. The actual mounted dedicated ext4/xfs capacity must fit
 all allocations before capture; native output is polled each second and the
 finite backing filesystem supplies the hard stop. Source data volumes are never
 scratch. Raw/spooled artifacts remain operation-owned until publication/drain.
+
+Before socket/callback admission, private-namespace sidecar PID1 locks permanent
+`work/native.lock` and validates the persistent Pod-bound `native.owner`. Only
+its marked mode-0700 `work/native` subtree is reclaimed/recreated. Capture,
+repository readback and sidecar-native auth roots live there. Every managed native
+command inherits the lock descriptor, including the forked WAL child; a detached
+survivor therefore blocks replacement even after its original process group dies.
+PID1 container death also kills all private-namespace descendants. The local lock
+is held through callback drain; no PID lookup or timeout authorizes cleanup.
+Remote uncertainty holders and target markers are never touched. Unmarked legacy
+roots, standalone `--preflight` diagnostic roots and all other workspace paths
+remain untouched; this pre-release change does not infer ownership of old files
+or provide an automatic legacy migration. A different Pod cannot adopt the marked
+workspace. No cleanup correctness claim depends on spare PVC capacity.
 
 ## Evidence boundaries
 

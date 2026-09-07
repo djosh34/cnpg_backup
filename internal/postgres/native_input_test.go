@@ -74,7 +74,7 @@ func TestActualNativeTarInput(t *testing.T) {
 	}
 	r := m.Ranges[0]
 	c := repository.Commit{Timeline: r.Timeline, StartLSN: r.StartLSN, StopLSN: r.EndLSN, StoppedAt: time.Now().UTC().Format(time.RFC3339Nano), BackupLabel: label}
-	if e = parseLabel(&c, 16<<20); e != nil {
+	if _, e = parseLabel(&c, 16<<20); e != nil {
 		t.Fatal("actual backup label", e)
 	}
 }

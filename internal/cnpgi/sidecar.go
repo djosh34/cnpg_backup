@@ -14,6 +14,7 @@ import (
 	wirebackup "github.com/cloudnative-pg/cnpg-i/pkg/backup"
 	"github.com/cloudnative-pg/cnpg-i/pkg/identity"
 	wirewal "github.com/cloudnative-pg/cnpg-i/pkg/wal"
+	"github.com/djosh34/cnpg_backup/internal/postgres"
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
@@ -144,6 +145,13 @@ func RunSidecar(ctx context.Context, recovery bool, revision string) error {
 	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return errors.New("sidecar socket already owned")
 	}
+	// Reclaim only the Pod-bound native subtree, before any callback or native
+	// capacity check. Descendants inherit this second, workspace-local lock.
+	nativeLock, err := postgres.AcquireWorkspace(os.Getenv("POD_UID"))
+	if err != nil {
+		return err
+	}
+	defer nativeLock.Close()
 	source, err := os.Executable()
 	if err != nil {
 		return err

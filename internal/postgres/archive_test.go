@@ -159,11 +159,11 @@ func TestSpoolExactAndBounded(t *testing.T) {
 }
 func TestLabelBoundaries(t *testing.T) {
 	c := repository.Commit{Timeline: 1, StartLSN: "0/1000028", StopLSN: "0/1000120", StoppedAt: "2026-09-07T01:00:01Z", BackupLabel: "START WAL LOCATION: 0/1000028 (file 000000010000000000000001)\nCHECKPOINT LOCATION: 0/1000060\nBACKUP METHOD: streamed\nBACKUP FROM: primary\nSTART TIME: 2026-09-07 01:00:00 UTC\nLABEL: pg_basebackup base backup\nSTART TIMELINE: 1\n"}
-	if e := parseLabel(&c, 16<<20); e != nil {
+	if _, e := parseLabel(&c, 16<<20); e != nil {
 		t.Fatal(e)
 	}
 	c.BackupLabel = strings.Replace(c.BackupLabel, "primary", "standby", 1)
-	if e := parseLabel(&c, 16<<20); e == nil {
+	if _, e := parseLabel(&c, 16<<20); e == nil {
 		t.Fatal("standby accepted")
 	}
 }

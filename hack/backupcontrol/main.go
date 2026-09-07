@@ -55,6 +55,41 @@ func main() {
 		fail()
 	}
 	switch os.Args[1] {
+	case "scratch":
+		entries, e := os.ReadDir("/cnpg-backup/work/native")
+		if e != nil {
+			fail()
+		}
+		roots := []string{}
+		var allocated int64
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), "capture-") && !strings.HasPrefix(entry.Name(), "backup-repository-") {
+				continue
+			}
+			roots = append(roots, entry.Name())
+			if filepath.WalkDir(filepath.Join("/cnpg-backup/work/native", entry.Name()), func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				var st unix.Stat_t
+				if err = unix.Lstat(path, &st); err != nil {
+					return err
+				}
+				allocated += st.Blocks * 512
+				return nil
+			}) != nil {
+				fail()
+			}
+		}
+		locks := map[int]string{}
+		for _, pid := range native() {
+			p, e := os.Readlink(fmt.Sprintf("/proc/%d/fd/3", pid))
+			if e != nil {
+				fail()
+			}
+			locks[pid] = p
+		}
+		json.NewEncoder(os.Stdout).Encode(map[string]any{"roots": roots, "allocated_bytes": allocated, "native_locks": locks})
 	case "native":
 		json.NewEncoder(os.Stdout).Encode(native())
 	case "pause-native":

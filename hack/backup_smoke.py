@@ -15,6 +15,7 @@ from pathlib import Path
 import tarfile
 import time
 import xml.etree.ElementTree as ET
+from zoneinfo import ZoneInfo
 
 
 def bounded_capture_workspaces(h):
@@ -77,6 +78,9 @@ def _run(h, wal, report, data_image, metrics):
                  'CREATE TABLE full_load AS SELECT n, repeat(md5(n::text),128) payload FROM generate_series(1,5000) n;')
     expected = wal.sql(pod, "SELECT count(*)::text || ':' || md5(string_agg(id::text || ':' || value, ',' ORDER BY id)) FROM full_oracle")
     commits = []
+    source_bounds = {}
+    assert wal.sql(pod, 'SHOW log_timezone') == 'America/New_York'
+    report['full_log_timezone'] = 'America/New_York'
     journal = []
     def acknowledge(value, capture_uid, native_active=False, after_native_capture=False):
         item = {'id': value, 'capture_uid': capture_uid, 'native_active': native_active,
@@ -93,6 +97,7 @@ def _run(h, wal, report, data_image, metrics):
         wal.sql(pod, "UPDATE full_load SET payload=repeat(md5(n::text || '" + name + "'),128)")
         if kind == 'Backup':
             wal.control('hold-artifact-put')
+        before_capture = float(wal.sql(pod, 'SELECT extract(epoch FROM clock_timestamp())'))
         h.apply(definition(h, name, kind))
         if kind == 'ScheduledBackup':
             def scheduled():
@@ -143,7 +148,9 @@ def _run(h, wal, report, data_image, metrics):
             return False
         h.wait(completed, 'actual durable full Backup completion', 600)
         assert any(w['native_active'] for w in writes), 'no committed workload write observed during native capture'
-        assert commits[-1]['status']['backupId'] == commits[-1]['metadata']['uid']
+        uid = commits[-1]['metadata']['uid']
+        source_bounds[uid] = (before_capture, float(wal.sql(pod, 'SELECT extract(epoch FROM clock_timestamp())')))
+        assert commits[-1]['status']['backupId'] == uid
         metrics.assert_committed(publication_epoch(wal, commits[-1]['metadata']['uid']))
         report['full_completed'].append('on-demand' if kind == 'Backup' else 'scheduled')
         report['full_remaining'].remove(report['full_completed'][-1])
@@ -159,6 +166,14 @@ def _run(h, wal, report, data_image, metrics):
     observations = []
     for index, key in enumerate(keys):
         commit = json.loads(wal.s3('GET', key))
+        start = datetime.datetime.fromisoformat(commit['started_at'])
+        stop = datetime.datetime.fromisoformat(commit['stopped_at'])
+        before, after = source_bounds[commit['backup_uid']]
+        assert int(before) <= start.timestamp() <= stop.timestamp() <= after, 'source capture clocks disagree'
+        label_time = next(line.removeprefix('START TIME: ') for line in commit['backup_label'].splitlines() if line.startswith('START TIME: '))
+        assert label_time == start.astimezone(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S %Z'), 'non-UTC label normalization differs from independent zoneinfo'
+        report.setdefault('full_timezone_oracles', []).append({'backup_uid': commit['backup_uid'], 'label_time': label_time,
+            'started_at': commit['started_at'], 'stopped_at': commit['stopped_at'], 'source_before_epoch': before, 'source_after_epoch': after})
         observation = verify_restore(h, wal, root, driver, data_image, index, commit, expected, journal)
         observations.append(observation)
         (h.OUT / 'full-download-oracles.json').write_text(json.dumps(observations, indent=2))
@@ -218,15 +233,18 @@ def capture_faults(h, wal, report, metrics, control):
         ns = {'s': 'http://s3.amazonaws.com/doc/2006-03-01/'}
         assert listing.findtext('s:IsTruncated', namespaces=ns) == 'false'
         assert not listing.findall('s:Contents', ns), 'fault produced a selectable incomplete entry'
-    for signal, case in [('TERM', 'SIGTERM'), ('KILL', 'process-death'), ('OOM', 'actual-OOM')]:
+    for attempt, (signal, case) in enumerate([('TERM', 'SIGTERM'), ('KILL', 'process-death'),
+                                            ('KILL', 'process-death'), ('KILL', 'process-death'), ('OOM', 'actual-OOM')]):
         before = metrics.snapshot('full')
-        name = 'full-signal-' + signal.lower()
+        name = 'full-signal-' + signal.lower() + '-' + str(attempt)
         b = start_native(name)
         processes = json.loads(act('native'))
         assert processes, 'native subprocess not alive before signal'
         count = restart_count()
         postmaster = wal.sql(pod, 'SELECT pg_postmaster_start_time()')
         oom = None
+        scratch = None
+        remote_holders = None
         if signal == 'OOM':
             act('pause-native')
             output = act('oom', check=False, timeout=90)
@@ -238,6 +256,12 @@ def capture_faults(h, wal, report, metrics, control):
             # independently scoped CRI/node actor as E, with native work paused
             # so API/CRI lookup cannot race past the actual capture phase.
             act('pause-native')
+            scratch = json.loads(act('scratch'))
+            assert len(scratch['roots']) == 2 and scratch['allocated_bytes'] > 0, 'actual owned capture/repository scratch absent'
+            assert len(scratch['native_locks']) == len(processes), 'native lock lifetime not observed'
+            assert all(p == '/cnpg-backup/work/native.lock' for p in scratch['native_locks'].values()), 'native child did not inherit workspace exclusion'
+            remote_holders = [holder for holder in json.loads(wal.s3('GET', 'smoke/v1/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/gate.json'))['holders'] if holder['kind'] == 'backup']
+            assert any(holder['operation_id'] == b['metadata']['uid'] for holder in remote_holders), 'capture holder not observed'
             observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
             sidecar = next(c for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
             container_id = sidecar['containerID'].split('://')[1]
@@ -258,12 +282,21 @@ def capture_faults(h, wal, report, metrics, control):
                 oom['termination'] = {k: last.get(k) for k in ('reason', 'exitCode', 'signal')}
         assert wal.sql(pod, 'SELECT pg_postmaster_start_time()') == postmaster, 'fault accidentally restarted source PostgreSQL'
         assert not json.loads(act('native')), 'native child survived sidecar process death'
+        if scratch is not None:
+            reclaimed = json.loads(act('scratch'))
+            assert not reclaimed['roots'] and reclaimed['allocated_bytes'] == 0, 'dead native scratch accumulates after restart'
+            after_holders = json.loads(wal.s3('GET', 'smoke/v1/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/gate.json'))['holders']
+            assert all(holder in after_holders for holder in remote_holders), 'local cleanup erased remote uncertainty'
+            report.setdefault('full_scratch_recovery', []).append({'attempt': attempt, 'before': scratch, 'after': reclaimed,
+                                                                  'remote_holders_preserved': True})
         no_commit(b['metadata']['uid'])
         metrics.assert_failed(name, before, require_warning=False)
         report['full_fault_preconditions'].append({'case': case, 'signal': signal, 'native_pids_observed': processes,
                                                    'source_postmaster_continued': True, 'actual_OOM': oom})
-        report['full_completed'].append(case)
-        report['full_remaining'].remove(case)
+        if case in report['full_remaining']:
+            report['full_completed'].append(case)
+            report['full_remaining'].remove(case)
+    assert len(report['full_scratch_recovery']) == 3, 'repeated same-PVC death/reclaim regression incomplete'
     before = metrics.snapshot('full')
     b = start_native('full-workspace-exhaustion')
     paused = json.loads(act('pause-native'))
@@ -400,6 +433,7 @@ def verify_restore(h, wal, root, driver, data_image, index, commit, expected, jo
                 assert member.isfile() or member.isdir()
                 assert not member.name.startswith('/') and '..' not in Path(member.name).parts
                 reader.extract(member, destination, filter='data')
+    assert (base / 'backup_label').read_bytes() == commit['backup_label'].encode(), 'original native label bytes changed'
     def subject(*args, expected_failure=False):
         return h.run('docker', 'run', '--rm', '--network=none', '--user', str(os.getuid()),
                      '-v', str(directory) + ':/input', '-v', str(driver) + ':/verify:ro',

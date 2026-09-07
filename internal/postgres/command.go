@@ -4,6 +4,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -39,6 +40,11 @@ func runNative(ctx context.Context, env []string, executable string, args ...str
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Env = env
+	// ExtraFiles clears CLOEXEC in the child. Approved PostgreSQL tools retain
+	// this descriptor across their native forks, even outside our process group.
+	if lock := nativeWorkspaceLock.Load(); lock != nil {
+		cmd.ExtraFiles = []*os.File{lock}
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second

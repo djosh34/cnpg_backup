@@ -41,6 +41,8 @@ type serverState struct {
 	TablespaceOIDs map[string]uint32 `json:"tablespaceOIDs"`
 	Postmaster     string            `json:"postmaster"`
 	Clock          string            `json:"clock"`
+	LogTimezone    string            `json:"logTimezone"`
+	ConfigLoaded   string            `json:"configLoaded"`
 	FreeSenders    int               `json:"freeSenders"`
 	FreeSlots      int               `json:"freeSlots"`
 }
@@ -53,6 +55,8 @@ const preflightSQL = `SELECT json_build_object(
  'freeSlots', current_setting('max_replication_slots')::int - (SELECT count(*) FROM pg_replication_slots),
  'postmaster', to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
  'clock', to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+ 'logTimezone', current_setting('log_timezone'),
+ 'configLoaded', to_char(pg_conf_load_time() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
  'tablespaceOIDs', COALESCE((SELECT json_object_agg(spcname,oid::bigint) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')), '{}'::json),
  'role', current_user, 'primary', NOT pg_is_in_recovery(),
  'blockSize', current_setting('block_size')::bigint,
@@ -188,7 +192,13 @@ func checkFromRoot(ctx context.Context, root *os.Root, wal bool) error {
 			return errors.New("unmanaged actual data/tablespace symlink layout")
 		}
 	}
-	directory, err := os.MkdirTemp("/cnpg-backup/work", "native-auth-")
+	// Standalone --preflight diagnostics are not admitted sidecar operations;
+	// keep their independently owned temporary files outside the reclaimable tree.
+	scratch := "/cnpg-backup/work"
+	if nativeWorkspaceLock.Load() != nil {
+		scratch = NativeWorkspace
+	}
+	directory, err := os.MkdirTemp(scratch, "native-auth-")
 	if err != nil {
 		return errors.New("native private workspace unavailable")
 	}

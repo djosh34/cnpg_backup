@@ -164,7 +164,7 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 	if e = configuration.CheckCapacity(initial); e != nil {
 		return nil, backupError(e)
 	}
-	directory, e := os.MkdirTemp(workspacePath, "backup-repository-")
+	directory, e := os.MkdirTemp(postgres.NativeWorkspace, "backup-repository-")
 	if e != nil {
 		return nil, backupError(e)
 	}

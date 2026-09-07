@@ -230,6 +230,10 @@ def main():
         if sql('SHOW server_version_num') != '180006':
             raise RuntimeError('wrong live server version')
         sql('CREATE ROLE backup LOGIN REPLICATION')
+        run(['env', f'CNPG_TEST_PG_BIN={bin_dir}', f'CNPG_TEST_PG_SOCKET={sock}',
+             f'CNPG_TEST_PG_LIBS={OUT / "test-libs"}', 'CNPG_TEST_PG_USER=fixture', 'CNPG_TEST_PG_ROLE=backup',
+             CACHE / 'go/bin/go', 'test', './internal/postgres', '-run', '^TestNativeLabelTimeZones$', '-count=1', '-v'])
+        passed('source_timezone_DST_label_normalization')
         salt = random.Random(args.seed).randrange(1, 2**31)
         transaction('full', f"CREATE TABLE t(id int PRIMARY KEY, v text); INSERT INTO t SELECT i, repeat(md5('{salt}:' || i::text),32) FROM generate_series(1,20000) i; CREATE TABLE reset_me(v text); INSERT INTO reset_me VALUES('old'); CREATE TABLE recreated(v text); INSERT INTO recreated VALUES('old')")
 

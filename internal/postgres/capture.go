@@ -135,7 +135,7 @@ func OpenCapture(ctx context.Context, root *os.Root) (*Capture, error) {
 			return nil, ErrInput
 		}
 	}
-	c.Directory, e = os.MkdirTemp(workspace, "capture-")
+	c.Directory, e = os.MkdirTemp(NativeWorkspace, "capture-")
 	if e != nil {
 		return nil, e
 	}
@@ -278,6 +278,12 @@ func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, er
 			err = me
 		}
 	}()
+	// Bound label interpretation with source clocks immediately around capture,
+	// not time spent waiting for remote repository admission.
+	began, err := c.Postflight(ctx)
+	if err != nil {
+		return nil, err
+	}
 	dir := filepath.Join(c.Directory, "tar")
 	if _, err = runTool(ctx, c.env, "pg_basebackup", "--no-password", "--pgdata="+dir, "--format=tar", "--wal-method=stream", "--checkpoint=spread", "--manifest-checksums=SHA256"); err != nil {
 		return nil, err
@@ -433,7 +439,20 @@ func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, er
 		return nil, err
 	}
 	cm.BackupLabel = string(label)
-	if err = parseLabel(&cm, c.control.Segment); err != nil {
+	labelTime, err := parseLabel(&cm, c.control.Segment)
+	if err != nil {
+		return nil, err
+	}
+	query, err := labelTimeQuery(labelTime, began, stopped, c.before.LogTimezone, c.before.ConfigLoaded)
+	if err != nil {
+		return nil, err
+	}
+	output, err := command(ctx, c.env, "psql", "-X", "-A", "-t", "--no-password", "-v", "ON_ERROR_STOP=1", "-c", query)
+	if err != nil {
+		return nil, err
+	}
+	cm.StartedAt, err = normalizedLabelTime(output, began, stopped)
+	if err != nil {
 		return nil, err
 	}
 	if len(cm.Tablespaces) > 0 {
@@ -582,34 +601,26 @@ func spool(ctx context.Context, raw *os.File, dir, compression string, cap int64
 	a.Compression = compression
 	return f, a, nil
 }
-func parseLabel(c *repository.Commit, segment int64) error {
+func parseLabel(c *repository.Commit, segment int64) (string, error) {
 	fields := map[string]string{}
 	for _, line := range strings.Split(strings.TrimSuffix(c.BackupLabel, "\n"), "\n") {
 		p := strings.SplitN(line, ": ", 2)
 		if len(p) != 2 || fields[p[0]] != "" {
-			return ErrInput
+			return "", ErrInput
 		}
 		fields[p[0]] = p[1]
 	}
 	lsn, _ := repository.ParseLSN(c.StartLSN)
 	if fields["START WAL LOCATION"] != c.StartLSN+" (file "+WALFilename(c.Timeline, lsn, segment)+")" || fields["BACKUP METHOD"] != "streamed" || fields["BACKUP FROM"] != "primary" || fields["START TIMELINE"] != strconv.FormatUint(uint64(c.Timeline), 10) {
-		return ErrInput
+		return "", ErrInput
 	}
 	checkpoint, e := repository.ParseLSN(fields["CHECKPOINT LOCATION"])
 	end, _ := repository.ParseLSN(c.StopLSN)
 	if e != nil || checkpoint < lsn || checkpoint >= end {
-		return ErrInput
+		return "", ErrInput
 	}
-	started, e := time.Parse("2006-01-02 15:04:05 MST", fields["START TIME"])
-	if e != nil || !strings.HasSuffix(fields["START TIME"], " UTC") {
-		return ErrInput
-	}
-	c.StartedAt = started.UTC().Format(time.RFC3339Nano)
-	stop, e := time.Parse(time.RFC3339Nano, c.StoppedAt)
-	if e != nil || stop.Before(started) {
-		return ErrInput
-	}
-	return nil
+	// PostgreSQL, not Go's abbreviation parser, interprets this source value.
+	return fields["START TIME"], nil
 }
 func validateTablespaceMap(text string, tables []repository.Tablespace, connection Connection) error {
 	expected := map[string]string{}
