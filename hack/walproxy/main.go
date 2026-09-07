@@ -40,13 +40,29 @@ func main() {
 	proxy.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DisableKeepAlives: true, DisableCompression: true}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) { w.WriteHeader(502) }
 	state := &faults{release: make(chan struct{})}
+	proxy.ModifyResponse = func(response *http.Response) error {
+		state.Lock()
+		mode, release := state.mode, state.release
+		if mode == "hold-commit-response" && response.Request.Method == "PUT" && strings.HasSuffix(response.Request.URL.Path, "/commit.json") && response.StatusCode == 200 {
+			state.blocked++
+			state.Unlock()
+			select {
+			case <-release:
+				return nil
+			case <-response.Request.Context().Done():
+				return response.Request.Context().Err()
+			}
+		}
+		state.Unlock()
+		return nil
+	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/fixture-control" {
 			state.Lock()
 			defer state.Unlock()
 			if r.Method == "POST" {
 				mode := r.URL.Query().Get("mode")
-				if mode != "" && mode != "hold-wal-put" && mode != "fail-wal-get" && mode != "hold-artifact-put" {
+				if mode != "" && mode != "hold-wal-put" && mode != "fail-wal-get" && mode != "hold-artifact-put" && mode != "hold-commit-response" {
 					w.WriteHeader(400)
 					return
 				}

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 import tarfile
 import time
@@ -59,13 +60,15 @@ def publication_epoch(wal, uid):
 def _run(h, wal, report, data_image, metrics):
     report['full_completed'] = []
     report['full_remaining'] = ['on-demand', 'scheduled', 'S3-only-download-native-verification-SQL',
-                                'SIGTERM', 'OOM-process-death', 'full-workspace', 'credentials',
+                                'SIGTERM', 'process-death', 'actual-OOM', 'full-workspace', 'credentials',
                                 'timeout-after-commit-idempotent-retry', 'WAL-under-transfer', 'metrics-alerts']
     report['full_subject_docker_id'] = h.run('docker', 'image', 'inspect', '--format={{.Id}}', 'cnpg-backup-foundation-pg18:test').strip()
     root = h.WORK / 'full-fixture'
     root.mkdir(mode=0o700)
     driver = root / 'backupverify'
     h.run('go', 'build', '-o', driver, './hack/backupverify')
+    control = root / 'backupcontrol'
+    h.run('go', 'build', '-o', control, './hack/backupcontrol')
     report['full_driver_sha256'] = hashlib.sha256(driver.read_bytes()).hexdigest()
     pod = wal.primary()
     wal.sql(pod, 'CREATE TABLE full_oracle(id integer PRIMARY KEY, value text) TABLESPACE fast_space; '
@@ -91,8 +94,15 @@ def _run(h, wal, report, data_image, metrics):
             nonlocal wal_serviced
             if kind == 'Backup' and not wal_serviced and wal.control().get('blocked', 0) > 0:
                 started = time.monotonic()
-                segment = wal.sql(pod, 'SELECT pg_walfile_name(pg_current_wal_lsn())')
-                wal.sql(pod, 'SELECT pg_switch_wal()')
+                # Native backup may leave an empty new segment. Insert a real
+                # record and derive the just-switched filename from switch LSN,
+                # not a pre-switch boundary/current-LSN guess.
+                wal.sql(pod, 'INSERT INTO full_capture_writes VALUES (900000)')
+                segment = wal.sql(pod, 'SELECT pg_walfile_name(pg_switch_wal())')
+                pending = {'case': 'WAL-under-transfer', 'partial_artifact_body_forwarded': True,
+                           'requested_segment': segment, 'started_epoch': time.time()}
+                report.setdefault('full_fault_preconditions', []).append(pending)
+                (h.OUT / 'full-transfer-precondition.json').write_text(json.dumps(pending, indent=2))
                 h.wait(lambda: wal.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + segment + ".done'") == '1',
                        'WAL acknowledgment while real artifact transfer is blocked', 90)
                 assert wal.control()['blocked'] > 0, 'artifact barrier disappeared before WAL completion'
@@ -141,6 +151,151 @@ def _run(h, wal, report, data_image, metrics):
     report['full_completed'].append('S3-only-download-native-verification-SQL')
     report['full_remaining'].remove('S3-only-download-native-verification-SQL')
     credential_failure(h, wal, report, metrics)
+    capture_faults(h, wal, report, metrics, control)
+    assert not report['full_remaining'], 'mandatory F native/fault/observability cases incomplete'
+
+
+def capture_faults(h, wal, report, metrics, control):
+    pod = wal.primary()
+    actor = '/var/lib/postgresql/data/full-fixture-control'
+    cluster_file = '/var/lib/postgresql/data/full-fixture-cluster.json'
+    backup_file = '/var/lib/postgresql/data/full-fixture-backup.json'
+    def install_actor():
+        command = [str(h.WORK / 'kubectl'), '--kubeconfig', str(h.WORK / 'kubeconfig'), 'exec', '-i', '-n', h.NS,
+                   pod, '-c', 'postgres', '--', 'sh', '-ec', 'cat > ' + actor + '; chmod 0555 ' + actor]
+        installed = subprocess.run(command, input=control.read_bytes(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        assert installed.returncode == 0, 'test actor installation failed'
+    install_actor()
+    report['full_control_sha256'] = hashlib.sha256(control.read_bytes()).hexdigest()
+    def act(action, *args, **kwargs):
+        return h.kube('exec', '-n', h.NS, pod, '-c', 'cnpg-backup', '--', actor, action, *args, **kwargs)
+    def backup(name):
+        return json.loads(h.kube('get', 'backup/' + name, '-n', h.NS, '-o', 'json'))
+    def failed(name):
+        def terminal():
+            b = backup(name)
+            phase = b.get('status', {}).get('phase')
+            if phase == 'completed':
+                raise AssertionError('faulted native invocation falsely succeeded: ' + name)
+            return phase == 'failed'
+        h.wait(terminal, 'actual CNPG native failure: ' + name, 180)
+        return backup(name)
+    def start_native(name):
+        # Dirty real pages make the native spread-checkpoint phase observable;
+        # never replace the runtime command with a sleep or fake capture.
+        wal.sql(pod, "UPDATE full_load SET payload=repeat(md5(n::text || '" + name + "'),128)")
+        h.apply(definition(h, name))
+        def active():
+            b = backup(name)
+            assert b.get('status', {}).get('phase') not in ('failed', 'completed'), 'native fault barrier missed'
+            return wal.sql(pod, 'SELECT count(*) FROM pg_stat_progress_basebackup') == '1'
+        h.wait(active, 'actual native pg_basebackup active: ' + name, 180)
+        return backup(name)
+    def restart_count():
+        p = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+        return next(c['restartCount'] for c in p['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+    def restarted(before):
+        h.wait(lambda: restart_count() > before, 'actual sidecar process restart', 180)
+        h.wait(lambda: h.kube('exec', '-n', h.NS, pod, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup',
+                              'instance', '--probe', check=False) == '', 'replacement native sidecar socket')
+    def no_commit(uid):
+        prefix = 'smoke/v1/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/backups/' + uid + '/commit.json'
+        listing = ET.fromstring(wal.s3('GET', '?list-type=2&prefix=' + prefix))
+        ns = {'s': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+        assert listing.findtext('s:IsTruncated', namespaces=ns) == 'false'
+        assert not listing.findall('s:Contents', ns), 'fault produced a selectable incomplete entry'
+    for signal, case in [('TERM', 'SIGTERM'), ('KILL', 'process-death'), ('OOM', 'actual-OOM')]:
+        before = metrics.snapshot('full')
+        name = 'full-signal-' + signal.lower()
+        b = start_native(name)
+        processes = json.loads(act('native'))
+        assert processes, 'native subprocess not alive before signal'
+        count = restart_count()
+        postmaster = wal.sql(pod, 'SELECT pg_postmaster_start_time()')
+        oom = None
+        if signal == 'OOM':
+            act('pause-native')
+            output = act('oom', check=False, timeout=90)
+            records = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
+            assert len(records) == 1 and records[0]['bounded_cgroup_precondition'], 'actual bounded OOM precondition missing'
+            oom = records[0]
+        else:
+            act('signal-sidecar', signal, check=False)
+        failed(name)
+        restarted(count)
+        if signal == 'OOM':
+            observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+            last = next(c['lastState']['terminated'] for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+            assert last['reason'] == 'OOMKilled' and last['exitCode'] == 137, 'native sidecar was not actually OOM-killed'
+            oom['termination'] = {k: last.get(k) for k in ('reason', 'exitCode', 'signal')}
+        assert wal.sql(pod, 'SELECT pg_postmaster_start_time()') == postmaster, 'fault accidentally restarted source PostgreSQL'
+        assert not json.loads(act('native')), 'native child survived sidecar process death'
+        no_commit(b['metadata']['uid'])
+        metrics.assert_failed(name, before, require_warning=False)
+        report['full_fault_preconditions'].append({'case': case, 'signal': signal, 'native_pids_observed': processes,
+                                                   'source_postmaster_continued': True, 'actual_OOM': oom})
+        report['full_completed'].append(case)
+        report['full_remaining'].remove(case)
+    before = metrics.snapshot('full')
+    b = start_native('full-workspace-exhaustion')
+    paused = json.loads(act('pause-native'))
+    try:
+        filled = json.loads(act('fill-workspace'))
+        assert filled['enospc'] and filled['free'] < 4096, 'bounded workspace did not actually reach ENOSPC'
+        failed('full-workspace-exhaustion')
+        assert not json.loads(act('native')), 'paused native writer was not killed/reaped at capacity limit'
+        no_commit(b['metadata']['uid'])
+        report['full_fault_preconditions'].append({'case': 'full-workspace', 'native_paused_pids': paused, **filled})
+    finally:
+        act('clear-workspace')
+    metrics.assert_failed('full-workspace-exhaustion', before, require_warning=False)
+    report['full_completed'].append('full-workspace')
+    report['full_remaining'].remove('full-workspace')
+    # Set the supported one-minute operation budget through ordinary CNPG
+    # configuration rollout. The final fault must hit a real deadline after
+    # durable commit, not be relabeled from another SIGTERM test.
+    old_pods = set(h.pod_uids())
+    h.kube('patch', 'repository', 'destination', '-n', h.NS, '--type=merge', '-p',
+           json.dumps({'spec': {'io': {'operationTimeout': '1m'}}}))
+    h.kube('annotate', 'cluster/database', '-n', h.NS, 'full-deadline-rollout=requested', '--overwrite')
+    h.wait(lambda: len(h.pod_uids()) == 2 and old_pods.isdisjoint(h.pod_uids()), 'CNPG native operation-deadline rollout', 420)
+    h.kube('wait', '-n', h.NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
+    pod = wal.primary()
+    install_actor()
+    # Lose the actual callback after MinIO has durably accepted commit.json.
+    # This is a failed CNPG invocation AND successful historical publication.
+    before = metrics.snapshot('full')
+    name = 'full-commit-response-loss'
+    wal.control('hold-commit-response')
+    try:
+        original = start_native(name)
+        h.kube('exec', '-i', '-n', h.NS, pod, '-c', 'postgres', '--', 'sh', '-ec', 'cat > ' + cluster_file,
+               input=h.kube('get', 'cluster/database', '-n', h.NS, '-o', 'json'))
+        h.kube('exec', '-i', '-n', h.NS, pod, '-c', 'postgres', '--', 'sh', '-ec', 'cat > ' + backup_file,
+               input=json.dumps(original))
+        h.wait(lambda: wal.control().get('blocked', 0) > 0, 'durable commit response held before callback result', 600)
+        uid = original['metadata']['uid']
+        published = publication_epoch(wal, uid)
+        key = 'smoke/v1/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/backups/' + uid + '/commit.json'
+        commit = json.loads(wal.s3('GET', key))
+        assert backup(name)['status']['phase'] != 'completed'
+        failed(name)  # real operationTimeout cancels the held response
+        assert not json.loads(act('native')), 'deadline left a native child behind'
+    finally:
+        wal.control('')
+    metrics.assert_failed(name, before, committed_after_loss=published, require_warning=False)
+    retry = json.loads(act('backup', cluster_file, backup_file))
+    assert retry['backup_id'] == uid and retry['begin_lsn'] == commit['start_lsn'] and retry['end_lsn'] == commit['stop_lsn']
+    assert retry['started_at'] == int(datetime.datetime.fromisoformat(commit['started_at']).timestamp())
+    assert retry['stopped_at'] == int(datetime.datetime.fromisoformat(commit['stopped_at']).timestamp())
+    assert backup(name)['status']['phase'] == 'failed', 'test retry must not rewrite CNPG terminal status'
+    assert json.loads(wal.s3('GET', key)) == commit, 'same-UID retry changed the durable winner'
+    report['full_fault_preconditions'].append({'case': 'timeout-after-commit-idempotent-retry', 'durable_commit_before_response_loss': True,
+        's3_publication_epoch': published, 'actual_operation_timeout_seconds': 60, 'same_UID_plugin_retry_not_CNPG_auto_retry': True})
+    report['full_completed'].append('timeout-after-commit-idempotent-retry')
+    report['full_remaining'].remove('timeout-after-commit-idempotent-retry')
+    report['full_completed'].append('metrics-alerts')
+    report['full_remaining'].remove('metrics-alerts')
 
 
 def credential_failure(h, wal, report, metrics):

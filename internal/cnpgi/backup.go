@@ -226,6 +226,9 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 		return nil, backupError(e)
 	}
 	if winner != nil {
+		if e = ctx.Err(); e != nil {
+			return nil, backupError(e)
+		}
 		return backupResult(winner, repo.Identity().WALSegmentBytes), nil
 	}
 	capture, e := postgres.OpenCapture(ctx, root)
