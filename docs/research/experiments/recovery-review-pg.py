@@ -19,6 +19,9 @@ ROOT = Path(tempfile.mkdtemp(prefix='recovery-review-pg-'))
 SOCKET = ROOT / 'socket'
 SOCKET.mkdir()
 PORT = '65432'
+# The retained native fixture was initialized by this test-only role. New
+# fixtures use a fixed role rather than the runner's operating-system username.
+DBUSER = 'starlord' if os.environ.get('RECOVERY_FIXTURE') else 'cnpg_research'
 servers = []
 commands = []
 
@@ -34,7 +37,7 @@ def run(tool, *args, check=True):
 
 
 def sql(q):
-    return run('psql', '-XAt', '-h', SOCKET, '-p', PORT, '-d', 'postgres',
+    return run('psql', '-XAt', '-h', SOCKET, '-p', PORT, '-U', DBUSER, '-d', 'postgres',
                '-v', 'ON_ERROR_STOP=1', '-c', q).stdout.strip()
 
 
@@ -73,7 +76,7 @@ try:
         kind = 'same-segment-synthetic-padding'
     else:
         source = ROOT / 'source'
-        args = ['-D', source, '-A', 'trust', '--no-locale']
+        args = ['-D', source, '-U', DBUSER, '-A', 'trust', '--no-locale']
         if os.environ.get('PG_SHARE'):
             args += ['-L', os.environ['PG_SHARE']]
         run('initdb', *args)
@@ -82,7 +85,7 @@ try:
                     "wal_level=replica\nmax_wal_senders=5\nmax_replication_slots=5\narchive_mode=off\n")
         assert start(source, ROOT / 'source.log').returncode == 0
         sql('CREATE TABLE sentinel(id int); INSERT INTO sentinel VALUES (1)')
-        run('pg_basebackup', '-h', SOCKET, '-p', PORT, '-D', seed, '-X', 'stream', '-c', 'fast')
+        run('pg_basebackup', '-h', SOCKET, '-p', PORT, '-U', DBUSER, '-D', seed, '-X', 'stream', '-c', 'fast')
         shutil.copytree(seed, original)
         sql('INSERT INTO sentinel VALUES (2)')
         point = 'postbackup_target'
