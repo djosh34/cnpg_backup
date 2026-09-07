@@ -112,6 +112,32 @@ class CampaignTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 campaign.terminated(state, stable_retained=True)
 
+    def test_terminal_pods_wait_for_asynchronous_job_complete_condition(self):
+        from recovery_cases import Campaign
+        campaign = Campaign(None, None)
+        state = {'name': 'g-001', 'plan': {'plan': {'reader_hold_id': 'reader', 'lifetime_hold_id': 'stable'}}}
+        pods = [{'metadata': {'uid': 'pod', 'name': 'pod'}, 'spec': {'containers': [{'name': 'full-recovery'}]},
+                 'status': {'initContainerStatuses': [{'state': {'terminated': {}}}],
+                            'containerStatuses': [{'state': {'terminated': {}}}]}}]
+        queries = []
+        def kube(*args, **kwargs):
+            if args[:2] == ('get', 'jobs'):
+                queries.append(True)
+                conditions = [] if len(queries) == 1 else [{'type': 'Complete', 'status': 'True'}]
+                return json.dumps({'items': [{'metadata': {'uid': 'job'}, 'status': {'conditions': conditions}}]})
+            return ''
+        def wait(predicate, *args):
+            for _ in range(3):
+                if predicate():
+                    return
+            self.fail('asynchronous Job condition did not arrive')
+        with patch.object(campaign, 'pods', return_value=pods), patch.object(campaign, 'event'), \
+             patch('recovery_cases.h.kube', side_effect=kube), patch('recovery_cases.h.wait', side_effect=wait), \
+             patch('recovery_cases.h.save_log'), patch('recovery_cases.h.pod_evidence', return_value={}), \
+             patch.object(campaign, 'gate', return_value={'holders': []}):
+            campaign.terminated(state)
+        self.assertEqual(len(queries), 2)
+
     def test_ordinary_cleanup_needs_matching_durable_proof_and_real_gate_release(self):
         from recovery_cases import Campaign
         campaign = Campaign(None, None)

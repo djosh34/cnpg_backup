@@ -560,8 +560,14 @@ class Campaign:
                         return False
             return True
         h.wait(all_done, 'all actual recovery/retry Pod containers terminated', 120)
-        jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']
-        assert any(any(c['type'] == 'Complete' and c['status'] == 'True' for c in j.get('status', {}).get('conditions', [])) for j in jobs)
+        jobs = []
+        def job_complete():
+            nonlocal jobs
+            jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']
+            return any(any(c['type'] == 'Complete' and c['status'] == 'True' for c in j.get('status', {}).get('conditions', [])) for j in jobs)
+        # Pod terminal status precedes the Job controller's condition update.
+        # Require that later observation, rather than assert they are atomic.
+        h.wait(job_complete, 'actual Job Complete after all terminal Pod statuses', 120)
         plan = state['plan']['plan']
         h.wait(lambda: plan['reader_hold_id'] not in {x['id'] for x in self.gate()['holders']},
                'original sidecar conclusively drains only its own reader', 120)

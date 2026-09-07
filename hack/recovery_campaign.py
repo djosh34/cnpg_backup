@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 
 import cnpg_smoke as h
 
@@ -72,6 +73,12 @@ def atomic_json(path, data):
     temp.replace(path)
 
 
+def failure_frames(error):
+    # Locations only, never locals, source text, argv or credential-bearing input.
+    return [{'file': Path(f.filename).name, 'line': f.lineno, 'function': f.name}
+            for f in traceback.extract_tb(error.__traceback__)[-12:]]
+
+
 class Manifest:
     def __init__(self, directory, inputs, scenarios, deadline=float('inf')):
         self.directory, self.deadline = directory, deadline
@@ -115,7 +122,7 @@ class Manifest:
             yield
         except BaseException as error:
             result.update(status='failed', error_type=type(error).__name__,
-                          diagnostic=h.redact_diagnostics(str(error))[-4000:])
+                          diagnostic=h.redact_diagnostics(str(error))[-4000:], frames=failure_frames(error))
             first = self.directory / 'first-failure.json'
             if not first.exists():
                 atomic_json(first, {'scenario': name, **result})
@@ -224,7 +231,7 @@ def execute(args):
             campaign.run()
             m.data['phase_timings']['fixed_and_exploration_seconds'] = time.monotonic() - started
         except BaseException as e:
-            m.data['failure'] = {'type': type(e).__name__, 'diagnostic': h.redact_diagnostics(str(e))[-4000:]}
+            m.data['failure'] = {'type': type(e).__name__, 'diagnostic': h.redact_diagnostics(str(e))[-4000:], 'frames': failure_frames(e)}
             if not (OUT / 'first-failure.json').exists():
                 atomic_json(OUT / 'first-failure.json', m.data['failure'])
             m.save()
