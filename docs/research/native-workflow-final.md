@@ -21,11 +21,11 @@ Production native executable allowlist for this workflow:
 | `pg_basebackup` | PostgreSQL's online consistency, replication transport, native changed-block discovery, manifests, bootstrap WAL |
 | `pg_verifybackup` | Verify original full **and original native incremental** inputs and reconstructed output |
 | `pg_combinebackup` | Native reconstruction, not our own page/diff engine |
-| `pg_waldump` | Required-WAL parser; also invoked by `pg_verifybackup` |
+| `pg_waldump` | Required-WAL parser; invoked directly by Go for every validated manifest range |
 | `pg_controldata` | Read version/system/checksum/WAL-segment metadata from privately extracted `global/pg_control` |
 | `psql` | Fixed preflight/postflight SQL using upstream libpq, avoiding another SQL driver; no arbitrary user SQL or interactive use |
 
-Keep `pg_verifybackup` and matching `pg_waldump` beside each other. `postgres`, `initdb`, `pg_ctl`, `pg_checksums`, shell, Python, package extractors and test `cp` are **experiment tooling**, not additions to the plugin's runtime allowlist. PostgreSQL itself remains CNPG's database container. Go binaries/dependencies remain `CGO_ENABLED=0`; runtime compression/extraction/S3 operations are Go, not external compressors or shell scripts.
+Always run `pg_verifybackup --no-parse-wal` and invoke matching `pg_waldump` directly with Go `exec.Command` for every validated manifest WAL range, for tar, extracted originals **and synthetic output**. **R0:** the default plain verifier uses `system()` to launch pg_waldump ([source L1200–1215](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/src/bin/pg_verifybackup/pg_verifybackup.c#L1200-L1215)), which requires `/bin/sh`. Do not add a shell to the data image or omit WAL parsing. Tool paths are fixed absolute paths, range arguments validated, and every subprocess exit is checked. `postgres`, `initdb`, `pg_ctl`, `pg_checksums`, shell, Python, package extractors and test `cp` are **experiment tooling**, not additions to the plugin's runtime allowlist. PostgreSQL itself remains CNPG's database container. Go binaries/dependencies remain `CGO_ENABLED=0`; runtime compression/extraction/S3 operations are Go, not external compressors or shell scripts.
 
 The six allowlisted distro executables totaled about **1.5 MiB allocated** locally; this is **not** image size. `ldd` showed libpq, libc/loader, OpenSSL, zlib/LZ4/Zstd, Kerberos/GSSAPI, LDAP and transitive dependencies; `psql` adds readline/tinfo. PG server experiments additionally use ICU, io_uring and other server libraries. Packaging must inventory/scan the actual linked closure and preserve third-party notices; do not claim a pure-Go data image or ship the whole server package merely because some tools come from it. Extraction of a distro package does not execute its maintainer scripts. [S11]
 
@@ -88,7 +88,7 @@ For timestamp selection retain the label's source start time and a **source-serv
 
 **Commit does not wait for a second copy of bundled WAL in the ordinary WAL-object namespace.** `-X stream` bundles the bootstrap WAL and PG's client requests no archive wait for this mode. Uploaded, verified `pg_wal.tar` makes the base self-contained. Requiring the archive callback to catch up first would add an unnecessary availability gate; declaring the base recoverable does **not** establish post-backup PITR coverage. [S2, S10]
 
-Keep bundled WAL with every committed backup. For a D2 restore, reconstructed output carries **D2's** bundled WAL; F's bootstrap WAL is needed to verify F but not as a request to replay from F's checkpoint. Do not merge every input's `pg_wal` directory or republish bundled segments into the archive namespace. Restore carries the selected base's local bootstrap WAL and invokes the plugin for subsequent archive WAL. Retention must preserve bootstrap artifacts and all source-archive segments needed by supported recovery coverage; a latest archived filename alone is not continuous coverage. Protection extends through actual PostgreSQL WAL use, not just combine completion.
+Keep bundled WAL with every committed backup. For a D2 restore, reconstructed output carries **D2's** bundled WAL; F's bootstrap WAL is needed to verify F but not as a request to replay from F's checkpoint. Do not merge every input's `pg_wal` directory or republish bundled segments into the archive namespace. Restore carries the selected base's local bootstrap WAL, but PG18 requests the archive **before** trying that local file. **S1:** attempt archive lookup first and prefer its verified bytes; only authenticated absence may allow exit1/local fallback when the actual bundle file is still verified available and the segment contains no required remote post-backup interval. Manifest End-LSN is the local coverage bound, not the end of its possibly padded segment. A remote-required gap in that same filename is fatal255, as are TLS/auth/transport/corruption errors even with a bundle present. Never return a padded bundle as archive success to hide later records. See [correction evidence](review-corrections.md). Retention must preserve bootstrap artifacts and all source-archive segments needed by supported recovery coverage; a latest archived filename alone is not continuous coverage. Protection extends through actual PostgreSQL WAL use, not just combine completion.
 
 Post-backup remote archive proof remains mandatory: write targets beyond D2's bundle, switch/confirm archival, then restore and query SQL. The local experiment proves this using a filesystem archive (not S3); CNPG/MinIO must repeat it, including missing/corrupt **post-backup** required segments. There is no bounded outage RPO. Healthy `archive_timeout=60s` only bounds low-traffic segment-switch delay, plus queue/upload time; it does not bound backlog under failure.
 
@@ -99,19 +99,25 @@ Take the repository restore hold **before selection/download** under the parent'
 For each input, extract tablespace tar into a private per-input OID directory and manufacture `input/pg_tblspc/<OID>` symlinks to those trusted directories. Preserve the original `tablespace_map` bytes at this stage so original-manifest verification remains possible. Do not let the map dictate writes to source paths. Keep input `pg_wal` as a **directory**, not a symlink: `pg_combinebackup` skips ordinary symlinks, including a `pg_wal` link. [S8]
 
 ```sh
-pg_verifybackup --exit-on-error "$T/F"
-pg_verifybackup --exit-on-error "$T/D2"
+pg_verifybackup --exit-on-error --no-parse-wal "$T/F"
+# Direct exec for EACH validated F manifest range:
+pg_waldump --quiet --path="$T/F/pg_wal" --timeline="$timeline" --start="$start_lsn" --end="$end_lsn"
+pg_verifybackup --exit-on-error --no-parse-wal "$T/D2"
+# Direct exec for EACH validated D2 manifest range:
+pg_waldump --quiet --path="$T/D2/pg_wal" --timeline="$timeline" --start="$start_lsn" --end="$end_lsn"
 pg_combinebackup --copy --manifest-checksums=SHA256 \
   --tablespace-mapping="$T/D2-ts/<OID>=$FINAL_TS/<OID>" \
   --output="$FINAL_PGDATA" "$T/F" "$T/D2"
-pg_verifybackup --exit-on-error "$FINAL_PGDATA"
+pg_verifybackup --exit-on-error --no-parse-wal "$FINAL_PGDATA"
+# Direct exec for EACH validated synthetic manifest range:
+pg_waldump --quiet --path="$FINAL_PGDATA/pg_wal" --timeline="$timeline" --start="$start_lsn" --end="$end_lsn"
 ```
 
 Repeat `-T` for **every tablespace in D2**, with absolute paths and tool-required escaping for `=`. Mapping's old path is the link target in the **last input**, not the historical server path or F's extracted location. No hardlinks/reflinks/copy-file-range optimization initially. Inputs are never started or mutated after verification. Output PGDATA and mapped tablespace directories must be empty/private and PostgreSQL must remain stopped. `--dry-run` can catch relationship/mapping errors first; it is not a size or integrity oracle. [S3, S8]
 
 **Critical mapping correction:** combine copies the original `tablespace_map`; it does not rewrite it to the `-T` paths. Verify the output first, then remove the already-verified `tablespace_map` before startup so PostgreSQL keeps the explicitly constructed mapped links instead of recreating historical source links. Likewise full-only restore verifies its original manifest/map first, creates trusted final links, then removes that map. Keep original manifests/maps in immutable backup objects and provenance; do not silently modify a native manifest to conceal verification errors. Mapping removal and CNPG recovery-configuration injection are explicit post-verification bootstrap transforms.
 
-For a separate WAL PVC, combine initially writes ordinary `$FINAL_PGDATA/pg_wal`. After output verification, copy its completed files into a private directory on the target WAL PVC, verify copied lengths/hashes, fsync files/directories, remove the old directory and replace it with the trusted final symlink. Use same-filesystem rename only where actually valid. Budget duplicate WAL while crossing volumes. The experiment's `mv` covers local same-filesystem relocation, **not** cross-PVC copy crash safety. CNPG must not start PostgreSQL until relocation/configuration/fsync has completed. Restart of an incomplete restore rebuilds incomplete target contents under the retained hold; no partly transformed output is declared ready.
+For a separate WAL PVC, combine initially writes ordinary `$FINAL_PGDATA/pg_wal`. After output verification, copy its completed files into a private directory on the target WAL PVC, verify copied lengths/hashes, fsync files/directories, remove the old directory and replace it with the trusted final symlink. Use same-filesystem rename only where actually valid. Budget duplicate WAL while crossing volumes. The experiment's `mv` covers local same-filesystem relocation, **not** cross-PVC copy crash safety. CNPG must not start PostgreSQL until relocation/configuration/fsync has completed. Restart may rebuild incomplete contents only after clean target-owner release and fresh admission. A crashed/uncertain guard leaves durable target markers and requires a fresh Cluster/all-fresh target PVCs, not automatic destructive reuse. The main-owned guard covers CNPG preflight through all descendants and sidecar drain (design §3); source holds alone do not serialize local writers. No partly transformed output is declared ready.
 
 Tablespace OIDs present only in F remain input history, not extra output tablespaces. A newly added/dropped tablespace must be mapped from the actual selected backup inventory and CNPG desired volumes. Unknown source links, unmanaged symlinks, overlapping/nested destination roots and missing PVC mappings fail preflight. Tablespace DDL during capture must be reconciled against the actual backup map/inventory, not assumed identical to the preflight query.
 
@@ -184,6 +190,8 @@ bash docs/research/experiments/native/native-workflow.sh "$EXPERIMENT"
 ```
 
 `local-tools.sh` downloads pinned PGDG Ubuntu packages and ICU/io_uring runtime packages without installation. It prefers `dpkg-deb --extract` on Ubuntu; the fallback requires **Python >=3.14** for zstd package members. The actual workflow needs Python >=3.12 for its uncompressed tar fixtures. All remaining native shared libraries must pass the script's complete `ldd` preflight. No TCP listener: a private Unix socket, mode-0700 experiment root, non-root UID, synthetic data, and disposable archive directory. `trap` stops both owned servers; output data/logs remain for collection.
+
+**R0 evidence disclosure:** the historical `native-workflow.sh` below used the verifier's default plain-directory WAL path, hence the host's `/bin/sh`. Those successful research runs did not establish shell-free data-image execution. Preserve the script and historical hashes as evidence, not normative production argv. [Review corrections](review-corrections.md) adds direct-invocation checks; PR F/H must exercise every tar/original/synthetic range with no shell in the data image.
 
 **Local actual results:** Fedora 43, x86_64, Python 3.14.3; matching PG18.6 server/client packages executed successfully on 2026-09-07. The final native workflow ran in `.native-experiment-run3` (an uncommitted temporary directory). All assertions passed:
 

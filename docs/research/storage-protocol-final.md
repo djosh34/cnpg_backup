@@ -151,6 +151,8 @@ A GC invocation issues at most **128 serial destructive requests** or 30 seconds
 
 ### Durable restore through bootstrap, replay, pause and crash
 
+**K1/S2 reconciliation:** this gate protects source objects, not target files. The [main-owned recovery guard](cnpgi-contract-final.md#target-ownership-before-the-main-command-ks2-correction) must own target locks/markers before CNPG preflight through descendant termination and sidecar drain. Source admission permits retry; a poisoned local target requires a fresh Cluster/all-fresh target PVCs, never deletion of another process's target marker. No gate change or source-controller dependency is added.
+
 Before restore selection, target plugin creates a **restore-lifetime** holder identified by target Cluster UID + restore operation UUID. Persist that ID in target recovery configuration **before** triggering bootstrap. This hold survives every bootstrap/replay phase boundary and an idle recovery pause. Parent's pinned CNPG research reports that replay actually occurs inside its recovery Job (including a direct-helper exit-255 workaround); wire these storage lifetime rules to that concrete lifecycle, not the stale assumption that all replay starts after the Job. Each bootstrap/restore-command reader incarnation also acquires a **restore-reader** hold before source reads; a new process never silently adopts or clears an old process's hold. A WAL callback may use its sidecar process holder for its entire source-reader lifetime, not per-file lock traffic.
 
 Normal release is automatic but narrowly evidenced:

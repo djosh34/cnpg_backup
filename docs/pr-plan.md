@@ -72,7 +72,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Acceptance**
 - Real CNPG/Kubernetes tests install/uninstall and restart the manager, validate TLS/cert rotation and repeatedly reconcile without duplicate mounts/sidecars or unwanted pod churn.
 - Multi-instance cluster gets required sidecars; missing credentials or incompatible PG/Kubernetes/CNPG settings fail clearly.
-- Golden configuration and lifecycle tests include source/target repositories, separate WAL volumes and supported tablespace mounts.
+- Golden configuration and lifecycle tests include source/target repositories, separate WAL volumes and supported tablespace mounts. K1/S2: wrap the original recovery argv with PID1 `recovery-guard` before CNPG preflight; locks plus fsynced owner markers cover every target volume. Implement the narrow local Begin/Drain session on the existing Unix socket, startup-probe ordering and Pod/guard/sidecar-incarnation validation. Private PID namespace/descendant reaping and marker-on-crash are tested; no sidecar-lock-only substitute.
 
 **Depends on:** PR A; approved CNPG contract, deployment/configuration and security decisions.
 **Can run in parallel with:** PR B and PR C.
@@ -108,7 +108,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 - Example native CNPG ScheduledBackup; no custom cron loop. Extend real-system fault scenarios and DST to capture/retry/cancellation; archive/backup acknowledgments are checked by the harness.
 
 **Acceptance**
-- Backup and ScheduledBackup produce committed catalog entries whose downloaded artifacts pass the approved integrity workflow and can be restored in the harness.
+- Backup and ScheduledBackup produce committed catalog entries whose downloaded artifacts pass the approved integrity workflow and can be restored in the harness. R0: all `pg_verifybackup` calls use `--no-parse-wal`; Go directly executes `pg_waldump` for every validated manifest range. Test the shell-free data image, including required-WAL rejection; no shell allowlist exception.
 - SIGTERM, OOM/process death, full workspace, missing credentials and timeout after commit give correct status/idempotent retry behavior.
 - Workload writes continue during capture; fixtures with supported tablespaces are not silently omitted.
 - An interrupted full is never chosen as a differential parent or retention replacement.
@@ -124,14 +124,15 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Requirements**
 - S3-only catalog resolution, eligible-backup/timeline selection, secure extraction and original-input verification, custom WAL directory handling, restore-job integration. CNPG replays inside the Job: return the direct wal-fetch helper command, exit1 only on verified allowed absence and exit255 on required gaps/storage/helper failures; stock CNPG error exits are not safe for latest PITR.
 - Respect CNPG recovery targets and PostgreSQL replay semantics; explicit backup selection where target inference is unsupported.
-- Source archive read versus target archive write identity separation, automatic repository-wide deletion protection for plugin-managed restores (including cross-cluster restores; arbitrary external S3 readers are out of scope), durable target plan, serialized target materialization and capacity preflight. Controller releases only stable lifecycle protection after proven Job/Pod completion; uncertain process-reader holders remain.
+- Source archive read versus target archive write identity separation, automatic repository-wide deletion protection for plugin-managed restores (including cross-cluster restores; arbitrary external S3 readers are out of scope), durable target plan, main-owned target guard through preflight/replay/descendant termination and sidecar drain, and capacity preflight. Controller releases only stable lifecycle protection after proven Job/Pod completion; uncertain process-reader holders remain.
 - Introduce manually dispatched, reusable recovery workflow calling the same local harness. It can run the currently implemented full/PITR scenarios with seed, exact image digest and bounded duration, retaining failure evidence. It must not yet claim differential/retention qualification.
 
 **Acceptance**
 - Recover latest, timestamp and LSN targets plus explicit backup ID; restore-point/XID behavior matches the approved support contract.
 - Query before/after-target sentinels and recover a deliberately dropped table to a pre-drop target. Require a target beyond the selected backup's bundled WAL, prove remote post-backup WAL replay, and fail recovery when a required post-backup archive segment is missing/corrupt.
 - Restore into a fresh namespace/cluster after deleting source Kubernetes catalog objects; no source database connection is required.
-- Missing/corrupt required data, unreachable explicit target and transient S3 failure cannot yield falsely successful recovery.
+- Missing/corrupt required data, unreachable explicit target and transient S3 failure cannot yield falsely successful recovery. S1: intact bundled WAL/no archive duplicate recovers with ordinary local fallback; same-final-segment post-EndLSN archive data takes preference over padding. Required remote gaps and TLS/auth/transport/corruption remain 255 with local bundles present.
+- K1/S2: paused old main, delayed RestoreResponse, replay and shutdown block replacement preflight without any target mutation. Sidecar/guard crash poisons markers; detached PG children and outstanding sidecar writes block clean release. Close admission/drain before release; stale tuples cannot write after a new owner. Test fresh-Cluster/all-fresh-PVC retry after poison. Model-only evidence does not satisfy these real CNPG/PID-namespace regressions.
 
 **Depends on:** PR F; approved recovery and reader coordination decisions.
 **Not included:** in-place destructive recovery, plugin reimplementation of WAL replay.
@@ -143,7 +144,7 @@ Each PR includes its own documentation and tests. [testing.md](testing.md) defin
 **Requirements**
 - Select an eligible full root and preserve its exact manifest; invoke native incremental capture and record direct full parent.
 - Validate WAL summary availability/configuration and PG identity/checksum/timeline restrictions. A requested differential fails on invalid prerequisites; never run a replacement full backup or offer a fallback setting. Extend per-type last-success/failure metrics and alerts.
-- Download/verify full+differential, combine and verify synthetic full, then reuse CNPG PITR path.
+- Download/verify full+differential, combine and verify synthetic full, then reuse CNPG PITR path. R0 applies independently to every original and synthetic manifest: `pg_verifybackup --no-parse-wal` plus direct Go `pg_waldump` for each validated range, with negative controls and no data-image shell.
 - Report required workspace and actual transfer sizes; never quietly change a requested mode.
 
 **Acceptance**
