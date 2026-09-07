@@ -12,7 +12,7 @@ Read before **creating, waiting for, resuming or cleaning up** a child. Use Pase
 
 ## Verified interface and model selection
 
-Inspect installed help if versions change. This environment provides `paseo run`, `wait`, `logs`, `inspect` and `archive`. `paseo wait --timeout` uses seconds; `run --wait-timeout` accepts a duration. Background run returns an agent ID; `wait` reaching idle does not itself prove task success.
+Inspect installed help if versions change. This environment provides `paseo run`, `wait`, `logs`, `inspect` and `archive`. `paseo wait --timeout` uses seconds; `run --wait-timeout` accepts a duration. Background run returns an agent ID; `wait` reaching idle does not itself prove task success. `send` waits by default: use `paseo send ID --no-wait ...` for a message to running work, then observe the original ID normally.
 
 Planning preflight successfully dispatched two independent review agents, retrieved their reports, and verified `Archived: true` for both after cleanup. This verifies the local Paseo mechanism, not design readiness or product correctness.
 
@@ -20,12 +20,16 @@ Every child: `--provider pi --model openai-codex/gpt-6-astra --thinking high`. C
 
 Paseo may require a daemon password via `PASEO_PASSWORD`. Resolve existing local credentials without printing them or putting them in command arguments, repo files, prompts or GitHub. Keep daemon control credentials in the orchestrator's environment; do not explicitly forward them through child `--env`. Do not reset/restart the user's daemon or change its password as an authentication workaround.
 
+For an isolated existing worktree, first register/select its **explicit workspace**. The installed agent-scoped CLI can ignore `--cwd` and inherit the caller's workspace; finalization reproduced this and verified explicit `--workspace` selects the intended Cwd. Inspect the returned workspace/agent Cwd before writing. Keep absolute-path/worktree ownership in the brief.
+
 Illustrative lifecycle, with an already-authenticated CLI and a reviewed brief (fill placeholders; this is not a task runner to implement):
 
 ```sh
+paseo workspace create --isolation local --path /absolute/task/worktree --json
+# Use the returned workspaceId below; no guessed ID.
 paseo run --background --json \
   --provider pi --model openai-codex/gpt-6-astra --thinking high \
-  --cwd /absolute/task/worktree \
+  --workspace WORKSPACE_ID \
   --title 'CNPG: task name' \
   --label cnpg_effort=stable-effort-id --label role=review \
   'Read the task brief at /absolute/private/brief.md. Complete only that task. Do not spawn agents.'

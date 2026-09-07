@@ -83,6 +83,7 @@ Repeat through the entire graph. Exercise recovery continuously, not just at the
 - After repeated no-progress attempts, switch to focused diagnosis/fresh adjudication rather than blind reruns. Continue independent unblocked work. Archive failed/superseded workers before replacing them.
 - Unexpected infrastructure/authentication loss or a proven contradiction that prevents safe delivery is a genuine blocker, not a planned human approval step. Repair within existing authority, retain evidence and stop the affected operation if no safe path exists; never weaken durability, disable failing tests or invent permission to claim completion.
 - Checkpoint before context/time exhaustion and archive owned idle/completed children. Resume from tracker/git state in another Paseo thread if necessary. Do not promise that one finite context can hold the entire project.
+- A fresh **orchestration** context may take exclusive dispatch ownership from a supervising planning context; this is not recursive worker delegation. Exactly one dispatcher is active. If that successor is itself an unarchived child, count it in the shared five slots and allow at most four additional workers/reviewers. It returns a durable checkpoint with its own children collected/archived; the supervisor then collects/archives/verifies the successor before launching a replacement. Workers/reviewers never dispatch children.
 
 ## Launch prompt — valid only after READY
 
