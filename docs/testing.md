@@ -30,7 +30,7 @@ Use `CGO_ENABLED=0` for production builds and runtime-dependency validation. A s
 Run the cheapest distinguishing check **locally before pushing an expensive matrix**, using the same `hack/test` and test modules as CI:
 
 ```sh
-./hack/test harness                         # Python fixtures/oracles, metrics self-test, generated CRD; no downloads/Docker
+./hack/test harness                         # Python/curl loopback fixtures, metrics self-test, CRD; no tool downloads/Docker
 ./hack/test harness test_lifecycle_harness  # targeted unittest module, class or method
 ./hack/test unit                            # above + pinned Go vet/unit/DST corpus and Promtool; no native/image build
 ./hack/test fast                            # also native input/build/runtime-closure checks

@@ -39,7 +39,7 @@ if [[ ${0##*/} = python3 && $1 = hack/test_tools.py ]]; then printf '%s\\n' "$PR
             calls = (root / 'calls').read_text() if (root / 'calls').exists() else ''
             return result.returncode, calls
 
-    def test_harness_needs_only_python_and_no_bootstrap(self):
+    def test_harness_does_not_bootstrap_toolchains(self):
         code, calls = self.invoke('harness')
         self.assertEqual(code, 0)
         self.assertIn('unittest discover', calls)

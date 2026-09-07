@@ -7,7 +7,7 @@ storage, retention or CNPG implementation is included.
 
 ## Run
 
-Start with the [local-first feedback ladder](testing.md#local-first-feedback). `harness` needs only bash/Python and runs fixture/oracle tests without downloads; `unit` adds the pinned Go toolchain and Promtool, not native inputs. Full profiles need Linux amd64, non-root, disk-backed checkout with roughly 3 GiB free, plus space for the chosen campaign. Needs bash,
+Start with the [local-first feedback ladder](testing.md#local-first-feedback). `harness` needs bash, Python and curl (disposable loopback HTTP fixtures), and runs fixture/oracle tests without tool downloads; `unit` adds the pinned Go toolchain and Promtool, not native inputs. Full profiles need Linux amd64, non-root, disk-backed checkout with roughly 3 GiB free, plus space for the chosen campaign. Needs bash,
 curl, Python >=3.12 with dpkg-deb (Ubuntu hosted runner), or Python >=3.14 for
 rootless zstd package extraction. Host PostgreSQL test execution also requires
 ordinary distro libraries (recorded by ldd); these host dependencies are not
