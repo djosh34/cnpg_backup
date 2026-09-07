@@ -26,7 +26,7 @@ func TestWALRemainsServiceableUnderSaturatedArtifactTransfers(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer cleanup(f)
+		defer func() { f.Close(); os.Remove(f.Name()) }()
 		const size = s3store.PartSize + 1
 		if e = f.Truncate(size); e != nil {
 			t.Fatal(e)

@@ -6,12 +6,45 @@ import (
 	"testing"
 
 	wire "github.com/cloudnative-pg/cnpg-i/pkg/wal"
+	"github.com/djosh34/cnpg_backup/internal/configuration"
 	"github.com/djosh34/cnpg_backup/internal/repository"
 	"github.com/djosh34/cnpg_backup/internal/s3store"
 	files "github.com/djosh34/cnpg_backup/internal/wal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestWALCapacityAssignsOnlyActualOutputs(t *testing.T) {
+	for _, directory := range []string{pgdataPath + "/pg_wal", "/var/lib/postgresql/wal/pg_wal"} {
+		for _, archive := range []bool{true, false} {
+			budgets := []configuration.FilesystemBudget{
+				{Mount: workspacePath, LimitBytes: 1 << 30, RequiredBytes: 1 << 29},
+				{Mount: "/var/lib/postgresql/data", LimitBytes: 1 << 30, RequiredBytes: 1 << 29},
+				{Mount: "/var/lib/postgresql/tablespaces/fast", LimitBytes: 1 << 30, RequiredBytes: 1 << 29},
+			}
+			walMount := "/var/lib/postgresql/data"
+			if directory != pgdataPath+"/pg_wal" {
+				walMount = "/var/lib/postgresql/wal"
+				budgets = append(budgets, configuration.FilesystemBudget{Mount: walMount, LimitBytes: 1 << 30, RequiredBytes: 1 << 29})
+			}
+			if err := walCapacity(budgets, directory, 16<<20, archive); err != nil {
+				t.Fatal(err)
+			}
+			for _, b := range budgets {
+				var want int64
+				if b.Mount == workspacePath {
+					want = 118 << 20
+				}
+				if !archive && b.Mount == walMount {
+					want = 48 << 20
+				}
+				if b.RequiredBytes != want || b.LimitBytes != 1<<30 {
+					t.Errorf("archive=%v directory=%s: %+v, want allocation=%d with finite limit unchanged", archive, directory, b, want)
+				}
+			}
+		}
+	}
+}
 
 func walCluster(t *testing.T) []byte {
 	t.Helper()

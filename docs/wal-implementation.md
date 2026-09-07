@@ -10,6 +10,9 @@ This is WAL delivery, **not full backup/materialization, PITR or release qualifi
   private disk files, hashes stored/raw bytes, and uses conditional single PUT.
   It verifies remote bytes even after a successful PUT. A lost response or412
   succeeds only after full stored/raw verification against the source digest.
+  Upload, verification and download spools are unlinked immediately after open;
+  FD-only consumers retain seekability, and Linux reclaims their blocks on death.
+  Failure to unlink fails the operation before writing scratch or acknowledging.
   Different raw content is `WALContentConflict`; a permanent retired slot never
   becomes successful archive or ordinary absence. Compression changes do not
   change identical-raw retry identity. No ETag-as-checksum or HEAD-then-PUT.
@@ -42,6 +45,13 @@ This is WAL delivery, **not full backup/materialization, PITR or release qualifi
   RECOVERYHISTORY. It never follows the old destination symlink or reads adjacent
   segments, and has no negative cache/prefetch. Failure never acknowledges a
   partially verified file; directory-sync uncertainty is still failure.
+  Publication uses one fixed `.cnpg-wal-restore` temporary per physical WAL root.
+  A nonblocking exclusive flock on the open directory inode covers stale-temp
+  removal, download, rename and sync. Contending callbacks fail/retry without
+  touching the active writer. A dead process releases the lock; the next owner
+  reclaims only that fixed private name. No prefix sweep, PID/age heuristic or
+  recovery-guard/reader-holder takeover is involved. Old-version random temp
+  names and unrelated files are deliberately not swept.
 - Only a fully consumed authenticated GET `NoSuchKey` maps to NotFound. A bare
   HEAD404 is followed by bounded GET for classification; a missing repository or
   gate is **not** a WAL miss. TLS/auth/transport/corruption/retirement/local errors
@@ -61,8 +71,12 @@ cleanup DELETE/abort or premature acknowledgment exists.
 
 Kernel finite-filesystem checks remain mandatory. WAL reserves up to six
 segment-plus1MiB workspace files for two concurrent archive/verification paths,
-plus16MiB overhead, and two output segments plus16MiB on the target WAL filesystem.
-These are WAL-only bounds, not F's database-sized native reservations. The actual
+plus16MiB overhead. Only Restore reserves two output segments plus16MiB on the
+physical WAL filesystem. Archive and its earlier native metadata probe validate
+finite source backing/identity without reserving unwritten output on PGDATA,
+WAL or tablespaces. This permits backlog drainage under source disk pressure
+with healthy storage and sufficient independent workspace. These are WAL-only
+bounds, not F's database-sized native reservations. The actual
 finite filesystem remains the hard stop under competing consumers. Upload work
 uses configured WAL timeout (default120s), restore60s; shorter caller deadlines
 win. Invalid trust/capacity never changes startup/Identity liveness into a
@@ -94,7 +108,13 @@ metric ownership.
 byte oracles, gzip/truncation/multiple-member/corruption rejection, path/symlink
 confinement, local failure, retired slots, lost/killed requests, TLS and transient
 classification, immutable writer binding, fixed-seed72-operation replay and
-independent artifact-saturation barriers. A separate controlled-storage DST
+independent artifact-saturation barriers. Regressions SIGKILL three subprocesses
+at each upload/verification/download/restore I/O boundary, assert zero surviving
+workspace WAL files/allocated blocks, at most one target publication temporary,
+unchanged destination sentinels, and successful byte-identical retry. A live
+contending restore cannot delete the active writer's temporary or foreign files.
+These use the actual module with controlled storage, not a remote durability
+claim. A separate controlled-storage DST
 executes each of three24-operation traces twice, preserves durable state across
 fresh Repository opens, and compares identical traces and independent raw-byte
 oracles. A dishonest test store acknowledging nonexistent data is a negative
@@ -120,7 +140,11 @@ substitutes for the product's unimplemented primary-recovery helper.
 The E matrix requires segment/duplicate/conflict, forced failover/history routing,
 a partial-PUT barrier followed by actual sidecar SIGKILL/no `.done`/fresh-incarnation
 retry, transient/TLS non-NotFound, real bounded WAL-filesystem ENOSPC/no successful
-restore and unchanged destination, and actual backlog/failure metrics. The proxy
+restore and unchanged destination, and actual backlog/failure metrics. The
+low-space regression restores S3 while WAL free space remains below Restore's
+48MiB reservation (16MiB segments), requires the actual CNPG `.ready` backlog to
+become `.done`, and verifies Restore still fails without changing its sentinel.
+The proxy
 changes only disposable test traffic; production has no fault controls. MinIO data
 survives proxy and sidecar failures. First-failure evidence is retained rather than
 silently rerunning failed scenarios.

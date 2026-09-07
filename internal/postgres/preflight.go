@@ -157,6 +157,11 @@ func checkFromRoot(ctx context.Context, root *os.Root, wal bool) error {
 	}
 	workspace := false
 	for i := range budgets {
+		if wal {
+			// Archive's metadata probe only reads source filesystems. Keep
+			// their finite backing checks, not any projected output budget.
+			budgets[i].RequiredBytes = 0
+		}
 		if budgets[i].Mount == "/cnpg-backup/work" {
 			budgets[i].RequiredBytes = 1 << 20
 			workspace = true

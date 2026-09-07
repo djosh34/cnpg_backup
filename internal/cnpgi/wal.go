@@ -207,18 +207,8 @@ func openWAL(ctx context.Context, cluster []byte, archive bool) (result *walOper
 	if configuration.StrictJSON(b, &budgets) != nil {
 		return nil, files.ErrInvalid
 	}
-	found := false
-	for i := range budgets {
-		if budgets[i].Mount == workspacePath {
-			budgets[i].RequiredBytes = 6*(control.WALSegmentBytes+(1<<20)) + (16 << 20)
-			found = true
-		}
-		if budgets[i].Mount == filepath.Dir(p.WALDirectory) || p.WALDirectory == pgdataPath+"/pg_wal" && budgets[i].Mount == filepath.Dir(pgdataPath) {
-			budgets[i].RequiredBytes = 2*control.WALSegmentBytes + (16 << 20)
-		}
-	}
-	if !found {
-		return nil, files.ErrInvalid
+	if e = walCapacity(budgets, p.WALDirectory, control.WALSegmentBytes, archive); e != nil {
+		return nil, e
 	}
 	if e = configuration.CheckCapacity(budgets); e != nil {
 		return nil, e
@@ -265,6 +255,30 @@ func openWAL(ctx context.Context, cluster []byte, archive bool) (result *walOper
 	}
 	return &walOperation{files: files.Files{Repository: repo, Store: store, Workspace: workspacePath, Compression: snap.Repository.Spec.Compression}, root: local, store: store, placement: p, ctx: ctx, cancel: cancel, single: snap.Repository.Spec.IO.WALUploads == 1}, nil
 }
+
+// walCapacity assigns only this operation's allocations; CheckCapacity still
+// validates every declared physical filesystem, including read-only inputs.
+func walCapacity(budgets []configuration.FilesystemBudget, directory string, segmentBytes int64, archive bool) error {
+	workspace, wal := false, false
+	for i := range budgets {
+		budgets[i].RequiredBytes = 0 // source data/WAL/tablespaces are never staging
+		if budgets[i].Mount == workspacePath {
+			budgets[i].RequiredBytes = 6*(segmentBytes+(1<<20)) + (16 << 20)
+			workspace = true
+		}
+		if budgets[i].Mount == filepath.Dir(directory) || directory == pgdataPath+"/pg_wal" && budgets[i].Mount == filepath.Dir(pgdataPath) {
+			wal = true
+			if !archive {
+				budgets[i].RequiredBytes = 2*segmentBytes + (16 << 20)
+			}
+		}
+	}
+	if !workspace || !wal {
+		return files.ErrInvalid
+	}
+	return nil
+}
+
 func acquireWAL(ctx context.Context) error {
 	select {
 	case walCallbacks <- struct{}{}:

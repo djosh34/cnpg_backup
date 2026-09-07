@@ -15,6 +15,7 @@ import (
 
 	"github.com/djosh34/cnpg_backup/internal/repository"
 	"github.com/djosh34/cnpg_backup/internal/s3store"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -60,7 +61,20 @@ func (w Files) Limits(name string) (key string, rawMax int64, err error) {
 
 func ambiguous(e error) bool                       { var se *s3store.Error; return !errors.As(e, &se) || se.Ambiguous }
 func sum(h interface{ Sum([]byte) []byte }) string { return hex.EncodeToString(h.Sum(nil)) }
-func cleanup(f *os.File)                           { name := f.Name(); f.Close(); os.Remove(name) }
+
+// The file interfaces consume FDs, never names. Unlink before any data is
+// written so Linux releases scratch even on SIGKILL; no startup sweep needed.
+func spoolFile(workspace, pattern string) (*os.File, error) {
+	f, err := os.CreateTemp(workspace, pattern)
+	if err != nil {
+		return nil, err
+	}
+	if err = os.Remove(f.Name()); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
 
 type contextReader struct {
 	ctx context.Context
@@ -95,11 +109,11 @@ func (w Files) Archive(ctx context.Context, name string, source *os.File) error 
 	if !st.Mode().IsRegular() || st.Size() < 1 || st.Size() > max || len(name) == 24 && st.Size() != max {
 		return ErrInvalid
 	}
-	spool, e := os.CreateTemp(w.Workspace, "wal-upload-*")
+	spool, e := spoolFile(w.Workspace, "wal-upload-*")
 	if e != nil {
 		return ErrLocal
 	}
-	defer cleanup(spool)
+	defer spool.Close()
 	raw, stored := sha256.New(), sha256.New()
 	out := io.MultiWriter(spool, stored)
 	var compressed *gzip.Writer
@@ -139,11 +153,11 @@ func (w Files) Archive(ctx context.Context, name string, source *os.File) error 
 	// This read also verifies newly accepted publication; metadata is never an
 	// independent byte oracle. A canceled/failed upload without verified remote
 	// contents is not success. No mutation is retried here.
-	verified, e := os.CreateTemp(w.Workspace, "wal-verify-*")
+	verified, e := spoolFile(w.Workspace, "wal-verify-*")
 	if e != nil {
 		return ErrLocal
 	}
-	defer cleanup(verified)
+	defer verified.Close()
 	got, e := w.retrieve(ctx, name, verified)
 	if e != nil {
 		if putErr != nil && s3store.Is(e, s3store.NotFound) {
@@ -196,11 +210,11 @@ func (w Files) retrieve(ctx context.Context, name string, out *os.File) (s3store
 	if e != nil {
 		return raw, e
 	}
-	spool, e := os.CreateTemp(w.Workspace, "wal-download-*")
+	spool, e := spoolFile(w.Workspace, "wal-download-*")
 	if e != nil {
 		return raw, ErrLocal
 	}
-	defer cleanup(spool)
+	defer spool.Close()
 	got, e := w.Store.DownloadWAL(ctx, key, spool, s3store.Integrity{Size: info.Size, SHA256: info.Metadata["cnpg-stored-sha256"]})
 	if e != nil {
 		return raw, e
@@ -269,7 +283,22 @@ func (w Files) Restore(ctx context.Context, name string, root *os.Root, destinat
 	if destination != name && destination != "RECOVERYXLOG" && destination != "RECOVERYHISTORY" {
 		return ErrInvalid
 	}
-	tmp := ".cnpg-wal-" + repository.UUID()
+	// One fixed publication temporary per physical root bounds crash leftovers.
+	// Lock the directory inode, not the replaceable temp/final inode. Only the
+	// lock holder may reclaim this name; a concurrent callback fails/retries
+	// without touching the active writer. This is not recovery-guard admission.
+	dir, e := root.Open(".")
+	if e != nil {
+		return ErrLocal
+	}
+	defer dir.Close() // releases flock after temp cleanup, including on process death
+	if unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB) != nil {
+		return ErrLocal
+	}
+	const tmp = ".cnpg-wal-restore"
+	if e = root.Remove(tmp); e != nil && !errors.Is(e, os.ErrNotExist) {
+		return ErrLocal
+	}
 	f, e := root.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if e != nil {
 		return ErrLocal
@@ -287,11 +316,6 @@ func (w Files) Restore(ctx context.Context, name string, root *os.Root, destinat
 	if e = root.Rename(tmp, destination); e != nil {
 		return ErrLocal
 	}
-	dir, e := root.Open(".")
-	if e != nil {
-		return ErrLocal
-	}
-	defer dir.Close()
 	if dir.Sync() != nil {
 		return ErrLocal
 	}
