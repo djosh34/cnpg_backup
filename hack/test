@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# One local/CI entry point. All state is user-owned and disk-backed in checkout.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+profile=${1:-fast}
+shift || true
+case "$profile" in fast|integration) ;; *) echo 'usage: hack/test fast|integration [--seed N] [--images]' >&2; exit 2;; esac
+export CNPG_BUILD_CACHE=${CNPG_BUILD_CACHE:-"$PWD/.work/tools"}
+python3 hack/bootstrap.py
+export PATH="$CNPG_BUILD_CACHE/go/bin:$PATH" CGO_ENABLED=0 GOTOOLCHAIN=local
+export GOOS=linux GOARCH=amd64 GOAMD64=v1 GOEXPERIMENT='' GOFLAGS='' GOWORK=off
+mkdir -p .work/tmp artifacts/fast
+export GOTMPDIR="$PWD/.work/tmp"
+[[ -z $(gofmt -l cmd hack/*/*.go) ]] || { echo 'gofmt required' >&2; exit 1; }
+go vet ./... 2>&1 | tee artifacts/fast/vet.log
+go test -count=1 -timeout=120s ./... 2>&1 | tee artifacts/fast/unit.log
+python3 hack/build.py
+python3 hack/checkbuild.py | tee artifacts/fast/image-root-check.log
+python3 --version > artifacts/fast/build-host.txt
+uname -a >> artifacts/fast/build-host.txt
+if command -v dpkg-deb >/dev/null; then dpkg-deb --version >> artifacts/fast/build-host.txt; fi
+cp build/inputs.lock.json artifacts/fast/
+cp build/out/{go-linked.json,go-modules.json,go-version.txt,version.txt,manager-files.json,pg18-files.json} artifacts/fast/
+cp build/out/pg18/usr/share/cnpg-backup/{native-files.json,native-packages.json} artifacts/fast/
+if [[ $profile = integration ]]; then
+  for arg in "$@"; do
+    if [[ $arg = --images ]]; then
+      python3 hack/images.py
+      cp build/out/{images.json,manager-export.json,pg18-export.json,manager-inspect.json,pg18-inspect.json} artifacts/fast/
+      break
+    fi
+  done
+  python3 hack/recovery.py "$@"
+fi

@@ -1,0 +1,8 @@
+**
+!build/
+!build/Dockerfile
+!build/out/
+!build/out/manager/
+!build/out/manager/**
+!build/out/pg18/
+!build/out/pg18/**
