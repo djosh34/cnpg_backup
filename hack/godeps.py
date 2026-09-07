@@ -22,7 +22,15 @@ def records(text):
         text = text[end:]
 
 
+def isolate_output(out):
+    # Copied license files may themselves end in .go and module@version paths
+    # are not main-module package paths. Preserve their bytes, but stop ./...
+    # walking generated evidence and image roots on later vet/test/race runs.
+    (out / 'go.mod').write_text('module cnpg-backup-build-output\n\ngo 1.27.1\n')
+
+
 def inventory(out):
+    isolate_output(out)
     scopes = {
         'executable': ['-deps', './cmd/cnpg-backup'],
         'production': ['-deps', './cmd/...', './internal/...'],

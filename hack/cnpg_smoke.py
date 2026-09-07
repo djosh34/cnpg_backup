@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -87,27 +88,40 @@ def loop_diagnostics(label):
     (OUT / ('loops-' + label + '.log')).write_text(text[-128000:])
 
 
+def loop_device(value):
+    # util-linux decorates a kernel-known loop with " (lost)" when its device
+    # node is absent in this /dev namespace. Validate, don't use that display
+    # suffix as a device path or invent a different/free minor.
+    match = re.fullmatch(r'(/dev/loop[0-9]+)(?: \(lost\))?', value.strip())
+    if not match:
+        raise RuntimeError('unexpected losetup device response')
+    return match.group(1)
+
+
 def provision_filesystem(path):
     # mount -o loop relies on container udev creating new loop device nodes.
     # kind has no such udev. Ask the kernel for a free minor, expose its actual
     # sysfs major/minor, then explicitly attach and mount. Never guess a minor,
     # detach a foreign loop, or fall back to an unbounded directory.
+    device = loop_device(run('docker', 'exec', NAME + '-control-plane', 'losetup', '--find'))
     script = r'''set -eu
 path="$1"
+device="$2"
 truncate -s 1G "$path.img"
 mkfs.ext4 -q -F "$path.img"
 mkdir "$path"
-device=$(losetup --find)
 if [ ! -b "$device" ]; then
     numbers=$(cat "/sys/class/block/${device##*/}/dev")
     mknod "$device" b "${numbers%:*}" "${numbers#*:}"
 fi
-loop=$(losetup --find --show "$path.img")
-echo "FINITE_FS backing=$path.img device=$loop"
-mount "$loop" "$path"
+# An intervening host allocator causes a safe failure, never reassignment of
+# a busy device. losetup without --detach refuses an already-associated loop.
+losetup "$device" "$path.img"
+echo "FINITE_FS backing=$path.img device=$device"
+mount "$device" "$path"
 findmnt -n -o SOURCE,FSTYPE,SIZE --target "$path"
 '''
-    return run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec', script, 'finite-fs', path)
+    return run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec', script, 'finite-fs', path, device)
 
 
 def bounded_workspaces():
