@@ -205,6 +205,14 @@ func RunManager(ctx context.Context, revision string) error {
 		return err
 	}
 	defer listener.Close()
+	metricsListener, err := net.Listen("tcp", ":9091")
+	if err != nil {
+		return err
+	}
+	defer metricsListener.Close()
+	metrics := newBackupMetrics()
+	metricsServer := &http.Server{Handler: metrics, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 << 10}
+	defer metricsServer.Close()
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 		return configuration.LoadManagerTLS(managerTLSPath, config.ClientName)
 	}}
@@ -216,16 +224,16 @@ func RunManager(ctx context.Context, revision string) error {
 	statusCtx, stopStatus := context.WithCancel(ctx)
 	defer stopStatus()
 	go api.RunRepositoryStatus(statusCtx)
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			server.Stop()
-		case <-done:
-		}
-	}()
-	err = server.Serve(listener)
-	close(done)
+	go api.runBackupHistory(statusCtx, metrics)
+	go newBackupObserver(api, metrics).run(statusCtx)
+	defer server.Stop()
+	served := make(chan error, 2)
+	go func() { served <- metricsServer.Serve(metricsListener) }()
+	go func() { served <- server.Serve(listener) }()
+	select {
+	case <-ctx.Done():
+	case err = <-served:
+	}
 	if ctx.Err() != nil || errors.Is(err, grpc.ErrServerStopped) {
 		return nil
 	}
