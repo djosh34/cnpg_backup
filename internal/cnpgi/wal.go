@@ -97,15 +97,47 @@ func walBasename(path string, p WALPlacement) (string, error) {
 	return filepath.Base(path), nil
 }
 
+// Reject filename/path syntax before any native command, disk or S3 access.
+func validateWALPaths(definition []byte, path, source string, restore bool) error {
+	c, e := ParseCluster(definition)
+	if e != nil {
+		return files.ErrInvalid
+	}
+	if _, _, e = c.Repositories(); e != nil {
+		return files.ErrInvalid
+	}
+	directory := pgdataPath + "/pg_wal"
+	if len(c.Spec.WALStorage) > 0 && string(c.Spec.WALStorage) != "null" {
+		directory = "/var/lib/postgresql/wal/pg_wal"
+	}
+	name, e := walBasename(path, WALPlacement{WALDirectory: directory})
+	if e != nil {
+		return e
+	}
+	if !restore {
+		source = name
+	}
+	if !repository.ValidWALFilename(source) {
+		return files.ErrInvalid
+	}
+	if restore && name != source && name != "RECOVERYXLOG" && name != "RECOVERYHISTORY" {
+		return files.ErrInvalid
+	}
+	return nil
+}
+
 type walOperation struct {
 	files     files.Files
 	root      *os.Root
 	store     *s3store.Store
 	placement WALPlacement
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
-func (o *walOperation) close() { o.root.Close(); o.store.Close() }
-func openWAL(ctx context.Context, cluster []byte, archive bool) (*walOperation, error) {
+func (o *walOperation) close() { o.cancel(); o.root.Close(); o.store.Close() }
+func openWAL(ctx context.Context, cluster []byte, archive bool) (result *walOperation, err error) {
+	started := time.Now()
 	root, e := configuration.Projection(projectionPath)
 	if e != nil {
 		return nil, e
@@ -132,9 +164,19 @@ func openWAL(ctx context.Context, cluster []byte, archive bool) (*walOperation, 
 	if e != nil {
 		return nil, e
 	}
+	budget := 60 * time.Second
+	if archive {
+		budget, _ = time.ParseDuration(snap.Repository.Spec.IO.WALUploadTimeout)
+	}
+	ctx, cancel := context.WithDeadline(ctx, started.Add(budget))
+	defer func() {
+		if result == nil {
+			cancel()
+		}
+	}()
 	var control postgres.Control
 	if archive {
-		control, e = postgres.CheckWAL(ctx, projectionPath)
+		control, e = postgres.CheckWAL(ctx, root)
 	} else {
 		control, e = postgres.ReadControl(ctx)
 	}
@@ -152,10 +194,10 @@ func openWAL(ctx context.Context, cluster []byte, archive bool) (*walOperation, 
 	found := false
 	for i := range budgets {
 		if budgets[i].Mount == workspacePath {
-			budgets[i].RequiredBytes = 4*(control.WALSegmentBytes+(1<<20)) + (16 << 20)
+			budgets[i].RequiredBytes = 6*(control.WALSegmentBytes+(1<<20)) + (16 << 20)
 			found = true
 		}
-		if budgets[i].Mount == filepath.Dir(p.WALDirectory) {
+		if budgets[i].Mount == filepath.Dir(p.WALDirectory) || p.WALDirectory == pgdataPath+"/pg_wal" && budgets[i].Mount == filepath.Dir(pgdataPath) {
 			budgets[i].RequiredBytes = 2*control.WALSegmentBytes + (16 << 20)
 		}
 	}
@@ -205,7 +247,7 @@ func openWAL(ctx context.Context, cluster []byte, archive bool) (*walOperation, 
 		}
 		return fail(e)
 	}
-	return &walOperation{files: files.Files{Repository: repo, Store: store, Workspace: workspacePath, Compression: snap.Repository.Spec.Compression}, root: local, store: store, placement: p}, nil
+	return &walOperation{files: files.Files{Repository: repo, Store: store, Workspace: workspacePath, Compression: snap.Repository.Spec.Compression}, root: local, store: store, placement: p, ctx: ctx, cancel: cancel}, nil
 }
 func acquireWAL(ctx context.Context) error {
 	select {
@@ -218,6 +260,9 @@ func acquireWAL(ctx context.Context) error {
 func (*WALService) Archive(ctx context.Context, r *wire.WALArchiveRequest) (*wire.WALArchiveResult, error) {
 	if r == nil || len(r.Parameters) != 0 {
 		return nil, walError(files.ErrInvalid)
+	}
+	if e := validateWALPaths(r.ClusterDefinition, r.SourceFileName, "", false); e != nil {
+		return nil, walError(e)
 	}
 	// Even false/absent optional empty checks cannot bypass immutable ownership.
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
@@ -240,7 +285,7 @@ func (*WALService) Archive(ctx context.Context, r *wire.WALArchiveRequest) (*wir
 			source, e = o.root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 			if e == nil {
 				defer source.Close()
-				e = o.files.Archive(ctx, name, source)
+				e = o.files.Archive(o.ctx, name, source)
 			}
 		}
 	}
@@ -255,6 +300,9 @@ func (*WALService) Restore(ctx context.Context, r *wire.WALRestoreRequest) (*wir
 	if r == nil || len(r.Parameters) != 0 || r.Mode < wire.WALRestoreRequest_MODE_UNSPECIFIED || r.Mode > wire.WALRestoreRequest_MODE_REWIND {
 		return nil, walError(files.ErrInvalid)
 	}
+	if e := validateWALPaths(r.ClusterDefinition, r.DestinationFileName, r.SourceWalName, true); e != nil {
+		return nil, walError(e)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	if e := acquireWAL(ctx); e != nil {
@@ -268,7 +316,7 @@ func (*WALService) Restore(ctx context.Context, r *wire.WALRestoreRequest) (*wir
 	defer o.close()
 	name, e := walBasename(r.DestinationFileName, o.placement)
 	if e == nil {
-		e = o.files.Restore(ctx, r.SourceWalName, o.root, name)
+		e = o.files.Restore(o.ctx, r.SourceWalName, o.root, name)
 	}
 	if e != nil {
 		return nil, walError(e)

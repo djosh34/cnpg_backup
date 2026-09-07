@@ -27,14 +27,31 @@ type object struct {
 	metadata map[string]string
 }
 type backend struct {
-	mu      sync.Mutex
-	objects map[string]object
-	fault   string
-	put     int
+	mu           sync.Mutex
+	objects      map[string]object
+	fault        string
+	put          int
+	endpoint     string
+	partsStarted chan struct{}
+	releaseParts chan struct{}
 }
 
-func hash(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
+func hash(b []byte) string               { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
+func (b *backend) setFault(fault string) { b.mu.Lock(); defer b.mu.Unlock(); b.fault = fault }
 func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" && r.URL.Query().Has("uploads") {
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprintf(w, `<InitiateMultipartUploadResult><Bucket>bucket</Bucket><Key>%s</Key><UploadId>fixture-upload</UploadId></InitiateMultipartUploadResult>`, strings.TrimPrefix(r.URL.Path, "/bucket/"))
+		return
+	}
+	if r.Method == "PUT" && r.URL.Query().Get("uploadId") != "" {
+		b.partsStarted <- struct{}{}
+		select {
+		case <-b.releaseParts:
+		case <-r.Context().Done():
+		}
+		return
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	key := strings.TrimPrefix(r.URL.Path, "/bucket/")
@@ -112,6 +129,7 @@ func setup(t testing.TB, size int64) (Files, *backend) {
 	gate, _ := json.Marshal(repository.Gate{Schema: 1, RepositoryID: id.RepositoryID, Generation: "0", Nonce: repository.UUID(), Holders: []repository.Holder{}})
 	b := &backend{objects: map[string]object{"v1/" + id.RepositoryID + "/repository.json": {b: identity}, "v1/" + id.RepositoryID + "/gate.json": {b: gate}}}
 	server := httptest.NewTLSServer(b)
+	b.endpoint = server.URL
 	t.Cleanup(server.Close)
 	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
 	store, e := s3store.New(s3store.Config{Endpoint: server.URL, Bucket: "bucket", Signature: "v4", Addressing: "path", Region: "us-east-1", AccessKey: "fixture", SecretKey: "fixture", CA: ca})
@@ -219,7 +237,7 @@ func TestFaultsNeverAcknowledgeOrPublish(t *testing.T) {
 			name := "000000010000000000000001"
 			ctx := context.Background()
 			src := source(t, bytes.Repeat([]byte{3}, 1<<20))
-			b.fault = fault
+			b.setFault(fault)
 			e := w.Archive(ctx, name, src)
 			if fault == "lost" {
 				if e != nil {
@@ -228,13 +246,13 @@ func TestFaultsNeverAcknowledgeOrPublish(t *testing.T) {
 			} else if e == nil {
 				t.Fatal("premature success")
 			}
-			b.fault = ""
+			b.setFault("")
 			if e = w.Archive(ctx, name, src); e != nil {
 				t.Fatal("retry after cleared fault", e)
 			}
 			root, dir := local(t)
 			os.WriteFile(filepath.Join(dir, "RECOVERYXLOG"), []byte("previous"), 0600)
-			b.fault = "transient"
+			b.setFault("transient")
 			if e = w.Restore(ctx, name, root, "RECOVERYXLOG"); e == nil || s3store.Is(e, s3store.NotFound) {
 				t.Fatal("outage became EOF/success", e)
 			}
@@ -300,13 +318,13 @@ func TestSeededWALTrace(t *testing.T) {
 				if exists && random.Intn(2) == 0 {
 					data = old
 				}
-				b.fault = ""
+				b.setFault("")
 				killed := random.Intn(5) == 0
 				if killed {
-					b.fault = "killed"
+					b.setFault("killed")
 				}
 				e := w.Archive(context.Background(), name, source(t, data))
-				b.fault = ""
+				b.setFault("")
 				shouldSucceed := exists && bytes.Equal(old, data) || !exists && !killed
 				if (e == nil) != shouldSucceed {
 					t.Fatalf("seed=%d op=%d killed=%v: %v", seed, op, killed, e)

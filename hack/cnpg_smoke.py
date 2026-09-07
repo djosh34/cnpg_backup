@@ -624,6 +624,7 @@ def main():
                'stringData': {'access': 'disposable-test-only-access', 'secret': 'disposable-test-only-secret'}})
         wal_fixture = wal_smoke.WALFixture(sys.modules[__name__], report)
         wal_storage = wal_fixture.setup()
+        kube('apply', '-n', NS, '-f', ROOT / 'config/wal-monitoring.yaml')
         repository = {'apiVersion': 'backup.cnpg-backup.djosh34.github.io/v1alpha1', 'kind': 'Repository',
                       'metadata': {'name': 'destination', 'namespace': NS}, 'spec': {
                           'repositoryID': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -638,6 +639,7 @@ def main():
         assert 'immutable' in rejected, 'CEL immutable repository identity was not enforced'
         cluster = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster', 'metadata': {'name': 'database', 'namespace': NS},
                    'spec': {'instances': 2, 'imageName': LOCK['database'],
+                            'monitoring': {'customQueriesConfigMap': [{'name': 'cnpg-backup-wal-monitoring', 'key': 'queries'}]},
                             'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
                             'walStorage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
                             'tablespaces': [{'name': 'fast_space', 'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'}}],
@@ -658,6 +660,7 @@ def main():
         assert_placement()
         report['completed'].append('real-CNPG-1.30-two-instance-initdb-join-WAL-tablespace-startup-and-CRD-CEL')
         wal_fixture.segment()
+        wal_fixture.fault_matrix()
         native_metadata_matrix(report)
         repository_status_matrix(report)
         capacity_matrix(data, report)

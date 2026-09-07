@@ -120,8 +120,8 @@ func Check(ctx context.Context, projection string) error { return check(ctx, pro
 // CheckWAL permits standby archiving after promotion/demotion, but retains the
 // actual version/role/format/settings checks. Archive mode must really be on;
 // lifecycle declarations alone cannot establish it.
-func CheckWAL(ctx context.Context, projection string) (Control, error) {
-	if err := check(ctx, projection, true); err != nil {
+func CheckWAL(ctx context.Context, root *os.Root) (Control, error) {
+	if err := checkFromRoot(ctx, root, true); err != nil {
 		return Control{}, err
 	}
 	return ReadControl(ctx)
@@ -132,6 +132,9 @@ func check(ctx context.Context, projection string, wal bool) error {
 		return err
 	}
 	defer root.Close()
+	return checkFromRoot(ctx, root, wal)
+}
+func checkFromRoot(ctx context.Context, root *os.Root, wal bool) error {
 	snapshot, err := configuration.LoadCaptureSnapshotFromRoot(root)
 	if err != nil {
 		return err

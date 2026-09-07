@@ -9,11 +9,16 @@ import subprocess
 import time
 
 SCENARIOS = ('actual-cnpg-minio-segment-byte-oracle-and-duplicate-conflict',
-             'actual-forced-failover-timeline-history-destination-routing')
+             'actual-forced-failover-timeline-history-destination-routing',
+             'actual-killed-partial-upload-no-ack-and-retry',
+             'actual-transient-and-TLS-are-not-NotFound',
+             'actual-finite-WAL-filesystem-full-restore-no-success',
+             'actual-WAL-lag-failure-observability')
 
 class WALFixture:
     def __init__(self, h, report):
         self.h, self.report, self.forward = h, report, None
+        self.metrics_forward = None
         self.directory = h.WORK / 'wal-fixture'
         self.directory.mkdir(mode=0o700)
         report['wal_completed'] = []
@@ -36,16 +41,22 @@ class WALFixture:
         image = h.image_digest('minio', 'cnpg-backup-wal-minio:test')
         self.report['wal_minio_image'] = image
         self.report['wal_minio_binary'] = lock['minio']
+        h.run('go', 'build', '-o', d / 'wal-client', './hack/walclient')
+        h.run('go', 'build', '-o', d / 'wal-proxy', './hack/walproxy')
+        (d / 'Proxyfile').write_text('FROM scratch\nCOPY wal-proxy /wal-proxy\nENTRYPOINT ["/wal-proxy"]\n')
+        h.run('docker', 'build', '-f', d / 'Proxyfile', '-t', 'cnpg-backup-wal-proxy:test', d)
+        proxy_image = h.image_digest('walproxy', 'cnpg-backup-wal-proxy:test')
+        self.report['wal_test_proxy_image'] = proxy_image
         # Generated keys remain only in this private work directory/Kubernetes
         # Secret, never in the built image, reports or test command diagnostics.
         h.run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj', '/CN=WAL fixture CA',
               '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', d / 'ca.key', '-out', d / 'ca.crt')
         h.run('openssl', 'req', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=minio', '-keyout', d / 'private.key', '-out', d / 'server.csr')
-        (d / 'extensions').write_text('subjectAltName=DNS:minio.' + h.NS + '.svc,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n')
+        (d / 'extensions').write_text('subjectAltName=DNS:minio.' + h.NS + '.svc,DNS:minio-backend.' + h.NS + '.svc,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n')
         h.run('openssl', 'x509', '-req', '-in', d / 'server.csr', '-CA', d / 'ca.crt', '-CAkey', d / 'ca.key',
               '-CAcreateserial', '-days', '2', '-extfile', d / 'extensions', '-out', d / 'public.crt')
         h.apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'wal-minio-tls', 'namespace': h.NS},
-                 'stringData': {'public.crt': (d / 'public.crt').read_text(), 'private.key': (d / 'private.key').read_text()}})
+                 'stringData': {'public.crt': (d / 'public.crt').read_text(), 'private.key': (d / 'private.key').read_text(), 'ca.crt': (d / 'ca.crt').read_text()}})
         h.apply({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'wal-minio-ca', 'namespace': h.NS},
                  'data': {'ca.crt': (d / 'ca.crt').read_text()}})
         h.apply({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'wal-minio', 'namespace': h.NS, 'labels': {'app': 'wal-minio'}},
@@ -57,9 +68,18 @@ class WALFixture:
                                           'resources': {'limits': {'memory': '512Mi', 'cpu': '1'}},
                                           'volumeMounts': [{'name': 'data', 'mountPath': '/data'}, {'name': 'tls', 'mountPath': '/certs', 'readOnly': True}]}],
                           'volumes': [{'name': 'data', 'emptyDir': {'sizeLimit': '2Gi'}}, {'name': 'tls', 'secret': {'secretName': 'wal-minio-tls'}}]}})
-        h.apply({'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': 'minio', 'namespace': h.NS},
+        h.apply({'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': 'minio-backend', 'namespace': h.NS},
                  'spec': {'selector': {'app': 'wal-minio'}, 'ports': [{'port': 9000, 'targetPort': 9000}]}})
-        h.kube('wait', 'pod/wal-minio', '-n', h.NS, '--for=condition=Ready', '--timeout=120s')
+        h.apply({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'wal-proxy', 'namespace': h.NS, 'labels': {'app': 'wal-proxy'}},
+                 'spec': {'containers': [{'name': 'proxy', 'image': proxy_image,
+                                          'env': [{'name': 'FIXTURE_BACKEND', 'value': 'https://minio-backend.' + h.NS + '.svc:9000'}],
+                                          'resources': {'limits': {'cpu': '1', 'memory': '128Mi'}},
+                                          'volumeMounts': [{'name': 'tls', 'mountPath': '/certs', 'readOnly': True}]}],
+                          'volumes': [{'name': 'tls', 'secret': {'secretName': 'wal-minio-tls'}}]}})
+        h.apply({'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': 'minio', 'namespace': h.NS},
+                 'spec': {'selector': {'app': 'wal-proxy'}, 'ports': [{'port': 9000, 'targetPort': 9000}]}})
+        for pod in ('wal-minio', 'wal-proxy'):
+            h.kube('wait', 'pod/' + pod, '-n', h.NS, '--for=condition=Ready', '--timeout=120s')
         log = open(d / 'forward.log', 'w')
         self.forward = subprocess.Popen([str(h.WORK / 'kubectl'), '--kubeconfig', str(h.WORK / 'kubeconfig'),
                                         'port-forward', '-n', h.NS, 'service/minio', '19000:9000'], stdout=log, stderr=log)
@@ -126,6 +146,128 @@ class WALFixture:
         assert restored == before, 'actual plugin Restore returned different bytes'
         self.report.setdefault('wal_byte_oracles', []).append({'name': name, 'raw_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'pod': pod})
 
+    def install_driver(self, pod):
+        h = self.h
+        command = [str(h.WORK / 'kubectl'), '--kubeconfig', str(h.WORK / 'kubeconfig'), 'exec', '-i', '-n', h.NS,
+                   pod, '-c', 'postgres', '--', 'sh', '-ec', 'cat > /run/wal-client; chmod 0555 /run/wal-client']
+        result = subprocess.run(command, input=(self.directory / 'wal-client').read_bytes(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        assert result.returncode == 0, 'test-only RPC driver installation failed'
+        definition = h.kube('get', 'cluster/database', '-n', h.NS, '-o', 'json')
+        h.kube('exec', '-i', '-n', h.NS, pod, '-c', 'postgres', '--', 'sh', '-ec', 'cat > /run/wal-cluster.json', input=definition)
+        self.report['wal_test_driver_sha256'] = hashlib.sha256((self.directory / 'wal-client').read_bytes()).hexdigest()
+
+    def rpc(self, pod, verb, name, expect=None):
+        arguments = ['/run/wal-client', '/run/wal-cluster.json', verb]
+        arguments += ['/var/lib/postgresql/data/pgdata/pg_wal/' + name] if verb == 'archive' else [name, '/var/lib/postgresql/data/pgdata/pg_wal/RECOVERYXLOG']
+        result = self.h.kube('exec', '-n', self.h.NS, pod, '-c', 'postgres', '--', *arguments,
+                             expect_failure=expect is not None)
+        if expect is not None:
+            assert expect in result and 'NotFound' not in result, 'fault was misclassified: ' + result
+        return result
+
+    def control(self, mode=None):
+        args = ['curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '5', '--cacert', self.directory / 'ca.crt']
+        if mode is not None:
+            args += ['-X', 'POST']
+        return json.loads(self.h.run(*args, 'https://localhost:19000/fixture-control' + ('?mode=' + mode if mode is not None else '')))
+
+    def metrics(self, pod):
+        h = self.h
+        if self.metrics_forward is None:
+            log = open(self.directory / 'metrics-forward.log', 'w')
+            self.metrics_forward = subprocess.Popen([str(h.WORK / 'kubectl'), '--kubeconfig', str(h.WORK / 'kubeconfig'),
+                                                    'port-forward', '-n', h.NS, 'pod/' + pod, '19187:9187'], stdout=log, stderr=log)
+            log.close()
+        result = h.run('curl', '-q', '--silent', '--show-error', '--max-time', '5', 'http://localhost:19187/metrics', check=False)
+        return [line for line in result.splitlines() if line.startswith(('cnpg_wal_archive_', 'cnpg_pg_stat_archiver_'))]
+
+    def fault_matrix(self):
+        h = self.h
+        pod = self.primary()
+        self.install_driver(pod)
+        self.control('hold-wal-put')
+        try:
+            self.sql(pod, 'INSERT INTO wal_e_oracle VALUES (1001)')
+            name = self.sql(pod, 'SELECT pg_walfile_name(pg_current_wal_insert_lsn())')
+            self.sql(pod, 'SELECT pg_switch_wal()')
+            h.wait(lambda: self.control()['blocked'] > 0, 'real partial WAL PUT fault barrier')
+            assert self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '0', 'premature archive acknowledgment'
+            self.report['wal_kill_precondition'] = {'name': name, 'proxy': self.control(), 'done': False}
+            def lag_visible():
+                lines = self.metrics(pod)
+                self.report['wal_metrics_pending'] = lines
+                return any(line.startswith('cnpg_wal_archive_ready_count') and float(line.split()[-1]) > 0 for line in lines) and any(
+                    line.startswith('cnpg_wal_archive_oldest_ready_seconds') and float(line.split()[-1]) > 0 for line in lines)
+            h.wait(lag_visible, 'actual CNPG exporter observes WAL backlog and lag', 60)
+            observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+            sidecar = next(c for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+            container_id = sidecar['containerID'].split('://')[1]
+            pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container_id))['info']['pid'])
+            assert pid > 1
+            h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-9', str(pid))
+            def restarted():
+                p = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+                s = next(c for c in p['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+                return s['restartCount'] > sidecar['restartCount'] and s.get('ready', False)
+            h.wait(restarted, 'killed upload sidecar starts fresh incarnation')
+            assert self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '0', 'killed upload acknowledged while fault remains'
+        finally:
+            self.control('')
+        h.wait(lambda: self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '1', 'actual retry after killed partial upload', 180)
+        self.verify(pod, name)
+        self.completed(SCENARIOS[2])
+        h.wait(lambda: int(self.sql(pod, 'SELECT failed_count FROM pg_stat_archiver')) > 0, 'PostgreSQL failure counter observes killed upload')
+        self.report['wal_metrics_after_retry'] = self.metrics(pod)
+        assert any(line.startswith('cnpg_pg_stat_archiver_failed_count') and float(line.split()[-1]) > 0 for line in self.report['wal_metrics_after_retry'])
+        self.completed(SCENARIOS[5])
+        self.control('fail-wal-get')
+        try:
+            result = self.rpc(pod, 'restore', name, expect='Unavailable')
+            h.save_log('wal-transient-not-EOF.log', result)
+        finally:
+            self.control('')
+        # Rotate only the public S3 trust projection to another valid CA. No
+        # insecure transport, malformed-PEM substitute or production credential.
+        d = self.directory
+        h.run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj', '/CN=Unrelated WAL test CA',
+              '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', d / 'unrelated.key', '-out', d / 'unrelated.crt')
+        try:
+            h.kube('patch', 'configmap', 'wal-minio-ca', '-n', h.NS, '--type=merge', '-p', json.dumps({'data': {'ca.crt': (d / 'unrelated.crt').read_text()}}))
+            def rejected_tls():
+                result = h.kube('exec', '-n', h.NS, pod, '-c', 'postgres', '--', '/run/wal-client', '/run/wal-cluster.json',
+                                'restore', name, '/var/lib/postgresql/data/pgdata/pg_wal/RECOVERYXLOG', check=False)
+                if 'Unavailable' in result:
+                    h.save_log('wal-TLS-not-EOF.log', result)
+                    return True
+                assert result.strip() == 'OK', 'trust fault returned wrong category'
+                return False
+            h.wait(rejected_tls, 'current invalid S3 trust fails actual WAL callback', 120)
+            self.rpc(pod, 'archive', name, expect='Unavailable')
+        finally:
+            h.kube('patch', 'configmap', 'wal-minio-ca', '-n', h.NS, '--type=merge', '-p', json.dumps({'data': {'ca.crt': (d / 'ca.crt').read_text()}}))
+        def trust_recovered():
+            result = h.kube('exec', '-n', h.NS, pod, '-c', 'postgres', '--', '/run/wal-client', '/run/wal-cluster.json',
+                            'restore', name, '/var/lib/postgresql/data/pgdata/pg_wal/RECOVERYXLOG', check=False)
+            return result.strip() == 'OK'
+        h.wait(trust_recovered, 'restored S3 trust generation', 120)
+        self.completed(SCENARIOS[3])
+        # Only the already-verified 1GiB disposable WAL filesystem is filled,
+        # never the runner disk. Record real ENOSPC, restore failure, unchanged
+        # destination bytes, and normal progress after clearing the fault.
+        before = self.sql(pod, "SELECT md5(pg_read_binary_file('pg_wal/RECOVERYXLOG'))")
+        block, count = map(int, self.shell(pod, "stat -f -c '%S:%b' pg_wal").strip().split(':'))
+        assert 0 < block * count <= 1 << 30
+        try:
+            self.shell(pod, 'dd if=/dev/zero of=pg_wal/.wal-e-full bs=1M count=2048 status=none 2>/run/wal-enospc.log && exit 3; grep "No space left on device" /run/wal-enospc.log')
+            self.report['wal_diskfull_precondition'] = {'filesystem_bytes': block * count, 'ENOSPC': True}
+            result = self.rpc(pod, 'restore', name, expect='FailedPrecondition')
+            h.save_log('wal-diskfull-no-success.log', result)
+        finally:
+            self.shell(pod, 'rm -f pg_wal/.wal-e-full')
+        assert self.sql(pod, "SELECT md5(pg_read_binary_file('pg_wal/RECOVERYXLOG'))") == before, 'failed local restore changed destination'
+        self.rpc(pod, 'restore', name)
+        self.completed(SCENARIOS[4])
+
     def segment(self):
         h = self.h
         pod = self.primary()
@@ -165,6 +307,7 @@ class WALFixture:
         self.completed(SCENARIOS[1])
 
     def close(self):
-        if self.forward is not None:
-            self.forward.terminate()
-            self.forward.wait(timeout=10)
+        for process in (self.metrics_forward, self.forward):
+            if process is not None:
+                process.terminate()
+                process.wait(timeout=10)

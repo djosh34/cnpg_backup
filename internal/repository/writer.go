@@ -32,6 +32,21 @@ func OpenWriter(ctx context.Context, s *s3store.Store, expected Identity, worksp
 		return nil, e
 	}
 	expected.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	// An interrupted first initialization can have an identity but no gate.
+	// Preserve its original timestamp, and never reinterpret foreign ownership.
+	b, _, readErr := s.Read(ctx, "v1/"+expected.RepositoryID+"/repository.json", smallLimit)
+	if readErr == nil {
+		var existing Identity
+		if strict(b, smallLimit, &existing) != nil || existing.Validate() != nil {
+			return nil, ErrCorrupt
+		}
+		expected.CreatedAt = existing.CreatedAt
+		if expected != existing {
+			return nil, ErrIdentity
+		}
+	} else if !s3store.Is(readErr, s3store.NotFound) {
+		return nil, readErr
+	}
 	r, e = Initialize(ctx, s, expected, workspace)
 	if e == nil {
 		return r, nil
