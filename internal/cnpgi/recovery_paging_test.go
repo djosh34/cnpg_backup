@@ -25,8 +25,11 @@ func TestCompletionConsumesEveryPodPage(t *testing.T) {
 			old.UID = types.UID(repository.UUID())
 			old.Status.Phase = core.PodFailed
 			old.Status.ContainerStatuses[0].State.Terminated.ExitCode = 1
-			putCompletion(t, api, c, job, pod, *old)
-			api.Client.(*dynamicfake.FakeDynamicClient).PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+			client := api.Client.(*dynamicfake.FakeDynamicClient)
+			// Fake reactor registration does not lock itself. Configure before
+			// publishing completion events, also excluding the periodic observer.
+			client.Lock()
+			client.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
 				opts := action.(interface{ GetListOptions() meta.ListOptions }).GetListOptions()
 				if opts.Limit != 1 {
 					t.Fatal("unbounded Pod page")
@@ -55,6 +58,8 @@ func TestCompletionConsumesEveryPodPage(t *testing.T) {
 				list.SetResourceVersion("99")
 				return true, list, nil
 			})
+			client.Unlock()
+			putCompletion(t, api, c, job, pod, *old)
 			uid, ids, e := api.recoveryTermination(context.Background(), c, map[string]string{string(pod.UID): pod.ResourceVersion, string(old.UID): old.ResourceVersion})
 			if mode == "complete" {
 				if e != nil || uid != string(job.UID) || len(ids) != 2 {
