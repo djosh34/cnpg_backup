@@ -1,136 +1,157 @@
-# PR D implementation evidence and frontier
+# CNPG lifecycle implementation and evidence
 
-Implementation status, not a replacement for the frozen design, an issue18
-closure claim, or independent review. Real CNPG/kind acceptance remains mandatory.
+PR D integrates lifecycle/configuration, not Backup/WAL/Restore data services.
+Those sidecar capabilities remain **unadvertised**, their RPCs Unimplemented,
+and `wal-fetch` fatal255. No product recovery or release qualification is implied.
+The frozen design and issue resolution comments remain authoritative.
 
-## Local target fence
+## Runtime boundaries
 
-`internal/recoveryguard` implements canonical target/argv validation, nonblocking
-PVC-UID-ordered permanent lock files, fsynced whole-set owner markers, and a
-terminal Begin/Drain stream on the same Unix gRPC socket as CNPG-I. PID1 starts
-before original CNPG preflight. One wait4 owner reaps the whole private namespace,
-including detached orphans; SIGTERM/SIGKILL escalation never authorizes release.
-Only complete descendant reap and the original sidecar's Drain acknowledgment
-remove markers. Original command failure remains failure after clean drain.
-Uncertainty/crashes poison targets; retry requires a fresh Cluster/all fresh PVCs.
+- `internal/cnpgi` uses the CNPG-I0.6 library with the pinned operator's0.5 wire
+  subset. Manager Identity/Operator/Lifecycle and Pod/Job injection are available.
+  Kubernetes1.35.8 and the actual fully rolled-out immutable CNPG1.30.0 Deployment
+  are checked, including new lifecycle/validation calls after startup. Deployment
+  lookup has a separate get-only named-resource Role beside the operator.
+- A serial, paginated, namespace-allowlisted Repository status sweep uses one
+  object per5s tick and a30s pass deadline. No informer/framework or Secret watch.
+  `Ready`/`Invalid`, observedGeneration and validated nonsecret configuration hash
+  describe configuration only, **not storage health or native capacity**.
+  RetentionBlocked is Unknown until storage/retention exists. Status patches use
+  resourceVersion; unchanged results do not churn. Warning ConfigurationInvalid
+  is throttled per Repository to5m with the throttle persisted before best-effort
+  Event creation. Failure to deliver an Event is not a permission/fencing signal.
+- Manager requires TLS1.3 and the intended client certificate identity. Each new
+  RPC revalidates current trust even on an already-open TLS connection. Broken
+  leaf/key/trust updates fail closed. Test-only TCP/gRPC regression proves one
+  handshake, successful overlap, then rejection after retiring the old CA.
+- For private-CA overlap, project a second issuer's public certificate as
+  `client-ca-next.crt` alongside `client-ca.crt`. Only its absence is optional;
+  malformed/read failures reject new work. Roll out the extra trust projection,
+  rotate server and client Certificates, confirm actual operator validation, then
+  replace the old trust source and remove overlap. Do not edit cert-manager's CA
+  private-key Secret into an ad hoc trust bundle. CNPG trusts server Secret
+  `tls.crt`, not `ca.crt`; real operator tests exercise that behavior.
 
-The internal projection `/cnpg-backup/config/guard.json` contains Cluster/operation
-UIDs and every `{pvcUID,mount}`. `POD_UID` comes from the downward API in both main
-and sidecar. Kubernetes placement reads each recovery PVC uncached, checks its
-Cluster controller UID/filesystem mode, and binds the immutable whole target set
-in an owned immutable ConfigMap. It never guesses UIDs or substitutes Pod API
-termination for local fencing. Standalone JSON cannot prove Kubernetes ownership;
-manual uncoordinated guard/PVC use is not a supported deployment.
+## Placement and finite capacity
 
-Pinned source follow-up found `jobs.go` also appends `addManagerLoggingOptions`:
-`--log-level`, then machinery v0.5.0's optional `--log-field-level` and
-`--log-field-timestamp`. These bounded generated flags are now preserved, not
-accidentally rejected. CNPG's tablespace name normalization (leading underscore,
-uppercase, dollar and underscore substitutions) is also preserved.
+All supported ordinary/initdb/join/recovery instances get restartable init
+sidecars. Static helper installation and socket readiness precede the main
+container, without waiting for PostgreSQL or data recovery. A restricted socket
+preparer creates a UID-owned0700 child below the kubelet-owned small emptyDir.
+Only the socket mount uses subPath; Secret projections never do. Helpers/config
+stay outside `/plugins`. Containers match CNPG's non-root identity, have read-only
+root filesystems, dropped capabilities and restricted projections.
 
-## Repository, manager and placement milestone
+Lifecycle rejects missing/overlapping managed data mounts, duplicate container/
+volume/mount paths, normalized tablespace-name collisions, replaced main argv,
+unsafe PID namespaces, wrong identities and foreign recovery PVC owners. It
+preserves CNPG's generated logging flags and its managed tablespace naming.
+Owned immutable ConfigMaps contain checked delivery snapshots, not another
+configuration authority. Source projections appear only in recovery Jobs.
 
-- `config/repository-crd.json`, generated by `hack/repository_crd.py`: namespaced
-  structural v1alpha1 schema, canonical fields/defaults, CEL storage immutability,
-  duration/native limits and V2-token exclusion. Typed explicit validation rejects
-  unsafe endpoints, invalid selectors/budgets/resources, unknown/duplicate JSON.
-- `internal/configuration`: complete kubelet-generation Secret/CA snapshots for
-  new operations; prior snapshots remain independent. Invalid rotations fail
-  closed. Manager TLS1.3 requires the intended client identity and refreshes
-  certificate/key/trust on handshakes and trust on new RPCs, including old sockets.
-- `manager`: CNPG-I Identity, Operator validate-create/change, Pod lifecycle
-  create/evaluate/update/patch and Job create. Namespace and Secret get-only
-  allowlists; uncached Kubernetes client; Kubernetes1.35.8 startup check. No
-  controller framework, scheduler, data proxy or Secret informer.
-- Placement: all supported ordinary/initdb/join/recovery instances get restartable
-  init sidecars, finite-size generic-ephemeral workspace declarations, matching
-  non-root identity, restricted containers and narrow projections/mounts. Source
-  projections appear only in recovery Jobs. Native projections select replication
-  client cert/key plus public server CA, never application/superuser/server keys.
-  Immutable per-configuration ConfigMaps are checked projections, not authority.
-- The static helper is atomically installed outside `/plugins` before socket
-  readiness. A small non-root socket-preparation init is necessary because kubelet
-  owns an emptyDir root: UID26 cannot chmod it. That init creates a UID-owned0700
-  child; subsequent main/sidecar socket mounts select it with subPath. **Secret
-  projections never use subPath.** Real Kubernetes ordering still needs the new
-  hosted smoke result. The preparer mounts no target data or credentials.
-- `config/render.py` emits one-replica Recreate manager, Service discovery, private
-  cert-manager CA/server/client Certificates and namespaced get-only Secret RBAC.
-  It requires real immutable image references; it does not deploy anything.
+Workspace remains one generic ephemeral PVC per Pod/Job, never a shared RWO
+claim. Lifecycle projects the explicit declared workspace/PGDATA/WAL/tablespace
+limits as nonsecret `capacity.json`. A claim request is **not** proof of a quota.
+`instance|recovery-job --check-capacity` runs the actual kernel preflight:
 
-Only implemented manager services/injection flags are advertised. Instance and
-recovery sidecars advertise Identity only; Backup/WAL/Restore data calls remain
-Unimplemented. `wal-fetch` remains fatal255. Native/S3/materialization/selection,
-retention and metrics are reserved for subsequent feature PRs.
+- each path must be a canonical dedicated writable ext4/xfs filesystem root;
+- inspect bounded `/proc/self/mountinfo` plus open-descriptor device/statfs data;
+- reject local-path directory binds, emptyDir.sizeLimit/tmpfs, subpaths, NFS,
+  shared device aliases and capacities larger than the declared hard ceiling;
+- check each filesystem's available bytes against its phase allocation, not
+  an aggregate sum that could conceal a full WAL/tablespace filesystem.
 
-## Evidence and commands
+`configuration.PreflightCapture` loads a complete native/repository snapshot and
+reserves raw archives + bounded compression spool + extracted WAL +100,000-entry
+metadata reserve + max(1GiB,10%) spare space before any future native writer.
+Native restore callers must supply their actual selected plan's explicit
+per-volume allocations (including native output/WAL duplication) to
+`CheckCapacity` before writing. No native handler exists yet and none may be
+advertised without these checks and operation fencing. Filesystem/quota-only
+subdirectory backends are not supported without an actual quota verifier.
+Startup/Identity probes deliberately do not reserve database-sized phase space:
+WAL service/bootstrap must not depend on an idle backup's workspace reservation.
 
-- `go vet ./...`, CGO-disabled `go test -count=1 -timeout=120s ./...`, eight Python
-  harness tests, CRD generation check, and actual static binary/image-root builds
-  with exact executable inventories passed locally for the current milestone.
-- Tests exercise real locks/marker poison, link/FIFO rejection, helper install,
-  real Unix gRPC control sessions with delayed writes, canceled streams and stale
-  identities; actual TCP mTLS leaf/private-CA overlap rotation; projection
-  snapshots; Pod/Job golden patches, idempotency, image evaluation, source isolation
-  and replacement PVC UID rejection. Lifecycle API clients in these Go tests are
-  explicitly fakes, not real CNPG acceptance.
-- Local race compilation is unavailable because GCC is absent. Production builds
-  remain CGO-disabled; hosted foundation tests retain test-only race tooling.
-- Hosted guard milestone9ea050e initially failed before startup: copyfile dropped
-  executable bits. Regression/fix af46a84 sets test binaries0555 without relaxing
-  non-root/read-only/capability restrictions. Owner reports foundation34080053536
-  and real namespace guard34080053527 PASS at af46a84; first-failure evidence is
-  retained. Owner subsequently reports foundation34081742505 and guard34081742557
-  PASS at01d0604, including the manager/configuration build changes.
-- `hack/test guard` runs production PID1/control code in real Docker namespaces
-  with a **test-only replacement for CNPG's command**. This is not CNPG acceptance.
-- `hack/test cnpg-smoke` / `.github/workflows/cnpg-smoke.yml` define actual pinned
-  kind/CNPG/cert-manager install, structural CRD/CEL, two-instance initdb/join,
-  tablespace/separate WAL placement, manager restart/idempotency, actual operator
-  leaf rotation and uninstall. Workspace fixtures use distinct finite ext4
-  loopback filesystems, NOT kind's unbounded local-path directories. The harness
-  consumes actual built-image digests resolved inside kind and preserves input
-  digests/logs. **Local execution is unavailable (no Docker).** Hosted34081742644
-  at01d0604 provisioned real kind and reached Repository CRD installation, which
-  failed: composite `native.default={}` and `retention.default={}` lacked keys
-  referenced by CEL. The generator now materializes complete nested defaults;
-  CEL constraints are unchanged. A regression fails on the old empty defaults and
-  passes on the regenerated CRD. Hosted rerun is pending; real CNPG multi-instance,
-  restart, rotation and uninstall acceptance has **not** passed.
-- `build/kubernetes-inputs.lock.json` records downloaded-and-checksummed kind0.33,
-  kubectl1.35.8, CNPG1.30 and cert-manager1.21.1 manifests. Registry manifest bytes
-  were fetched and hashed for the CNPG/cert-manager images. The Kubernetes1.35.8
-  kind node digest is the published kind0.33 release pin. No invented artifact
-  digest is used. Original download cache is local `.work/k8s-inputs` only.
+## Native metadata/authentication
 
-## Exact remaining mandatory frontier
+`instance --check-native` is a bounded metadata diagnostic, **not a Backup RPC**.
+It uses `internal/postgres` fixed psql/pg_controldata commands, no shell or SQL
+callback. One retained kubelet generation supplies Repository credentials, the
+`streaming_replica` client cert/key, distinct client-CA validation, public server
+CA, local Service hostname, declared targets and budgets. The ident-map name
+`cnpg_streaming_replica` and superuser identities are rejected.
 
-1. Rerun/diagnose the hosted real CNPG smoke after the composite-default fix, plus
-   current-SHA foundation/guard regressions. The first real smoke stopped at CRD
-   application; no multi-instance lifecycle acceptance is established yet.
-2. Extend real CNPG tests to private-CA overlap rotation (not just leaf), recovery
-   Job placement and ownership through actual CNPG preflight, and live image/config
-   rollout/defaulting. Complete source/destination and supported bootstrap golden
-   matrices. Full materialization/replay fault scenarios extend in G, without
-   pretending the Docker command fixture is PostgreSQL/CNPG.
-3. Finish Repository observedGeneration/conditions/status reconciliation and its
-   narrow RBAC/Warning events; the present manager validates on hooks only. Durable
-   terminal restore operation handling and S3 lifetime/read holds integrate in G.
-4. Runtime finite-workspace/capacity verification is not yet implemented. The CRD
-   enforces declared capacity and the smoke provisions actual finite filesystems,
-   but a named StorageClass alone is not proof of a hard per-Pod allocation. Add
-   rejection/preflight at the actual native-operation boundary before data handlers
-   can run, with supported block/quota evidence. Do not call arbitrary generic
-   ephemeral/local-path claims verified bounded storage.
-5. Complete native certificate/key snapshot validation, broader negative
-   configuration/version/layout tests, mTLS authorization-over-existing-transport
-   regression, operation snapshot integration with future handlers, rollout-owned
-   field hardening and install/runbook/network-policy polish. No S3 endpoint is
-   contacted by this milestone.
-6. Two fresh independent reviews/current-SHA evidence remain orchestrator gates.
-   No reviewer delegation or GitHub writes were performed by this author.
+Private0600 files/service configuration, `hostaddr=127.0.0.1`, Service SAN
+`host=<cluster>-rw.<namespace>.svc`, verify-full, fixed port5432 and a sanitized
+libpq environment prohibit ambient passwords/socket/remote-Service fallback.
+Metadata subprocesses have30s cancellation/process-group reap and1MiB stdout/
+stderr bounds. Runtime checks query actual PG18.6, replication role, primary
+state, standard block/segment format, WAL level/full-page writes/summarization,
+summary retention slack/archive timeout and the exact managed tablespace map.
+Mounted pg_controldata supplies physical identity/checksum/WAL-size validation
+without assuming privileged SQL control-function grants. Native capture must
+add its pre/post identity continuity checks when the handler is implemented.
 
-This is a safe partial implementation milestone, **not complete PR D**. Merge with
-B requires reconciling go.mod/go.sum and third-party notices; generic linked-Go
-notice copying is already in `hack/gonotices.py`. Preserve B's storage dependencies
-and this work's Kubernetes/CNPG-I dependencies; no B worktree was modified.
+## Recovery target ownership
+
+`internal/recoveryguard` runs PID1 before the exact original CNPG recovery argv.
+It acquires permanent nonblocking locks in PVC-UID order, checks the entire target
+set, fsyncs fresh owner markers outside all data directories, then begins a
+terminal local control session on the same Unix socket. Pod/Cluster/operation/
+guard/sidecar-incarnation identities bind admission; sidecar restart cannot adopt
+an old session. Namespace-wide wait4 reaps detached descendants. Only complete
+main-descendant reap and that sidecar's acknowledged write drain permit marker
+removal/fsync/unlock. Original CNPG failure stays failure after clean drain.
+Crashes or ambiguous ownership poison targets; retry requires a fresh Cluster
+and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
+
+## Tests and honest evidence boundaries
+
+- Local Go tests cover real locks/poison, Unix gRPC Begin/Drain, canceled sessions,
+  pending writes, stale identities, exact helper installation, snapshots, actual
+  TCP mTLS/CA rotation and reauthorization on one already-open connection.
+  Fake-API golden cases cover placement, source isolation, UID binding, image
+  evaluation, version/settings/layout negatives and status/Warning throttling.
+- `hack/test guard` runs production guard/control code in real Docker PID
+  namespaces with a **test-only replacement CNPG command**. That is not CNPG
+  recovery evidence. Guard/foundation hosted runs through7c0b35d passed; logs and
+  exact SHAs are retained by the orchestrator.
+- `hack/test cnpg-smoke` installs actual pinned kind/CNPG/cert-manager, consuming
+  immutable built image digests. The current matrix includes two instances,
+  initdb/join, WAL/tablespaces, metadata certificate auth/negative settings,
+  Repository status, real finite/emptyDir/localpath checks, manager restart,
+  server-leaf/private-CA overlap, defaulted live config/image rollout and uninstall.
+- Actual CNPG-generated recovery Jobs test poison on each target volume before
+  CNPG preflight and a fresh/all-fresh-PVC Begin → actual CNPG preflight → clean
+  Drain case. Unavailable materialization must still fail; this is **not** a
+  full restore/replay test. Full data/replay/pause/crash integration extends in G.
+- Real lifecycle matrix execution remains in progress. Definitions and local
+  fakes do not constitute a hosted CNPG PASS. Local Docker and GCC are unavailable;
+  hosted CI supplies real namespaces/CNPG and test-only race compilation.
+
+## Preserved first failures and dependency reconciliation
+
+1. Initial guard test copied an executable without its mode; corrected explicit
+   0555 fixture modes, without weakening runtime security.
+2. Repository composite CEL defaults were incomplete; materialized child defaults
+   before CEL validation. No CEL rule was disabled.
+3. Ninth finite filesystem failed: real logs prove sysfs loop8=7:8 exists while
+   container `/dev/loop8` does not, with82GiB free. util-linux reports
+   `/dev/loop8 (lost)`. The harness strictly normalizes that display suffix,
+   exposes the exact kernel major/minor and explicitly attaches the same free
+   device. Races fail closed. All finite filesystems subsequently provisioned.
+4. After merging main/B6605de8, copied package-local notice filenames made Go
+   `./...` walk generated `module@version` directories. A nested output-module
+   boundary preserves notice bytes while excluding generated roots from package
+   discovery; a real go-list negative control distinguishes the fix. One
+   `hack/godeps.py` inventory now owns executable/production/test scopes and
+   notices; duplicate `gonotices.py` was removed. Both SDK and CNPG dependencies
+   survive MVS/tidy and static build checks.
+5. The apparent mTLS-discovery timeout was permanent CNPG image admission:
+   digest-only PG images lack upgrade-version metadata. Add `:18.6` while keeping
+   the exact immutable digest, and fail permanent image admission immediately
+   rather than inflate the discovery timeout. Hosted next-stage evidence pending.
+
+No production deployment/data/bucket operations, GitHub writes or reviewer/worker
+delegation were performed by this scoped author. Two fresh independent reviews
+and exact-current-SHA CI remain orchestrator gates, not claims supplied here.

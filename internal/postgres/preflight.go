@@ -152,6 +152,24 @@ func Check(ctx context.Context, projection string) error {
 	if err = configuration.CheckCapacity(budgets); err != nil {
 		return err
 	}
+	expectedWAL := "/var/lib/postgresql/data/pgdata/pg_wal"
+	for _, budget := range budgets {
+		if budget.Mount == "/var/lib/postgresql/wal" {
+			expectedWAL = budget.Mount + "/pg_wal"
+		}
+	}
+	if actual, err := filepath.EvalSymlinks("/var/lib/postgresql/data/pgdata/pg_wal"); err != nil || actual != expectedWAL {
+		return errors.New("actual WAL layout differs from declared CNPG volume")
+	}
+	paths := []string{"/var/lib/postgresql/data/pgdata"}
+	for _, path := range connection.Tablespaces {
+		paths = append(paths, path)
+	}
+	for _, path := range paths {
+		if actual, err := filepath.EvalSymlinks(path); err != nil || actual != path {
+			return errors.New("unmanaged actual data/tablespace symlink layout")
+		}
+	}
 	directory, err := os.MkdirTemp("/cnpg-backup/work", "native-auth-")
 	if err != nil {
 		return errors.New("native private workspace unavailable")

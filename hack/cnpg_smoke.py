@@ -186,7 +186,7 @@ def native_metadata_matrix(report):
         name = pod['metadata']['name']
         standby = kube('exec', '-n', NS, name, '-c', 'postgres', '--', 'psql', '-U', 'postgres', '-d', 'postgres', '-Atqc',
                        'SELECT pg_is_in_recovery()').strip() == 't'
-        result = kube('exec', '-n', NS, name, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native', check=False)
+        result = kube('exec', '-n', NS, name, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native', check=not standby)
         (OUT / (name + '-native-preflight.log')).write_text(result)
         if standby:
             assert 'unsupported actual PostgreSQL' in result, result
@@ -257,7 +257,10 @@ def capacity_matrix(image, report):
         pod = json.loads(kube('get', 'pod', podname, '-n', NS, '-o', 'json'))
         code = pod['status']['containerStatuses'][0]['state']['terminated']['exitCode']
         assert (code == 0) == success, f'capacity {name} returned {code}'
-        (OUT / (podname + '.log')).write_text(kube('logs', podname, '-n', NS, check=False))
+        logs = kube('logs', podname, '-n', NS, check=False)
+        (OUT / (podname + '.log')).write_text(logs)
+        if not success:
+            assert 'dedicated writable finite ext4/xfs filesystem' in logs, logs
         kube('delete', 'pod', podname, '-n', NS, '--wait=true')
         report['completed'].append('actual-capacity-' + name + ('-accepted' if success else '-rejected'))
 
