@@ -224,7 +224,10 @@ def capture_faults(h, wal, report, metrics, control):
         p = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
         return next(c['restartCount'] for c in p['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
     def restarted(before):
-        h.wait(lambda: restart_count() > before, 'actual sidecar process restart', 180)
+        # Repeated same-PVC deaths now reach kubelet's normal 300s maximum
+        # CrashLoopBackOff. Bound the observation above that delay; still require
+        # an actual new incarnation and probe, never treat elapsed time as one.
+        h.wait(lambda: restart_count() > before, 'actual sidecar process restart', 360)
         h.wait(lambda: h.kube('exec', '-n', h.NS, pod, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup',
                               'instance', '--probe', check=False) == '', 'replacement native sidecar socket')
     def no_commit(uid):
