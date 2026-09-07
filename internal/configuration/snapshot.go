@@ -67,6 +67,7 @@ func CAPool(data []byte, system bool) (*x509.CertPool, error) {
 type Snapshot struct {
 	Spec                               Spec
 	AccessKey, SecretKey, SessionToken []byte
+	CA                                 []byte
 	Roots                              *x509.CertPool
 }
 
@@ -112,6 +113,7 @@ func loadRepositorySnapshot(root *os.Root, role string) (*Snapshot, error) {
 		if err != nil {
 			return nil, err
 		}
+		result.CA = data
 		result.Roots, err = CAPool(data, true)
 	} else {
 		result.Roots, err = x509.SystemCertPool()

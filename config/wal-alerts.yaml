@@ -1,0 +1,31 @@
+# Install where the monitoring stack selects PrometheusRules. Labels are the
+# existing bounded CNPG namespace/pod/cluster dimensions, never WAL filenames.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-backup-wal
+spec:
+  groups:
+    - name: cnpg-backup-wal
+      rules:
+        - alert: CNPGBackupWALArchiveFailing
+          expr: increase(cnpg_pg_stat_archiver_failed_count[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: WAL archival is failing; current WAL and backlog are at risk
+        - alert: CNPGBackupWALArchiveLag
+          expr: cnpg_wal_archive_oldest_ready_seconds > 120
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: Completed WAL is waiting for durable archival
+        - alert: CNPGBackupWALFilesystemPressure
+          expr: kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes < 0.15
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: PVC free space is low; inspect WAL and plugin workspace volumes

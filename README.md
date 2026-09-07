@@ -1,14 +1,15 @@
 # cnpg_backup
 
-Planning a CGO-free Go CNPG-I plugin for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for intended deployments including Dell ECS. Dell access/testing is not required.
+A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for intended deployments including Dell ECS. Dell access/testing is not required.
 
-**Status:** [READY](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5564016816) authorized implementation. PR A supplies the static CLI/image foundation and native PG18/MinIO recovery harness; service modes remain unimplemented and fail closed. No functional backup plugin or qualified release is claimed.
+**Status:** [READY](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5564016816) authorized implementation. Repository/storage primitives, CNPG lifecycle and [synchronous WAL Archive/Restore](docs/wal-implementation.md) are implemented. Full backup capture and primary restore/PITR remain unimplemented and unadvertised; no qualified release is claimed.
 
 ## Build and test
 
 ```sh
 ./hack/test fast
 ./hack/test integration --seed 1806 --images
+./hack/test cnpg-smoke # actual lifecycle + WAL faults/failover, not release qualification
 ```
 
 See [build inputs, dependency inventories and recovery evidence](docs/build-and-harness.md) for prerequisites, local diagnostics and exact scope.

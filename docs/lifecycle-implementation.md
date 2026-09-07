@@ -1,9 +1,10 @@
 # CNPG lifecycle implementation and evidence
 
-PR D integrates lifecycle/configuration, not Backup/WAL/Restore data services.
-Those sidecar capabilities remain **unadvertised**, their RPCs Unimplemented,
-and `wal-fetch` fatal255. No product recovery or release qualification is implied.
-The frozen design and issue resolution comments remain authoritative.
+PR D integrates lifecycle/configuration. [PR E](wal-implementation.md) adds
+ordinary destination WAL Archive/Restore; Backup and primary RestoreJobHooks
+remain **unadvertised**, their RPCs Unimplemented, and `wal-fetch` fatal255.
+No primary product recovery or release qualification is implied. The frozen
+design and issue resolution comments remain authoritative.
 
 ## Runtime boundaries
 

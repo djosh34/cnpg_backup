@@ -1,0 +1,25 @@
+# Apply in the database namespace and reference via
+# Cluster.spec.monitoring.customQueriesConfigMap:
+#   - name: cnpg-backup-wal-monitoring
+#     key: queries
+# CNPG's existing exporter owns these PostgreSQL observations. No per-callback
+# counter ledger or sidecar HTTP service is needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-backup-wal-monitoring
+data:
+  queries: |
+    wal_archive:
+      query: |
+        SELECT count(*) FILTER (WHERE name LIKE '%.ready') AS ready_count,
+               COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(modification)
+                 FILTER (WHERE name LIKE '%.ready'))), 0) AS oldest_ready_seconds
+          FROM pg_catalog.pg_ls_archive_statusdir()
+      metrics:
+        - ready_count:
+            usage: GAUGE
+            description: Completed WAL files awaiting durable archive acknowledgment
+        - oldest_ready_seconds:
+            usage: GAUGE
+            description: Age of oldest pending completed WAL file; not a zero-RPO guarantee

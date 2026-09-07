@@ -3,7 +3,8 @@
 `internal/s3store` implements the I/O boundary selected by [storage protocol
 §§2–5,8](research/storage-protocol-final.md). Repository identity, gate admission,
 publication reconciliation, WAL compression, catalog and retention are **not**
-implemented here. The executable does not import this package yet.
+implemented here. PR E links this adapter into the executable through the
+ordinary WAL callbacks; see [WAL implementation](wal-implementation.md).
 
 ## Caller contract
 

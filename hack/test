@@ -8,7 +8,7 @@ case "$profile" in fast|integration|guard|cnpg-smoke) ;; *) echo 'usage: hack/te
 export CNPG_BUILD_CACHE=${CNPG_BUILD_CACHE:-"$PWD/.work/tools"}
 python3 hack/bootstrap.py
 export PATH="$CNPG_BUILD_CACHE/go/bin:$PATH" CGO_ENABLED=0 GOTOOLCHAIN=local
-export GOOS=linux GOARCH=amd64 GOAMD64=v1 GOEXPERIMENT='' GOFLAGS='' GOWORK=off
+export GOOS=linux GOARCH=amd64 GOAMD64=v1 GOEXPERIMENT='' GOFLAGS='-p=2' GOMAXPROCS=2 GOWORK=off
 mkdir -p .work/tmp artifacts/fast
 export GOTMPDIR="$PWD/.work/tmp" TMPDIR="$PWD/.work/tmp"
 [[ -z $(gofmt -l cmd internal hack/*/*.go) ]] || { echo 'gofmt required' >&2; exit 1; }
@@ -34,7 +34,7 @@ fi
 if [[ $profile = integration ]]; then
   mkdir -p artifacts/s3
   CNPG_S3_ARTIFACT_DIR="$PWD/artifacts/s3" CNPG_S3_INTEGRATION=1 CNPG_S3_MINIO_BINARY="$CNPG_BUILD_CACHE/downloads/minio" \
-    go test -json -count=1 -timeout=600s -run '^TestMinIO(Primitives|Repository)$' ./internal/s3store ./internal/repository \
+    go test -json -count=1 -timeout=600s -run '^TestMinIO(Primitives|Repository|WAL)$' ./internal/s3store ./internal/repository ./internal/wal \
     | tee artifacts/s3/minio-integration.jsonl
   for arg in "$@"; do
     if [[ $arg = --images ]]; then

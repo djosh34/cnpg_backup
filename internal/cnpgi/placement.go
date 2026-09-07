@@ -239,6 +239,11 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	projection := map[string]string{"destination.json": jsonText(dst), "capacity.json": jsonText(capacity)}
 	if !recovery {
 		projection["native.json"] = jsonText(nativeConnection)
+		directory := pgdataPath + "/pg_wal"
+		if len(c.Spec.WALStorage) > 0 && string(c.Spec.WALStorage) != "null" {
+			directory = "/var/lib/postgresql/wal/pg_wal"
+		}
+		projection["wal.json"] = jsonText(WALPlacement{ClusterUID: string(c.Metadata.UID), Namespace: c.Metadata.Namespace, Cluster: c.Metadata.Name, Repository: destination, WALDirectory: directory})
 	}
 	if src != nil {
 		projection["source.json"] = jsonText(src)
@@ -270,7 +275,7 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 	// Native capture uses only the replication client identity and public server
 	// CA. Never mirror the main container's application/superuser/server-key mounts.
 	if !recovery {
-		sources = append(sources, core.VolumeProjection{ConfigMap: &core.ConfigMapProjection{LocalObjectReference: core.LocalObjectReference{Name: configName}, Items: []core.KeyToPath{{Key: "native.json", Path: "native/connection.json"}}}})
+		sources = append(sources, core.VolumeProjection{ConfigMap: &core.ConfigMapProjection{LocalObjectReference: core.LocalObjectReference{Name: configName}, Items: []core.KeyToPath{{Key: "native.json", Path: "native/connection.json"}, {Key: "wal.json", Path: "wal.json"}}}})
 		replication, ca := c.Spec.Certificates.ReplicationTLSSecret, c.Spec.Certificates.ServerCASecret
 		if replication == "" {
 			replication = c.Metadata.Name + "-replication"
