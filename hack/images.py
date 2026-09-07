@@ -35,8 +35,14 @@ def main():
             actual = {}
             with tarfile.open(fileobj=io.BytesIO(exported)) as tar:
                 for m in tar:
+                    name = '/' + m.name.removeprefix('./')
+                    # Moby's init layer adds this exact link and empty console
+                    # placeholder even to scratch containers (not image layers).
+                    if name == '/etc/mtab' and m.issym() and m.linkname == '/proc/mounts':
+                        continue
+                    if name == '/dev/console' and m.isfile() and m.size == 0:
+                        continue
                     if m.isfile():
-                        name = '/' + m.name.removeprefix('./')
                         if name in ('/.dockerenv', '/etc/hosts', '/etc/hostname', '/etc/resolv.conf'):
                             continue  # Docker-injected files, not image layers.
                         content = tar.extractfile(m).read()
