@@ -16,6 +16,7 @@ var xmlEnvelopes = []struct {
 	valid                bool
 }{
 	{"plain", "", "", true},
+	{"single-quoted-declaration", "<?xml version = '1.0' encoding='utf-8' standalone='yes'?>", "", true},
 	{"declaration-comments", `<?xml version="1.0" encoding="UTF-8"?><!--before-->`, "<!--after-->\r\n\t ", true},
 	{"whitespace-comments", " \r\n\t<!--before-->", " <!--after-->\n", true},
 	{"trailing-junk", "", "junk", false},

@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -214,6 +215,10 @@ func (t *transport) once(r *http.Request, dataGet bool) (*http.Response, error) 
 	return resp, nil
 }
 
+// The supported S3 envelope is XML 1.0 in UTF-8. encoding/xml checks tokens
+// but deliberately does not validate declaration grammar or duplicate attrs.
+var xmlDeclaration = regexp.MustCompile(`^version[ \t\r\n]*=[ \t\r\n]*(?:"1\.0"|'1\.0')(?:[ \t\r\n]+encoding[ \t\r\n]*=[ \t\r\n]*(?:"(?i:UTF-8)"|'(?i:UTF-8)'))?(?:[ \t\r\n]+standalone[ \t\r\n]*=[ \t\r\n]*(?:"(?:yes|no)"|'(?:yes|no)'))?[ \t\r\n]*$`)
+
 // validXMLDocument checks the entire already-bounded control body. Decode and
 // Unmarshal stop after the first root, accepting leading text or trailing junk.
 // S3 needs no DTD; reject directives rather than interpreting entity declarations.
@@ -228,6 +233,13 @@ func validXMLDocument(b []byte) bool {
 		}
 		switch v := token.(type) {
 		case xml.StartElement:
+			attributes := make(map[xml.Name]struct{}, len(v.Attr))
+			for _, a := range v.Attr {
+				if _, duplicate := attributes[a.Name]; duplicate {
+					return false
+				}
+				attributes[a.Name] = struct{}{}
+			}
 			if depth == 0 {
 				roots++
 				if roots > 1 {
@@ -244,7 +256,7 @@ func validXMLDocument(b []byte) bool {
 				return false
 			}
 		case xml.ProcInst:
-			if strings.EqualFold(v.Target, "xml") && (v.Target != "xml" || offset != 0) {
+			if strings.EqualFold(v.Target, "xml") && (v.Target != "xml" || offset != 0 || !xmlDeclaration.Match(v.Inst)) {
 				return false
 			}
 		case xml.Directive:
