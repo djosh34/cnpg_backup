@@ -41,7 +41,7 @@ go version
 go mod download
 go test -v -count=1 -timeout=180s ./...
 go test -c -o "$scratch/experiment.test" ./...
-go list -deps -f '{{if .CgoFiles}}{{.ImportPath}}: {{.CgoFiles}}{{end}}' ./... > "$scratch/cgo-packages"
+go list -deps -test -f '{{if .CgoFiles}}{{.ImportPath}}: {{.CgoFiles}}{{end}}' ./... > "$scratch/cgo-packages"
 [[ ! -s "$scratch/cgo-packages" ]] || { printf 'Unexpected CGO packages\n'; exit 1; }
 go list -deps -test -json ./... > "$scratch/packages.json"
 go list -deps -test -f '{{if .Module}}{{.Module.Path}} {{.Module.Version}}{{end}}' ./... | sort -u

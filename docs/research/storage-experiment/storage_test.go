@@ -250,7 +250,7 @@ func TestSDK(t *testing.T) {
 			seen := 0
 			pages := 0
 			for {
-				p, e := core.ListObjects(b, "", marker, "", 2)
+				p, e := core.ListObjectsV2(b, "", "", marker, "", 2)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -259,10 +259,10 @@ func TestSDK(t *testing.T) {
 				if !p.IsTruncated {
 					break
 				}
-				if p.NextMarker == marker || p.NextMarker == "" {
+				if p.NextContinuationToken == marker || p.NextContinuationToken == "" {
 					t.Fatal("pagination did not advance")
 				}
-				marker = p.NextMarker
+				marker = p.NextContinuationToken
 			}
 			if seen != expected || pages < 2 {
 				t.Fatalf("pagination seen=%d expected=%d pages=%d", seen, expected, pages)
@@ -305,7 +305,6 @@ func testDeleteDrain(t *testing.T, c *minio.Client, b string) {
 	if !bytes.Contains(get(t, c, b, "gate"), []byte(`"owner":"deleter"`)) {
 		t.Fatal("missing owner")
 	}
-	original, _ := client(t, "v4", true)
 	// Reuse trusted transport and creds but make only DELETE causally late.
 	base, _ := minio.DefaultTransport(true)
 	pem, _ := os.ReadFile(os.Getenv("EXPERIMENT_CA"))
@@ -317,7 +316,6 @@ func testDeleteDrain(t *testing.T, c *minio.Client, b string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_ = original
 	result := make(chan error, 1)
 	go func() { result <- dc.RemoveObject(ctx, b, "delete-victim", minio.RemoveObjectOptions{}) }()
 	<-delay.sent
