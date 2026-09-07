@@ -64,7 +64,10 @@ SDK/server messages, endpoints, keys or secrets. Any uncertain mutation (includi
 transport loss, 5xx, cancellation, malformed/short response or unknown upload)
 may still have applied. A subsequent successful retry or HEAD absence does **not**
 prove that original request drained. The caller must retain uncertain ownership;
-412/409 are concurrency outcomes, not duplicate success.
+412/409 are concurrency outcomes, not duplicate success. MinIO's fully consumed
+404 XML `NoSuchKey` response to a single PUT with `If-Match` is likewise a
+rejected precondition, not publication success or GET absence; other mutation
+404 responses remain unknown.
 
 ## Bounds and pinned SDK findings
 

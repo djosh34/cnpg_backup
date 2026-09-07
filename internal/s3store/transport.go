@@ -137,6 +137,11 @@ func (t *transport) once(r *http.Request, dataGet bool) (*http.Response, error) 
 			switch {
 			case code == "NoSuchKey" && resp.StatusCode == 404 && dataGet:
 				return nil, failure(NotFound)
+			// MinIO rejects If-Match on a missing object with NoSuchKey,
+			// not 412. This is a failed CAS, never successful publication
+			// or general mutation absence. Keep other operations unknown.
+			case code == "NoSuchKey" && resp.StatusCode == 404 && r.Method == "PUT" && r.URL.RawQuery == "" && r.Header.Get("If-Match") != "":
+				return nil, failure(Precondition)
 			case code == "PreconditionFailed" && resp.StatusCode == 412:
 				return nil, failure(Precondition)
 			case resp.StatusCode == 409:
