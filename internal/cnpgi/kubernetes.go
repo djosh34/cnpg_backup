@@ -31,6 +31,7 @@ func coreResource(name string) schema.GroupVersionResource {
 type API struct {
 	OperatorNamespace string
 	Client            dynamic.Interface
+	recoveryWatch     dynamic.Interface // context-owned stream, no HTTP total timeout
 	Namespaces        []string
 	SecretNames       map[string][]string
 	recoveryMu        sync.Mutex

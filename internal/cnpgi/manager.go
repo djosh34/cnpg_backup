@@ -196,7 +196,11 @@ func RunManager(ctx context.Context, revision string) error {
 	if err != nil {
 		return err
 	}
-	api := &API{Client: client, Namespaces: config.Namespaces, SecretNames: config.SecretNames, OperatorNamespace: config.OperatorNamespace, recoveryContext: ctx}
+	watchClient, err := newRecoveryWatchClient(kube)
+	if err != nil {
+		return err
+	}
+	api := &API{Client: client, recoveryWatch: watchClient, Namespaces: config.Namespaces, SecretNames: config.SecretNames, OperatorNamespace: config.OperatorNamespace, recoveryContext: ctx}
 	if err := api.VerifyOperator(ctx); err != nil {
 		return err
 	}

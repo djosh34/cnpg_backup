@@ -230,7 +230,11 @@ func serveProxy() {
 				e := up.RecvMsg(&b)
 				if e != nil {
 					if strings.HasSuffix(method, "/Restore") {
-						event(map[string]any{"event": "RPC-result", "method": method, "status": status.Code(e).String()})
+						code := status.Code(e)
+						if e == io.EOF { // successful upstream stream completion, not an RPC error
+							code = codes.OK
+						}
+						event(map[string]any{"event": "RPC-result", "method": method, "status": code.String()})
 					}
 					if method == wire.WAL_Restore_FullMethodName && e != io.EOF {
 						if exists("incorrect-EOF") && status.Code(e) != codes.NotFound {

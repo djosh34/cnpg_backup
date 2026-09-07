@@ -146,7 +146,19 @@ func (a *API) ensureRecovery(ctx context.Context, c Cluster, placement RecoveryP
 		cancel()
 		return errors.New("recovery observation must precede all target Pods")
 	}
-	stream, e := a.Client.Resource(coreResource("pods")).Namespace(c.Metadata.Namespace).Watch(watchCtx, meta.ListOptions{LabelSelector: selector, ResourceVersion: list.GetResourceVersion(), AllowWatchBookmarks: true})
+	watchClient := a.recoveryWatch
+	if watchClient == nil { // in-process Kubernetes test fixtures have no HTTP timeout
+		watchClient = a.Client
+	}
+	// Bound only establishing the HTTP stream, never its admitted lifetime.
+	startup := time.AfterFunc(10*time.Second, cancel)
+	stream, e := watchClient.Resource(coreResource("pods")).Namespace(c.Metadata.Namespace).Watch(watchCtx, meta.ListOptions{LabelSelector: selector, ResourceVersion: list.GetResourceVersion(), AllowWatchBookmarks: true})
+	if !startup.Stop() {
+		if stream != nil {
+			stream.Stop()
+		}
+		return context.DeadlineExceeded
+	}
 	if e != nil {
 		cancel()
 		return e

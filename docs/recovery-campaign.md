@@ -115,7 +115,14 @@ orphan adoption and distinguishing process-group/session evidence. Likewise,
 requesting a pause/fault without its observable barrier fails the case.
 
 The shutdown barrier is after CNPG's own start/replay/stop sequence, before the
-wrapped main exits and guard drains. No pause/shutdown recovery-target API is
+wrapped main exits and guard drains. Pinned CNPG automatically deletes completed
+Jobs: normal-completion cases pause only CNPG reconciliation at this barrier,
+let the real Job controller finish and the original plugin observer record all
+Pod/container terminations, then resume CNPG for normal instance SQL. The Job
+controller and plugin manager remain active; no missing/deleted-object evidence
+is certified. The first uncontrolled cleanup failure is preserved in run34148247516.
+A dedicated runtime streaming client fixes that run's separate10s HTTP WATCH
+termination; actual watch loss still closes observation without reconnect. No pause/shutdown recovery-target API is
 advertised by this test. This is a single-node kind experiment, not multi-node
 storage/power-loss or Dell certification.
 

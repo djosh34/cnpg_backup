@@ -90,17 +90,16 @@ class CampaignTests(unittest.TestCase):
         from recovery_cases import Campaign
         campaign = Campaign(None, None)
         state = {'name': 'g-001', 'plan': {'plan': {'reader_hold_id': 'reader', 'lifetime_hold_id': 'stable'}}}
-        pods = [{'metadata': {'uid': 'pod'}, 'spec': {'containers': [{'name': 'full-recovery'}]},
+        pods = [{'metadata': {'uid': 'pod', 'name': 'pod'},  'spec': {'containers': [{'name': 'full-recovery'}]},
                  'status': {'initContainerStatuses': [{'state': {'terminated': {}}}],
                             'containerStatuses': [{'state': {'terminated': {}}}]}}]
         jobs = {'items': [{'metadata': {'uid': 'job'}, 'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}}]}
         # No polling in this unit test: inspect the exact verdict immediately.
         def wait(predicate, *args):
             self.assertTrue(predicate())
-        from unittest.mock import Mock
         with patch.object(campaign, 'pods', return_value=pods), patch.object(campaign, 'event'), \
              patch('recovery_cases.h.kube', return_value=json.dumps(jobs)), patch('recovery_cases.h.wait', side_effect=wait), \
-             patch('recovery_cases.h.pod_evidence', return_value={}), \
+             patch('recovery_cases.h.pod_evidence', return_value={}), patch('recovery_cases.h.save_log'), \
              patch.object(campaign, 'operation_state', return_value={'state': 'uncertain', 'lifetimeReleased': False}), \
              patch.object(campaign, 'gate', return_value={'holders': [{'id': 'stable'}, {'id': 'unrelated'}]}) as gate:
             campaign.terminated(state, stable_retained=True)

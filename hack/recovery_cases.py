@@ -483,7 +483,17 @@ class Campaign:
         assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] == 0 for x in events), 'actual CNPG recovery failed'
         h.save_log(state['name'] + '-rpc.jsonl', json.dumps(events))
         self.holds(state, 'actual-CNPG-exited-before-guard-drain')
+        # CNPG automatically deletes completed Jobs. Hold ONLY its reconciliation
+        # while the real Job controller completes and the original plugin watch
+        # records all terminal containers. This controlled completion barrier is
+        # not permission to certify disappeared/force-deleted API evidence.
+        h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET,
+               'cnpg.io/reconciliationLoop=disabled', '--overwrite')
+        self.event('CNPG-cleanup-paused-before-Job-completion', cluster=state['name'])
         self.release(pod, 'release-shutdown')
+        self.terminated(state, stable_retained=stable_retained)
+        assert self.markers(state) == ['absent'] * 3, 'successful Job did not cleanly release every target marker'
+        h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop-', '--overwrite')
         h.kube('wait', '-n', TARGET, '--for=condition=Ready', 'cluster/' + state['name'], '--timeout=360s', timeout=400)
         primary = self.primary(state['name'], TARGET)
         actual = self.sql(TARGET, primary, "SELECT string_agg(id::text||':'||value,',' ORDER BY id) FROM g_oracle")
@@ -506,7 +516,6 @@ class Campaign:
         key = 'smoke/v1/' + state['repository_id'] + '/wal/' + segment[:8] + '/' + segment
         h.wait(lambda: key in self.inventory('smoke/v1/' + state['repository_id'] + '/wal/'), 'new lineage archive', 120)
         assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == before, 'destination write changed source archive'
-        self.terminated(state, stable_retained=stable_retained)
         self.retire_target(state)
         return state
 
@@ -537,6 +546,11 @@ class Campaign:
             h.wait(lambda: plan['lifetime_hold_id'] not in {x['id'] for x in self.gate()['holders']},
                    'uninterrupted original observer releases stable lifetime after all terminations', 120)
         state['completion_pods'] = self.pods(state['name'])
+        for pod in state['completion_pods']:
+            for container in ('full-recovery', 'cnpg-backup'):
+                text = h.kube('logs', pod['metadata']['name'], '-n', TARGET, '-c', container,
+                              '--tail=300', '--limit-bytes=65536', check=False)
+                h.save_log(pod['metadata']['name'] + '-' + container + '.log', text, 65536)
         self.event('completion-evidence', cluster=state['name'], job_uids=[j['metadata']['uid'] for j in jobs],
                    pods=[h.pod_evidence(p) for p in state['completion_pods']])
 
