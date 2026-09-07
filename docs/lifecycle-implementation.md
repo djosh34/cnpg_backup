@@ -174,6 +174,17 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
    virtual minutes. Missing replacement/error paths yield namespaces without
    writing uncertain status. No per-resource ledger or unbounded LIST was added.
 
+8. Run34088507100 at96132af reached ClusterReady, real primary replication
+   certificate metadata and standby rejection, then failed the summary-negative
+   arrangement: pinned CNPG sets `allow_alter_system=off` on PG17+. The disposable
+   smoke Cluster now temporarily uses CNPG's `enableAlterSystem` opt-in, waits for
+   the actual setting, injects `summarize_wal=off`, requires a nonzero production
+   preflight rejection, then resets/reloads the fault and restores the original
+   opt-in field in nested `finally` blocks. Declarative summaries stay on; no
+   product validation/RBAC/default changes. Local harness red/green covers the
+   exact original error, cleanup after lost SET response/probe failure, and
+   wrong-reason/zero-exit negative controls. Hosted confirmation remains pending.
+
 No production deployment/data/bucket operations, GitHub writes or reviewer/worker
 delegation were performed by this scoped author. Two fresh independent reviews
 and exact-current-SHA CI remain orchestrator gates, not claims supplied here.

@@ -1,9 +1,11 @@
 import copy
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import cnpg_smoke
 import godeps
@@ -55,6 +57,90 @@ class LifecycleHarness(unittest.TestCase):
                 # A replacement Pod may (and must) use the newly evaluated spec.
                 changed['metadata']['uid'] = 'replacement'
                 cnpg_smoke.assert_live_snapshots(before, [changed])
+
+    def native_matrix(self, fault=None):
+        # Models only the pinned operator's configuration seam, not real CNPG
+        # acceptance. The hosted matrix still executes real SQL and Go preflight.
+        state = {'allow': 'off', 'summary': 'on', 'checks': [], 'fault_seen': False}
+        def kube(*args, **kwargs):
+            if args[:2] == ('get', 'cluster'):
+                return json.dumps({'spec': {'postgresql': {'parameters': {'summarize_wal': 'on'}}}})
+            if args[:2] == ('patch', 'cluster'):
+                config = json.loads(args[args.index('-p') + 1])['spec']['postgresql']
+                self.assertEqual(set(config), {'enableAlterSystem'})
+                state['allow'] = 'on' if config['enableAlterSystem'] else 'off'
+                return ''
+            self.assertEqual(args[0], 'exec')
+            if '--check-native' in args:
+                state['checks'].append((state['summary'], state['allow']))
+                if state['summary'] == 'off':
+                    state['fault_seen'] = True
+                    if fault == 'probe-error':
+                        raise RuntimeError('injected probe transport error')
+                    if fault == 'wrong-rejection':
+                        return 'unrelated certificate failure'
+                    if fault == 'false-success':
+                        # Actual run() must enforce this, not just diagnostic text.
+                        self.assertTrue(kwargs.get('expect_failure'))
+                        raise RuntimeError('command unexpectedly succeeded')
+                    return 'sidecar: unsupported actual PostgreSQL settings'
+                return ''
+            command = args[-1]
+            if command.startswith('ALTER SYSTEM'):
+                if state['allow'] != 'on':
+                    raise RuntimeError('ERROR: ALTER SYSTEM is not allowed in this environment')
+                if command.startswith('ALTER SYSTEM SET '):
+                    state['summary'] = 'off'
+                    if fault == 'set-response-loss':
+                        raise RuntimeError('injected lost SET response')
+                else:
+                    state['summary'] = 'on'
+                return ''
+            if command == 'SELECT pg_reload_conf()':
+                return 't\n'
+            if command == 'SELECT pg_is_in_recovery()':
+                return 'f\n'
+            if command == 'SHOW summarize_wal':
+                return state['summary'] + '\n'
+            if command == 'SHOW allow_alter_system':
+                return state['allow'] + '\n'
+            self.fail('unexpected SQL: ' + command)
+        report = {'completed': []}
+        def wait(test, description, *args):
+            self.assertTrue(test(), description)
+        with tempfile.TemporaryDirectory() as temp, patch.object(cnpg_smoke, 'OUT', Path(temp)), \
+                patch.object(cnpg_smoke, 'main_pods', return_value=[{'metadata': {'name': 'database-1'}}]), \
+                patch.object(cnpg_smoke, 'kube', side_effect=kube), patch.object(cnpg_smoke, 'wait', side_effect=wait):
+            try:
+                cnpg_smoke.native_metadata_matrix(report)
+            finally:
+                self.assertEqual(state['summary'], 'on', 'summary fault was not restored')
+                self.assertEqual(state['allow'], 'off', 'test-only ALTER SYSTEM permission leaked')
+        return state, report
+
+    def test_native_summary_fault_uses_cnpg_opt_in_and_restores_default(self):
+        state, report = self.native_matrix()
+        self.assertTrue(state['fault_seen'])
+        self.assertEqual(state['checks'][0], ('on', 'off'))
+        self.assertEqual(state['checks'][-1], ('on', 'off'))
+        self.assertTrue(report['completed'])
+
+    def test_native_summary_fault_cleanup_and_oracle_negative_controls(self):
+        for fault, error in [('probe-error', 'injected probe transport error'),
+                             ('wrong-rejection', 'unrelated certificate failure'),
+                             ('false-success', 'command unexpectedly succeeded'),
+                             ('set-response-loss', 'injected lost SET response')]:
+            with self.subTest(fault=fault), self.assertRaisesRegex((RuntimeError, AssertionError), error):
+                self.native_matrix(fault)
+
+    def test_expected_command_failure_cannot_pass_on_diagnostic_text_alone(self):
+        result = subprocess.CompletedProcess([], 0, stdout='unsupported actual PostgreSQL')
+        with patch.object(cnpg_smoke.subprocess, 'run', return_value=result):
+            with self.assertRaisesRegex(RuntimeError, 'unexpectedly succeeded'):
+                cnpg_smoke.run('fixture', expect_failure=True)
+        result.returncode = 1
+        with patch.object(cnpg_smoke.subprocess, 'run', return_value=result):
+            self.assertEqual(cnpg_smoke.run('fixture', expect_failure=True), result.stdout)
 
     def test_kernel_known_missing_loop_node_uses_same_minor(self):
         self.assertEqual(cnpg_smoke.loop_device('/dev/loop8 (lost)\n'), '/dev/loop8')

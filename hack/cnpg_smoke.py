@@ -27,10 +27,13 @@ renderer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(renderer)
 
 
-def run(*args, check=True, timeout=300, input=None):
+def run(*args, check=True, timeout=300, input=None, expect_failure=False):
     result = subprocess.run([str(a) for a in args], cwd=ROOT, input=input, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
-    if check and result.returncode:
+    if expect_failure:
+        if result.returncode == 0:
+            raise RuntimeError(f'{args}: command unexpectedly succeeded')
+    elif check and result.returncode:
         raise RuntimeError(f'{args}: {result.stdout[-12000:]}')
     return result.stdout
 
@@ -194,18 +197,56 @@ def native_metadata_matrix(report):
             assert 'error' not in result.lower() and 'failed' not in result.lower() and 'sidecar:' not in result, result
             primary = name
     assert primary, 'no primary native authentication was tested'
-    # Test-only superuser oracle changes the actual setting, without changing
-    # plugin validation or using superuser/password fallback in product code.
+    # Pinned CNPG disables ALTER SYSTEM on PG17+. Use its explicit opt-in ONLY
+    # on this disposable test Cluster; no product setting, RBAC or validation
+    # changes and no ad hoc edits of operator-owned files. Keep the declarative
+    # summarize_wal=on so the negative exercises actual runtime drift, not just
+    # admission rejection. Always reset the local fault before retiring opt-in.
     def sql(command):
-        return kube('exec', '-n', NS, primary, '-c', 'postgres', '--', 'psql', '-U', 'postgres', '-d', 'postgres', '-Atqc', command)
-    sql("ALTER SYSTEM SET summarize_wal = 'off'")
-    sql('SELECT pg_reload_conf()')
-    wait(lambda: sql('SHOW summarize_wal').strip() == 'off', 'actual disabled WAL summaries')
-    result = kube('exec', '-n', NS, primary, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native', check=False)
-    assert 'unsupported actual PostgreSQL' in result, result
-    sql('ALTER SYSTEM RESET summarize_wal')
-    sql('SELECT pg_reload_conf()')
-    wait(lambda: sql('SHOW summarize_wal').strip() == 'on', 'restore CNPG summary settings')
+        return kube('exec', '-n', NS, primary, '-c', 'postgres', '--', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
+                    '-U', 'postgres', '-d', 'postgres', '-Atqc', command)
+    config = json.loads(kube('get', 'cluster', 'database', '-n', NS, '-o', 'json'))['spec']['postgresql']
+    original = config.get('enableAlterSystem')
+    assert original in (None, False), 'fixture unexpectedly permits ALTER SYSTEM already'
+    assert config['parameters']['summarize_wal'] == 'on'
+    assert sql('SHOW allow_alter_system').strip() == 'off'
+    assert sql('SHOW summarize_wal').strip() == 'on'
+    evidence = []
+    def record(stage):
+        # Fixed public settings only; never serialize config files or Secrets.
+        evidence.append({'stage': stage, 'pod': primary,
+                         'summarize_wal': sql('SHOW summarize_wal').strip(),
+                         'allow_alter_system': sql('SHOW allow_alter_system').strip()})
+        (OUT / 'native-summary-fault.json').write_text(json.dumps(evidence, indent=2) + '\n')
+    def enable(value):
+        kube('patch', 'cluster', 'database', '-n', NS, '--type=merge', '-p',
+             json.dumps({'spec': {'postgresql': {'enableAlterSystem': value}}}))
+    record('baseline')
+    fault_attempted = False
+    try:
+        enable(True)
+        wait(lambda: sql('SHOW allow_alter_system').strip() == 'on', 'CNPG test-only ALTER SYSTEM opt-in')
+        fault_attempted = True  # SET may succeed even if exec loses its response.
+        sql("ALTER SYSTEM SET summarize_wal = 'off'")
+        assert sql('SELECT pg_reload_conf()').strip() == 't'
+        wait(lambda: sql('SHOW summarize_wal').strip() == 'off', 'actual disabled WAL summaries')
+        assert sql('SELECT pg_is_in_recovery()').strip() == 'f', 'fault target is no longer primary'
+        record('fault-observed')
+        result = kube('exec', '-n', NS, primary, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup',
+                      'instance', '--check-native', expect_failure=True)
+        (OUT / 'native-summary-rejection.log').write_text(result[-12000:])
+        assert 'unsupported actual PostgreSQL' in result, result
+        assert sql('SHOW summarize_wal').strip() == 'off', 'fault cleared before rejection was observed'
+    finally:
+        try:
+            if fault_attempted:
+                sql('ALTER SYSTEM RESET summarize_wal')
+                assert sql('SELECT pg_reload_conf()').strip() == 't'
+                wait(lambda: sql('SHOW summarize_wal').strip() == 'on', 'restore CNPG summary settings')
+        finally:
+            enable(original)
+            wait(lambda: sql('SHOW allow_alter_system').strip() == 'off', 'restore CNPG ALTER SYSTEM prohibition')
+            record('restored')
     kube('exec', '-n', NS, primary, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup', 'instance', '--check-native')
     report['completed'].append('actual-native-streaming-replica-cert-local-SAN-auth-settings-control-layout-and-standby-rejection')
 
