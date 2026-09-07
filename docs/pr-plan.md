@@ -33,7 +33,7 @@ Each PR includes its own documentation and tests. Run the [local-first feedback 
 
 **Acceptance**
 - HTTP fault tests cover response loss after committed upload, interrupted multipart, auth/TLS failure, rate limiting, pagination and checksum mismatch.
-- Real MinIO integration exercises SDK SigV2/SigV4, private CA, multipart and every storage primitive used by publication/deletion. Record standard-S3 assumptions and exact tested versions; no Dell access, test or certification gate.
+- Real MinIO integration exercises SDK SigV2/SigV4, private CA, multipart and every storage primitive used by publication/deletion. Record standard-S3 assumptions and exact tested versions.
 - Buffer use stays bounded for objects larger than configured buffers; aborted work cannot be confused with committed data.
 
 **Depends on:** PR A; approved S3 compatibility and repository protocol decisions.
@@ -200,7 +200,7 @@ Each PR includes its own documentation and tests. Run the [local-first feedback 
 
 **Requirements**
 - End-to-end crash/fault matrix, prolonged archive outage/backlog, multi-instance failover/timelines, retention/restore races and supported filesystem layouts.
-- Real MinIO SigV2/SigV4/private CA integration; no Dell testing requirement. Complete manual two-hour seeded recovery campaign, production-module DST, long Go fuzzing and exact-artifact release qualification using the common harness.
+- Real MinIO SigV2/SigV4/private CA integration. Complete manual two-hour seeded recovery campaign, production-module DST, long Go fuzzing and exact-artifact release qualification using the common harness.
 - N+1 reads N backup/WAL fixtures, resource/restore benchmarks, operational drills and published exact compatibility matrix. For the first release only, previous-release upgrade evidence is explicitly inapplicable; establish initial-format fixtures for the next release and keep all first-release recovery scenarios mandatory.
 - Review unresolved security findings, known limitations and unsupported topologies; final approval is evidence-based.
 
@@ -211,7 +211,7 @@ Each PR includes its own documentation and tests. Run the [local-first feedback 
 - Production release is blocked on failing, skipped or unexecuted mandatory scenarios. A 120-minute timer or green rerun that hides a flake is not qualification. Use the same reusable workflow to test new candidates and already released image digests; automatically publish versioned releases and qualified images without another approval ceremony or production deployment. Original project work remains all rights reserved; preserve third-party licenses/notices.
 
 **Depends on:** PR J; approved release gates.
-**Not included:** claiming Dell certification, a general-purpose chaos framework, unbounded or non-diagnostic retry loops or calling real distributed execution fully deterministic.
+**Not included:** a general-purpose chaos framework, unbounded or non-diagnostic retry loops or calling real distributed execution fully deterministic.
 
 ## Implementation graph
 

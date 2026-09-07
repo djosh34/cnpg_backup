@@ -1,6 +1,6 @@
 # Testing and recovery campaigns
 
-Status: implementation specification. Disposable planning experiments have run and are linked from [design.md](design.md); no product implementation or qualified product artifacts are implied by those results. Required backend is **real MinIO**, accessed through the maintained Go SDK with SigV2/SigV4. **Dell hardware/access/version discovery and Dell-specific tests are not required.** Compatibility claims distinguish MinIO-tested behavior from intended standard-S3 deployments.
+Status: implementation specification. Disposable planning experiments have run and are linked from [design.md](design.md); no product implementation or qualified product artifacts are implied by those results. Required backend is **real MinIO**, accessed through the maintained Go SDK with SigV2/SigV4. Compatibility claims distinguish MinIO-tested behavior from intended standard-S3 deployments.
 
 ## Keep the product small; exercise it hard
 
@@ -130,7 +130,7 @@ Capture evidence on success and failure, with bounded artifact size and configur
 
 Release-qualified means the exact candidate artifact passed every applicable mandatory scenario, required unit/integration/DST corpus, required fuzz duration, upgrade fixtures and current independent review gates. Record completed workload and scenario counts; elapsed two hours alone is not evidence. A deliberate corrupt-input test passes only when the expected failure is detected safely. Unexpected timeout/flake is triaged; retain the first failure and replay evidence instead of hiding it behind an eventual green rerun. Stable regressions become mandatory corpus cases.
 
-The initial campaign duration fits under GitHub-hosted runners' documented six-hour job limit; recheck current platform execution limits when implementing. No claim that CI chaos simulates physical power failure, every network interleaving or Dell-specific implementation behavior.
+The initial campaign duration fits under GitHub-hosted runners' documented six-hour job limit; recheck current platform execution limits when implementing. No claim that CI chaos simulates physical power failure or every network interleaving.
 
 ## Primary references
 

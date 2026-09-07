@@ -28,7 +28,7 @@ Status: **final technical specification; independent reviews and an explicit REA
 | MinIO test server | **RELEASE.2025-09-07T16-13-09Z** / `07c3a429bfed433e49018cb0f78a52145d4bedeb`; binary SHA256 in research harness |
 | Distribution | **v0.1.0** GitHub release, manager/PG18 GHCR images and portable OCI archives |
 
-These are source/version pins, not invented product image digests. PR A resolves build-image digests/package locks for these versions; exact built subject digests are then qualified. Compatible security patch updates may be adopted autonomously with updated pins and the same tests. MinIO is sufficient; **no Dell access, discovery, testing or certification gate**. Claim MinIO-tested behavior and explicit capability requirements, not universal S3 or AWS-SigV2 support.
+These are source/version pins, not invented product image digests. PR A resolves build-image digests/package locks for these versions; exact built subject digests are then qualified. Compatible security patch updates may be adopted autonomously with updated pins and the same tests. MinIO is sufficient for validation. Claim MinIO-tested behavior and explicit capability requirements, not universal S3 or AWS-SigV2 support.
 
 ## 2. Runtime topology and configuration
 

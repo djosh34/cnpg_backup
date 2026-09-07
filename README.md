@@ -1,6 +1,6 @@
 # cnpg_backup
 
-A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for intended deployments including Dell ECS. Dell access/testing is not required.
+A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for S3-compatible deployments that satisfy the documented capability contract. Claims are limited to tested behavior and stated capability requirements.
 
 **Status:** [READY](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5564016816) authorized implementation. Repository/storage primitives, CNPG lifecycle and [synchronous WAL Archive/Restore](docs/wal-implementation.md) are implemented. Full backup capture and primary restore/PITR remain unimplemented and unadvertised; no qualified release is claimed.
 

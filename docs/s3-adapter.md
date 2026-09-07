@@ -132,7 +132,7 @@ all used production primitives, >1000-object pagination and concurrent creates.
 Local environments that prohibit MinIO AF_NETLINK initialization cannot execute
 those real tests. Hosted `foundation` integration and race checks remain mandatory
 before merge; neither an unexecuted workflow nor green HTTP tests is qualification.
-No Dell, encrypted/KMS or scoped-IAM compatibility is claimed by this slice.
+No encrypted/KMS or scoped-IAM compatibility is claimed by this slice.
 
 `hack/godeps.py` inventories executable, production package and test closures
 separately, checks all for CGO under production build flags, and copies unmodified

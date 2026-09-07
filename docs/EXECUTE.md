@@ -34,7 +34,7 @@ Newest owner directions override stale proposals. Git, issue resolutions, curren
 
 Before declaring this project ready for the new implementation thread:
 
-1. Finish the owner design grill and record actual answers. Resolve all open CNPG/native-backup/S3/storage/WAL/retention/security/test decisions with primary sources and targeted disposable experiments where necessary. MinIO is sufficient; Dell access/testing is never required.
+1. Finish the owner design grill and record actual answers. Resolve all open CNPG/native-backup/S3/storage/WAL/retention/security/test decisions with primary sources and targeted disposable experiments where necessary. MinIO is sufficient for the required validation.
 2. Freeze a coherent design: exact initially supported versions/layouts, capture/reconstruction sequence, workspace requirements, configuration, portable publication/no-clobber and retry behavior, retention/restore coordination, PITR semantics, failure behavior, delivery endpoint and test gates. No unresolved algorithm is hidden behind "implementation will decide".
 3. Reconcile design, PR graph and test requirements. State approved adaptation rules for new facts: preserve behavior and safety; change internal structure/PR boundaries and add regression coverage rather than ask routine implementation questions.
 4. Verify Paseo Astra/high dispatch/result retrieval/archival, git/Actions permissions, merge-rule compatibility and credentials for the agreed release/image publication endpoint. Complete this preflight before launch.
