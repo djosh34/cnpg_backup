@@ -23,6 +23,16 @@ from bootstrap import CACHE, LOCK, REPO
 from build import OUT
 
 
+def s3_command(config, endpoint, method, key, source=None, dest=None):
+    # -q must be first: an ambient .curlrc can add URLs or credential traces.
+    command = ['curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '60', '--config', config, '-X', method]
+    if source:
+        command += ['--upload-file', source]
+    if dest:
+        command += ['--output', dest]
+    return [*command, endpoint + '/foundation/' + key]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=1806)
@@ -182,12 +192,7 @@ def main():
         config.write_text(f'user = "{user}:{password}"\naws-sigv4 = "aws:amz:us-east-1:s3"\nnoproxy = "*"\n')
 
         def s3(method, key, source=None, dest=None):
-            command = ['curl', '--silent', '--show-error', '--fail', '--max-time', '60', '--config', config, '-X', method]
-            if source:
-                command += ['--upload-file', source]
-            if dest:
-                command += ['--output', dest]
-            return run([*command, endpoint + '/foundation/' + key])
+            return run(s3_command(config, endpoint, method, key, source, dest))
 
         if not args.native_only:
             s3('PUT', '')
