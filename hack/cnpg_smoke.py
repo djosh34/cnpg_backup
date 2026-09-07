@@ -17,6 +17,7 @@ import urllib.request
 import uuid
 import sys
 import wal_smoke
+import backup_smoke
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / '.work/cnpg-smoke'
@@ -207,7 +208,7 @@ def loop_device(value):
     return match.group(1)
 
 
-def provision_filesystem(path):
+def provision_filesystem(path, size='1G'):
     # mount -o loop relies on container udev creating new loop device nodes.
     # kind has no such udev. Ask the kernel for a free minor, expose its actual
     # sysfs major/minor, then explicitly attach and mount. Never guess a minor,
@@ -216,7 +217,7 @@ def provision_filesystem(path):
     script = r'''set -eu
 path="$1"
 device="$2"
-truncate -s 1G "$path.img"
+truncate -s "$3" "$path.img"
 mkfs.ext4 -q -F "$path.img"
 mkdir "$path"
 if [ ! -b "$device" ]; then
@@ -230,7 +231,7 @@ echo "FINITE_FS backing=$path.img device=$device"
 mount "$device" "$path"
 findmnt -n -o SOURCE,FSTYPE,SIZE --target "$path"
 '''
-    return run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec', script, 'finite-fs', path, device)
+    return run('docker', 'exec', NAME + '-control-plane', 'sh', '-ec', script, 'finite-fs', path, device, size)
 
 
 def bounded_workspaces():
@@ -613,6 +614,7 @@ def main():
         kube('wait', '--for=condition=Established', 'crd/repositories.backup.cnpg-backup.djosh34.github.io', '--timeout=60s')
         kube('create', 'namespace', NS)
         bounded_workspaces()
+        backup_smoke.bounded_capture_workspaces(sys.modules[__name__])
         manager, data = image_digest('manager'), image_digest('pg18')
         report['subject_images'] = {'manager': manager, 'pg18': data}
         install = renderer.render(manager, data, 'cnpg-system', NS, ['s3-auth', 'database-ca', 'database-replication'])
@@ -630,7 +632,8 @@ def main():
                           'repositoryID': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
                           's3': {**wal_storage, 'bucket': 'test-bucket', 'prefix': 'smoke',
                                  'accessKeySecret': {'name': 's3-auth', 'key': 'access'}, 'secretKeySecret': {'name': 's3-auth', 'key': 'secret'}},
-                          'workspace': {'storageClassName': 'cnpg-backup-bounded', 'size': '1Gi'}}}
+                          'workspace': {'storageClassName': 'cnpg-backup-capture', 'size': '8Gi'},
+                          'native': {'maxBackupBytes': 256 * 1024**2, 'maxBootstrapWALBytes': 128 * 1024**2}}}
         apply(repository)
         observed = json.loads(kube('get', 'repository', 'destination', '-n', NS, '-o', 'json'))
         assert observed['spec']['retention'] == {'enabled': False, 'dryRun': True, 'minimumFulls': 2, 'interval': '1h'}
@@ -663,6 +666,7 @@ def main():
         wal_fixture.fault_matrix()
         native_metadata_matrix(report)
         repository_status_matrix(report)
+        backup_smoke.run(sys.modules[__name__], wal_fixture, report, data)
         capacity_matrix(data, report)
         before = pod_uids()
         kube('rollout', 'restart', '-n', 'cnpg-system', 'deployment/cnpg-backup')
@@ -716,7 +720,7 @@ def main():
             loop_diagnostics('final')
             # Only detach loops backed by this disposable node's own files.
             run('docker', 'exec', NAME + '-control-plane', 'sh', '-c',
-                'for p in /var/local/cnpg-backup-work-*.img; do '
+                'for p in /var/local/cnpg-backup-work-*.img /var/local/cnpg-backup-capture-*.img; do '
                 'umount "${p%.img}" 2>/dev/null; '
                 'losetup -j "$p" -O NAME --noheadings | xargs -r losetup -d; done', check=False)
             run(WORK / 'kind-linux-amd64', 'delete', 'cluster', '--name', NAME, check=False)

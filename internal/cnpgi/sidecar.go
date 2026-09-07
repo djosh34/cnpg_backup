@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	wirebackup "github.com/cloudnative-pg/cnpg-i/pkg/backup"
 	"github.com/cloudnative-pg/cnpg-i/pkg/identity"
 	wirewal "github.com/cloudnative-pg/cnpg-i/pkg/wal"
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
@@ -25,6 +26,7 @@ type Identity struct {
 	identity.UnimplementedIdentityServer
 	Revision string
 	WAL      bool
+	Backup   bool
 }
 
 func (s Identity) GetPluginMetadata(context.Context, *identity.GetPluginMetadataRequest) (*identity.GetPluginMetadataResponse, error) {
@@ -40,6 +42,9 @@ func (s Identity) GetPluginCapabilities(context.Context, *identity.GetPluginCapa
 	if s.WAL {
 		result.Capabilities = []*identity.PluginCapability{{Type: &identity.PluginCapability_Service_{Service: &identity.PluginCapability_Service{Type: identity.PluginCapability_Service_TYPE_WAL_SERVICE}}}}
 	}
+	if s.Backup {
+		result.Capabilities = append(result.Capabilities, &identity.PluginCapability{Type: &identity.PluginCapability_Service_{Service: &identity.PluginCapability_Service{Type: identity.PluginCapability_Service_TYPE_BACKUP_SERVICE}}})
+	}
 	return result, nil
 }
 func (s Identity) Probe(context.Context, *identity.ProbeRequest) (*identity.ProbeResponse, error) {
@@ -54,11 +59,12 @@ func (s Identity) Probe(context.Context, *identity.ProbeRequest) (*identity.Prob
 // Serve uses a real listener also shared by the private guard control stream.
 // Stopping is uncertainty, not a clean Drain acknowledgment.
 func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.Admission, revision string, wal ...*WALService) error {
-	server := grpc.NewServer(grpc.MaxRecvMsgSize((1<<20)+(32<<10)), grpc.MaxSendMsgSize(32<<10), grpc.MaxConcurrentStreams(16))
+	server := grpc.NewServer(grpc.MaxRecvMsgSize((1<<20)+(32<<10)), grpc.MaxSendMsgSize(32<<10), grpc.MaxConcurrentStreams(16), grpc.WaitForHandlers(true))
 	enabled := len(wal) == 1 && wal[0] != nil && admission == nil
-	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: enabled})
+	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: enabled, Backup: enabled})
 	if enabled {
 		wirewal.RegisterWALServer(server, wal[0])
+		wirebackup.RegisterBackupServer(server, &BackupService{})
 	}
 	if admission != nil {
 		recoveryguard.RegisterControl(server, admission)
