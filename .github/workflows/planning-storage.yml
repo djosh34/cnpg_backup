@@ -1,0 +1,23 @@
+name: Disposable planning SDK storage experiment
+on:
+  push:
+    branches: [planning/platform-preflight]
+    paths:
+      - docs/research/storage-experiment/**
+      - .github/workflows/planning-storage.yml
+permissions:
+  contents: read
+jobs:
+  sdk-minio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.27.1
+          cache: false
+      - name: Real loopback MinIO, SigV2 and SigV4, private CA and conditional operations
+        run: bash docs/research/storage-experiment/run.sh
