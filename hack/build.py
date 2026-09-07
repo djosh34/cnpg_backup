@@ -8,7 +8,7 @@ import shutil
 import subprocess
 
 from bootstrap import CACHE, LOCK, REPO
-from gonotices import copy_notices
+from godeps import inventory as go_inventory
 
 OUT = REPO / 'build/out'
 
@@ -53,6 +53,7 @@ if __name__ == '__main__':
     run('go', 'version', '-m', binary, output=OUT / 'go-version.txt')
     run('go', 'list', '-m', '-json', 'all', output=OUT / 'go-modules.json')
     run('go', 'list', '-deps', '-json', './cmd/cnpg-backup', output=OUT / 'go-linked.json')
+    go_inventory(OUT)
     cgo = subprocess.check_output(['go', 'list', '-deps', '-f', '{{if .CgoFiles}}{{.ImportPath}}{{end}}', './cmd/cnpg-backup'], text=True)
     if cgo.strip():
         raise RuntimeError('CGO packages linked: ' + cgo)
@@ -80,6 +81,8 @@ if __name__ == '__main__':
         (etc / 'ssl/certs/ca-certificates.crt').write_bytes(b''.join(p.read_bytes() for p in certs))
         notices = root / 'usr/share/cnpg-backup/notices'
         notices.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(OUT / 'go-notices', notices / 'go-modules')
+        shutil.copyfile(OUT / 'go-dependency-scopes.json', notices / 'go-dependency-scopes.json')
         for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
             shutil.copyfile(REPO / name, notices / name)
         for name in ('LICENSE', 'PATENTS'):
@@ -99,7 +102,6 @@ if __name__ == '__main__':
                 raise RuntimeError('missing notice: ' + package['name'])
             shutil.copyfile(copyright, notices / (package['name'] + '.copyright'))
         shutil.copyfile(REPO / 'build/inputs.lock.json', notices / 'inputs.lock.json')
-        copy_notices(OUT / 'go-linked.json', root)
         (OUT / (flavor + '-files.json')).write_text(json.dumps(inventory(root), indent=2) + '\n')
     # Sparse test library path: deliberately does not replace the host's libc.
     # Server-only libraries and host tools remain test dependencies, not images.

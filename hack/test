@@ -22,7 +22,7 @@ python3 --version > artifacts/fast/build-host.txt
 uname -a >> artifacts/fast/build-host.txt
 if command -v dpkg-deb >/dev/null; then dpkg-deb --version >> artifacts/fast/build-host.txt; fi
 cp build/inputs.lock.json artifacts/fast/
-cp build/out/{go-linked.json,go-modules.json,go-version.txt,version.txt,manager-files.json,pg18-files.json} artifacts/fast/
+cp build/out/{go-linked.json,go-modules.json,go-version.txt,version.txt,manager-files.json,pg18-files.json,go-dependency-scopes.json,go-production-packages.json,go-tests-packages.json,go-executable-packages.json} artifacts/fast/
 cp build/out/pg18/usr/share/cnpg-backup/{native-files.json,native-packages.json} artifacts/fast/
 if [[ $profile = cnpg-smoke ]]; then
   python3 hack/images.py
@@ -32,6 +32,10 @@ if [[ $profile = guard ]]; then
   python3 hack/guard.py
 fi
 if [[ $profile = integration ]]; then
+  mkdir -p artifacts/s3
+  CNPG_S3_INTEGRATION=1 CNPG_S3_MINIO_BINARY="$CNPG_BUILD_CACHE/downloads/minio" \
+    go test -json -count=1 -timeout=600s -run '^TestMinIOPrimitives$' ./internal/s3store \
+    | tee artifacts/s3/minio-primitives.jsonl
   for arg in "$@"; do
     if [[ $arg = --images ]]; then
       python3 hack/images.py
