@@ -17,7 +17,13 @@ import (
 
 var walRE = regexp.MustCompile(`^([0-9A-F]{24}|[0-9A-F]{8}\.history|[0-9A-F]{24}\.[0-9A-F]{8}\.backup)$`)
 
+// ValidateWALName checks PostgreSQL's exact filename and segment arithmetic.
+func ValidateWALName(name string, size int64) error { _, e := walTimeline(name, size); return e }
+
 func walTimeline(name string, size int64) (uint32, error) {
+	if size < 1<<20 || size > 1<<30 || size&(size-1) != 0 {
+		return 0, ErrInvalid
+	}
 	if !walRE.MatchString(name) {
 		return 0, ErrInvalid
 	}

@@ -38,6 +38,7 @@ type serverState struct {
 	SummarizeWAL   string            `json:"summarizeWAL"`
 	SummaryMinutes int64             `json:"summaryMinutes"`
 	ArchiveSeconds int64             `json:"archiveSeconds"`
+	ArchiveMode    string            `json:"archiveMode"`
 	Tablespaces    map[string]string `json:"tablespaces"`
 }
 
@@ -52,6 +53,7 @@ const preflightSQL = `SELECT json_build_object(
  'walLevel', current_setting('wal_level'), 'summarizeWAL', current_setting('summarize_wal'),
  'summaryMinutes', (SELECT setting::bigint FROM pg_settings WHERE name='wal_summary_keep_time'),
  'archiveSeconds', (SELECT setting::bigint FROM pg_settings WHERE name='archive_timeout'),
+ 'archiveMode', current_setting('archive_mode'),
  'tablespaces', COALESCE((SELECT json_object_agg(spcname,pg_tablespace_location(oid)) FROM pg_tablespace
  WHERE spcname NOT IN ('pg_default','pg_global')), '{}'::json));`
 
@@ -113,7 +115,18 @@ func command(ctx context.Context, env []string, tool string, args ...string) ([]
 // control metadata checks. It does not capture data or advertise a Backup RPC.
 // Native handlers must first reserve full phase capacity using PreflightCapture,
 // then perform this identity check before and after their operation.
-func Check(ctx context.Context, projection string) error {
+func Check(ctx context.Context, projection string) error { return check(ctx, projection, false) }
+
+// CheckWAL permits standby archiving after promotion/demotion, but retains the
+// actual version/role/format/settings checks. Archive mode must really be on;
+// lifecycle declarations alone cannot establish it.
+func CheckWAL(ctx context.Context, projection string) (Control, error) {
+	if err := check(ctx, projection, true); err != nil {
+		return Control{}, err
+	}
+	return ReadControl(ctx)
+}
+func check(ctx context.Context, projection string, wal bool) error {
 	root, err := configuration.Projection(projection)
 	if err != nil {
 		return err
@@ -192,6 +205,12 @@ func Check(ctx context.Context, projection string) error {
 	var state serverState
 	if json.Unmarshal(output, &state) != nil {
 		return errors.New("invalid native metadata response")
+	}
+	if wal {
+		if state.ArchiveMode != "on" && state.ArchiveMode != "always" {
+			return errors.New("actual archive_mode must be on or always")
+		}
+		state.Primary = true // standby/old-primary WAL flushing is supported, not capture
 	}
 	if err = validateState(state, connection, snapshot.Repository.Spec.Native); err != nil {
 		return err

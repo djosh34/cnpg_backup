@@ -15,6 +15,8 @@ import subprocess
 import time
 import urllib.request
 import uuid
+import sys
+import wal_smoke
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / '.work/cnpg-smoke'
@@ -592,6 +594,7 @@ def main():
     kind_config = {'kind': 'Cluster', 'apiVersion': 'kind.x-k8s.io/v1alpha4', 'nodes': [{'role': 'control-plane'}]}
     (WORK / 'kind.json').write_text(json.dumps(kind_config))
     created = False
+    wal_fixture = None
     report = {'subject_sha': run('git', 'rev-parse', 'HEAD').strip(), 'inputs': LOCK, 'completed': [],
               'profile': 'real-cnpg-lifecycle-smoke', 'release_qualified': False, 'pr_d_complete': False,
               'remaining_mandatory': list(MANDATORY_SCENARIOS)}
@@ -619,10 +622,12 @@ def main():
         kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
         apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 's3-auth', 'namespace': NS},
                'stringData': {'access': 'disposable-test-only-access', 'secret': 'disposable-test-only-secret'}})
+        wal_fixture = wal_smoke.WALFixture(sys.modules[__name__], report)
+        wal_storage = wal_fixture.setup()
         repository = {'apiVersion': 'backup.cnpg-backup.djosh34.github.io/v1alpha1', 'kind': 'Repository',
                       'metadata': {'name': 'destination', 'namespace': NS}, 'spec': {
                           'repositoryID': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-                          's3': {'endpoint': 'https://storage-not-used.invalid', 'bucket': 'test-bucket', 'prefix': 'smoke',
+                          's3': {**wal_storage, 'bucket': 'test-bucket', 'prefix': 'smoke',
                                  'accessKeySecret': {'name': 's3-auth', 'key': 'access'}, 'secretKeySecret': {'name': 's3-auth', 'key': 'secret'}},
                           'workspace': {'storageClassName': 'cnpg-backup-bounded', 'size': '1Gi'}}}
         apply(repository)
@@ -637,7 +642,7 @@ def main():
                             'walStorage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'},
                             'tablespaces': [{'name': 'fast_space', 'storage': {'size': '1Gi', 'storageClass': 'cnpg-backup-bounded'}}],
                             'postgresql': {'parameters': {'summarize_wal': 'on', 'wal_summary_keep_time': '14d', 'archive_timeout': '60s'}},
-                            'plugins': [{'name': 'cnpg-backup.djosh34.github.io', 'parameters': {'repository': 'destination'}}]}}
+                            'plugins': [{'name': 'cnpg-backup.djosh34.github.io', 'isWALArchiver': True, 'parameters': {'repository': 'destination'}}]}}
         # Discovery is asynchronous in the real operator. Use its actual
         # validating admission path as the startup barrier, before creating data.
         admission_attempts = []
@@ -652,6 +657,7 @@ def main():
         kube('wait', '-n', NS, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
         assert_placement()
         report['completed'].append('real-CNPG-1.30-two-instance-initdb-join-WAL-tablespace-startup-and-CRD-CEL')
+        wal_fixture.segment()
         native_metadata_matrix(report)
         repository_status_matrix(report)
         capacity_matrix(data, report)
@@ -684,6 +690,8 @@ def main():
         private_ca_rotation(discovered, report)
         rollout_matrix(repository, report)
         recovery_placement_matrix(cluster, repository, report)
+        wal_fixture.failover()
+        assert not report['wal_remaining'], 'mandatory E WAL scenarios incomplete'
         kube('delete', '-n', NS, 'cluster/database', '--wait=true', '--timeout=120s')
         kube('delete', '-f', WORK / 'install.json', '--wait=true', '--timeout=120s')
         kube('delete', '-f', ROOT / 'config/repository-crd.json', '--wait=true', '--timeout=120s')
@@ -692,6 +700,8 @@ def main():
         assert not report['remaining_mandatory'], 'mandatory lifecycle scenarios not completed'
         print('PASS real CNPG lifecycle smoke; NOT complete PR D acceptance')
     finally:
+        if wal_fixture is not None:
+            wal_fixture.close()
         reconcile_scenarios(report)
         (OUT / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
         if created:

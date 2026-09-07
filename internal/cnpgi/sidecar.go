@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cloudnative-pg/cnpg-i/pkg/identity"
+	wirewal "github.com/cloudnative-pg/cnpg-i/pkg/wal"
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
@@ -23,18 +24,23 @@ import (
 type Identity struct {
 	identity.UnimplementedIdentityServer
 	Revision string
+	WAL      bool
 }
 
 func (s Identity) GetPluginMetadata(context.Context, *identity.GetPluginMetadataRequest) (*identity.GetPluginMetadataResponse, error) {
 	return &identity.GetPluginMetadataResponse{
 		Name: recoveryguard.PluginName, Version: "development-" + s.Revision,
-		DisplayName: "CNPG Backup", Description: "CNPG backup lifecycle foundation (data services unavailable)",
+		DisplayName: "CNPG Backup", Description: "CNPG backup lifecycle and synchronous WAL",
 		ProjectUrl: "https://github.com/djosh34/cnpg_backup", RepositoryUrl: "https://github.com/djosh34/cnpg_backup",
 		License: "All rights reserved", LicenseUrl: "https://github.com/djosh34/cnpg_backup/blob/main/LICENSE", Maturity: "alpha",
 	}, nil
 }
 func (s Identity) GetPluginCapabilities(context.Context, *identity.GetPluginCapabilitiesRequest) (*identity.GetPluginCapabilitiesResponse, error) {
-	return &identity.GetPluginCapabilitiesResponse{}, nil
+	result := &identity.GetPluginCapabilitiesResponse{}
+	if s.WAL {
+		result.Capabilities = []*identity.PluginCapability{{Type: &identity.PluginCapability_Service_{Service: &identity.PluginCapability_Service{Type: identity.PluginCapability_Service_TYPE_WAL_SERVICE}}}}
+	}
+	return result, nil
 }
 func (s Identity) Probe(context.Context, *identity.ProbeRequest) (*identity.ProbeResponse, error) {
 	info, err := os.Stat(recoveryguard.HelperPath)
@@ -47,9 +53,13 @@ func (s Identity) Probe(context.Context, *identity.ProbeRequest) (*identity.Prob
 
 // Serve uses a real listener also shared by the private guard control stream.
 // Stopping is uncertainty, not a clean Drain acknowledgment.
-func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.Admission, revision string) error {
-	server := grpc.NewServer(grpc.MaxRecvMsgSize(32<<10), grpc.MaxSendMsgSize(32<<10), grpc.MaxConcurrentStreams(16))
-	identity.RegisterIdentityServer(server, Identity{Revision: revision})
+func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.Admission, revision string, wal ...*WALService) error {
+	server := grpc.NewServer(grpc.MaxRecvMsgSize((1<<20)+(32<<10)), grpc.MaxSendMsgSize(32<<10), grpc.MaxConcurrentStreams(16))
+	enabled := len(wal) == 1 && wal[0] != nil && admission == nil
+	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: enabled})
+	if enabled {
+		wirewal.RegisterWALServer(server, wal[0])
+	}
 	if admission != nil {
 		recoveryguard.RegisterControl(server, admission)
 	}
@@ -157,6 +167,9 @@ func RunSidecar(ctx context.Context, recovery bool, revision string) error {
 	defer listener.Close()
 	if err = os.Chmod(recoveryguard.SocketPath, 0600); err != nil {
 		return err
+	}
+	if !recovery {
+		return Serve(ctx, listener, admission, revision, &WALService{})
 	}
 	return Serve(ctx, listener, admission, revision)
 }

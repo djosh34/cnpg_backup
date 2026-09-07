@@ -108,10 +108,6 @@ func (c Cluster) Repositories() (destination, source string, err error) {
 		if destination != "" || len(p.Parameters) != 1 || p.Parameters["repository"] == "" {
 			return fail()
 		}
-		// No WAL capability yet: choosing this plugin as archiver is not supported.
-		if p.IsWALArchiver {
-			return "", "", errors.New("WAL data service is not implemented")
-		}
 		destination = p.Parameters["repository"]
 	}
 	if destination == "" {
