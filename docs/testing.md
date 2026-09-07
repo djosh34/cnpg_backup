@@ -107,6 +107,21 @@ Release-qualified means the exact candidate artifact passed every applicable man
 
 The initial campaign duration fits under GitHub-hosted runners' documented six-hour job limit; recheck current platform execution limits when implementing. No claim that CI chaos simulates physical power failure, every network interleaving or Dell-specific implementation behavior.
 
+## PR G campaign implementation notes
+
+The actual full/PITR entry point is `./hack/test recovery-campaign`; interface,
+31 fixed families, test-only observation/injection arrangements, evidence limits
+and trusted manual/reusable workflow are documented in
+[recovery-campaign.md](recovery-campaign.md). It consumes existing subject image
+digests without entering the source-build pipeline. The G-only profiles never
+claim H–K or release qualification; incomplete mandatory coverage fails.
+
+The disjoint harness author's local evidence is compilation/unit tests only,
+not integrated CNPG execution. The existing D/E/F smoke gates remain separate;
+their fresh-preflight negative now expects protected materialization rejection
+once G is integrated, rather than absence of a Restore capability. Historical
+D logs remain unchanged; their G failure projection is explicitly unit-only.
+
 ## Primary references
 
 - [GitHub Actions limits](https://docs.github.com/en/actions/reference/limits).

@@ -1,9 +1,11 @@
 # Foundation build and native recovery harness (PR A)
 
-This is a build/test foundation, **not a functional CNPG plugin or a qualified
-release**. Only `cnpg-backup version` succeeds. All five service modes fail closed;
-`wal-fetch` exits **255**, never PostgreSQL's allowed-missing exit 1. No backup,
-storage, retention or CNPG implementation is included.
+This page describes the historical PR A build/test foundation, **not release
+qualification**. Runtime features were added in subsequent PRs; its original
+unsupported-mode state is not a description of current runtime capabilities.
+For PR G's actual full/PITR acceptance, see [recovery-campaign.md](recovery-campaign.md).
+That entry point consumes exact existing subject images and deliberately bypasses
+the source-build pipeline documented below.
 
 ## Run
 
@@ -20,6 +22,11 @@ installation or production credentials/endpoints are accepted.
 ./hack/test integration --seed 1806 --images    # CI acceptance profile
 # Diagnostic only when local MinIO cannot execute; NOT MinIO acceptance:
 ./hack/test integration --seed 1806 --native-only
+# Exact-artifact CNPG full/PITR (requires integrated G images, no subject build):
+./hack/test recovery-campaign --subject-sha <sha> \
+  --manager-image ghcr.io/djosh34/cnpg-backup-manager@sha256:<digest> \
+  --data-image ghcr.io/djosh34/cnpg-backup-pg18@sha256:<digest> \
+  --profile recovery --seed 1806 --duration-minutes 120
 ```
 
 `CNPG_BUILD_CACHE=/absolute/disk/path` optionally relocates verified tool inputs;
