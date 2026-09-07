@@ -33,12 +33,13 @@ type Entry struct {
 
 // Catalog is a private, disk-spooled complete snapshot. No caller sees partial
 // LIST output. It retains no in-memory graph/index; full-parent edges are exact
-// bounded GETs. A Hold must still be admitted when visiting a selection catalog.
+// bounded GETs. Manifests are verified; artifact HEADs establish existence/size,
+// NOT payload integrity. Select and winning-result replay verify actual bytes.
+// A Hold must still be admitted when visiting a selection catalog.
 type Catalog struct {
 	mu     sync.Mutex
 	hold   *Hold
 	file   *os.File
-	count  int
 	closed bool
 }
 
@@ -79,10 +80,6 @@ func (r *Repository) spoolCatalog(ctx context.Context, l CatalogLimits) (f *os.F
 		if kind != "commit" {
 			return r.validateListedMetadata(ctx, i.Key)
 		}
-		count++
-		if count > l.MaxRecords {
-			return ErrCapacity
-		}
 		c, b, info, e := r.readCommit(ctx, uid)
 		if e != nil {
 			return e
@@ -97,10 +94,14 @@ func (r *Repository) spoolCatalog(ctx context.Context, l CatalogLimits) (f *os.F
 			return e
 		}
 		if !retired {
-			if e = r.parent(ctx, c); e != nil {
+			count++
+			if count > l.MaxRecords {
+				return ErrCapacity
+			}
+			if e = r.parentMetadata(ctx, c); e != nil {
 				return e
 			}
-			if e = r.verifyPayload(ctx, c); e != nil {
+			if e = r.payloadMetadata(ctx, c); e != nil {
 				return e
 			}
 		}

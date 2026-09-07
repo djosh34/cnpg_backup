@@ -43,6 +43,10 @@ func (h *Hold) Begin(ctx context.Context, req Request) (*Attempt, *Result, error
 	if e := req.validate(r.id); e != nil {
 		return nil, nil, e
 	}
+	if req.RootBackupUID != nil {
+		root := *req.RootBackupUID
+		req.RootBackupUID = &root
+	}
 	b, _ := json.Marshal(req)
 	_, e := r.put(ctx, r.backup(req.BackupUID)+"request.json", b, s3store.Condition{Create: true})
 	if ambiguous(e) {
@@ -97,7 +101,8 @@ func (h *Hold) Begin(ctx context.Context, req Request) (*Attempt, *Result, error
 	}
 	return &Attempt{hold: h, request: req, claim: cl}, nil, nil
 }
-func (a *Attempt) ID() string { return a.claim.AttemptID }
+func (a *Attempt) ID() string            { return a.claim.AttemptID }
+func (a *Attempt) RequestSHA256() string { return a.claim.RequestSHA256 }
 
 // Publish consumes this attempt exactly once. The native caller has already
 // verified the ORIGINAL manifest/tars/WAL and capture postflight. This module
