@@ -35,12 +35,18 @@ class LifecycleHarness(unittest.TestCase):
         self.assertTrue(cnpg_smoke.admission_ready('cluster.postgresql.cnpg.io/database serverside-applied (server dry run)'))
         self.assertFalse(cnpg_smoke.admission_ready('plugin connection not ready'))
 
-    def test_live_identity_has_only_namespaced_pod_get_permission(self):
+    def test_live_identity_has_only_namespaced_pod_read_permissions(self):
         image = 'test/image@sha256:' + '1' * 64
         objects = cnpg_smoke.renderer.render(image, image, 'cnpg-system', 'managed', ['auth'])['items']
         grants = [(obj['kind'], obj['metadata']['namespace'], rule['verbs'])
                   for obj in objects for rule in obj.get('rules', []) if 'pods' in rule['resources']]
-        self.assertEqual(grants, [('Role', 'managed', ['get'])])
+        self.assertEqual(len(grants), 1)
+        self.assertEqual(grants[0][:2], ('Role', 'managed'))
+        self.assertIn('get', grants[0][2])
+        # G's all-retry-Pod completion evidence adds list/watch, not Pod writes,
+        # exec, wildcard scope or a cluster-wide role. D's get-only subset remains
+        # valid for the disjoint base; actual G requires completion in campaign.
+        self.assertLessEqual(set(grants[0][2]), {'get', 'list', 'watch'})
         self.assertFalse(any('pods/exec' in rule['resources'] or '*' in rule['resources']
                              for obj in objects for rule in obj.get('rules', [])))
 
@@ -173,8 +179,12 @@ class LifecycleHarness(unittest.TestCase):
                     'status': {'containerStatuses': [main], 'initContainerStatuses': [c for c in containers if c != main]}}]})
             if args[0] == 'logs':
                 logs = observations[case]['logs']
-                if case == 'fresh' and wrong_cause is not None:
-                    logs = logs.replace('no plugin supports the restore job hooks capability', wrong_cause)
+                if case == 'fresh':
+                    # Preserve historical D logs on disk. This unit-only G
+                    # projection is NOT executed CNPG materialization evidence.
+                    logs = logs.replace('no plugin supports the restore job hooks capability',
+                                        'rpc error: code = FailedPrecondition desc = protected full restore failed'
+                                        if wrong_cause is None else wrong_cause)
                 return logs
             self.assertIn(args[0], ('patch', 'annotate', 'delete'))
             return ''
@@ -201,7 +211,7 @@ class LifecycleHarness(unittest.TestCase):
             cnpg_smoke.recovery_placement_matrix(cluster, repository, report)
         self.assertEqual(len(state['file_checks']), 14)  # 3 per poison, 2 preflight + 3 clean Drain markers.
 
-    def test_recovery_matrix_saved_real_failures_complete_all_four_cases(self):
+    def test_recovery_matrix_historical_poison_and_synthetic_G_failure_complete_four_cases(self):
         report = {'completed': []}
         self.replay_recovery_matrix(report)
         self.assertEqual(report['completed'], list(cnpg_smoke.MANDATORY_SCENARIOS[10:14]))
@@ -216,10 +226,10 @@ class LifecycleHarness(unittest.TestCase):
                 self.assertEqual(report['completed'], list(cnpg_smoke.MANDATORY_SCENARIOS[10:10 + cases.index(changed[0])]))
 
     def test_recovery_matrix_rejects_wrong_fresh_failure_cause_before_completion(self):
-        for cause in ('unrelated certificate failure', 'TargetOwnershipUncertain', ''):
+        for cause in ('unrelated certificate failure', 'TargetOwnershipUncertain', '', 'no plugin supports the restore job hooks capability'):
             with self.subTest(cause=cause):
                 report = {'completed': []}
-                with self.assertRaisesRegex(AssertionError, 'unsupported materialization'):
+                with self.assertRaisesRegex(AssertionError, 'invalid materialization'):
                     self.replay_recovery_matrix(report, wrong_cause=cause)
                 self.assertEqual(report['completed'], list(cnpg_smoke.MANDATORY_SCENARIOS[10:13]))
 

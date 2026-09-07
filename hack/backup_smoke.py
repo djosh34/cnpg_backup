@@ -18,10 +18,10 @@ import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 
 
-def bounded_capture_workspaces(h):
+def bounded_capture_workspaces(h, count=20):
     h.apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'cnpg-backup-capture'},
              'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
-    for i in range(20):
+    for i in range(count):
         path = f'/var/local/cnpg-backup-capture-{i}'
         h.save_log(f'capture-finite-fs-{i}.log', h.provision_filesystem(path, '8G'))
         h.apply({'apiVersion': 'v1', 'kind': 'PersistentVolume', 'metadata': {'name': f'cnpg-backup-capture-{i}'},

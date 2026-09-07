@@ -4,7 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 profile=${1:-fast}
 shift || true
-case "$profile" in fast|integration|guard|cnpg-smoke) ;; *) echo 'usage: hack/test fast|integration|guard|cnpg-smoke [--seed N] [--images]' >&2; exit 2;; esac
+# Exact-artifact campaigns must bypass the source build/image pipeline below.
+if [[ $profile = recovery-campaign ]]; then
+  exec python3 hack/recovery_campaign.py "$@"
+fi
+case "$profile" in fast|integration|guard|cnpg-smoke) ;; *) echo 'usage: hack/test fast|integration|guard|cnpg-smoke|recovery-campaign [options]' >&2; exit 2;; esac
 export CNPG_BUILD_CACHE=${CNPG_BUILD_CACHE:-"$PWD/.work/tools"}
 python3 hack/bootstrap.py
 export PATH="$CNPG_BUILD_CACHE/go/bin:$PATH" CGO_ENABLED=0 GOTOOLCHAIN=local

@@ -502,9 +502,10 @@ def rollout_matrix(repository, report):
 
 def recovery_placement_matrix(cluster, repository, report):
     # These are real CNPG-generated recovery Jobs and the actual CNPG binary,
-    # not guardfixture's replacement command. No Restore capability is added:
-    # clean cases must fail at unavailable materialization, after proving guard
-    # ownership covered CNPG's mutating pre-RPC preflight. Full replay belongs G.
+    # not guardfixture's replacement command. The deliberately invalid seeded
+    # tablespace and undersized 1Gi targets must fail protected materialization,
+    # after proving the guard covered CNPG's mutating pre-RPC preflight. Actual
+    # successful full/PITR SQL belongs to the separate recovery campaign.
     for poison in ('pgdata', 'wal', 'tablespace', None):
         name = 'recover-' + (poison or 'fresh')
         target_repo = json.loads(json.dumps(repository))
@@ -563,12 +564,12 @@ def recovery_placement_matrix(cluster, repository, report):
         else:
             # This case distinguishes a working fence from a guard that never
             # admits even a fresh owner. CNPG itself deletes the invalid seeded
-            # PGDATA/WAL, then reports unsupported plugin materialization.
+            # PGDATA/WAL, then rejects the deliberately invalid recovery target.
             assert 'cleaning up existing data directory' in logs and 'cleaning up existing WAL directory' in logs, logs[-6000:]
             records = [json.loads(line) for line in logs.splitlines() if line.startswith('{')]
             assert any(record.get('level') == 'error' and record.get('msg') == 'restore error'
-                       and record.get('error') == 'while restoring cluster: no plugin supports the restore job hooks capability'
-                       for record in records), 'fresh recovery must fail for unsupported materialization: ' + logs[-6000:]
+                       and 'protected full restore failed' in record.get('error', '')
+                       for record in records), 'fresh guarded recovery must reject invalid materialization, not lack capability: ' + logs[-6000:]
             for role in ('pgdata', 'wal'):
                 path, directory = backing[role]
                 run('docker', 'exec', NAME + '-control-plane', 'test', '!', '-e', path + '/' + directory + '/preflight-sentinel')

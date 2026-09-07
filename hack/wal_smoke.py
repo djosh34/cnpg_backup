@@ -166,11 +166,15 @@ class WALFixture:
             assert expect in result and (expect == 'NotFound' or 'NotFound' not in result), 'fault was misclassified: ' + result
         return result
 
-    def control(self, mode=None):
+    def control(self, mode=None, name=None):
         args = ['curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '5', '--cacert', self.directory / 'ca.crt']
         if mode is not None:
             args += ['-X', 'POST']
-        return json.loads(self.h.run(*args, 'https://localhost:19000/fixture-control' + ('?mode=' + mode if mode is not None else '')))
+        if name is not None:
+            import re
+            assert re.fullmatch('[0-9A-F]{24}', name), 'unsafe test WAL filter'
+        return json.loads(self.h.run(*args, 'https://localhost:19000/fixture-control' +
+                                    ('?mode=' + mode if mode is not None else '') + ('&name=' + name if name else '')))
 
     def metrics(self, pod):
         h = self.h

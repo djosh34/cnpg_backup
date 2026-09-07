@@ -1,0 +1,110 @@
+name: recovery-campaign
+on:
+  workflow_dispatch:
+    inputs:
+      subject_sha:
+        description: Exact trusted subject commit (40 lowercase hex)
+        required: true
+        type: string
+      trusted_ref:
+        description: Repository-owned subject branch (SHA must be reachable)
+        type: choice
+        options: [main, implementation/pr-g]
+        default: main
+      manager_image:
+        description: ghcr.io/djosh34/cnpg-backup-manager@sha256 digest
+        required: true
+        type: string
+      data_image:
+        description: ghcr.io/djosh34/cnpg-backup-pg18@sha256 digest
+        required: true
+        type: string
+      profile:
+        type: choice
+        options: [smoke, recovery, qualification]
+        default: recovery
+      seed:
+        type: string
+        default: '1806'
+      duration_minutes:
+        type: string
+        default: '120'
+  workflow_call:
+    inputs:
+      subject_sha:
+        required: true
+        type: string
+      trusted_ref:
+        type: string
+        default: main
+      manager_image:
+        required: true
+        type: string
+      data_image:
+        required: true
+        type: string
+      profile:
+        type: string
+        default: recovery
+      seed:
+        type: string
+        default: '1806'
+      duration_minutes:
+        type: string
+        default: '120'
+permissions:
+  contents: read
+# Independent candidates/seeds never cancel required evidence.
+concurrency:
+  group: recovery-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+jobs:
+  recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      SUBJECT_SHA: ${{ inputs.subject_sha }}
+      TRUSTED_REF: ${{ inputs.trusted_ref }}
+      MANAGER_IMAGE: ${{ inputs.manager_image }}
+      DATA_IMAGE: ${{ inputs.data_image }}
+      PROFILE: ${{ inputs.profile }}
+      SEED: ${{ inputs.seed }}
+      DURATION: ${{ inputs.duration_minutes }}
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
+      GOMAXPROCS: '2'
+      GOFLAGS: -p=2
+    steps:
+      # Harness is the immutable workflow revision, NEVER the subject input.
+      # This workflow must be published on main before manual dispatch is usable.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate trusted source and bounded inputs without executing subject code
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          python3 hack/campaign_trust.py
+      - name: Same local harness, exact existing images, bounded actual recovery
+        run: |
+          ./hack/test recovery-campaign --subject-sha "$SUBJECT_SHA" \
+            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
+            --profile "$PROFILE" --seed "$SEED" --duration-minutes "$DURATION"
+      - name: Always collect bounded redacted diagnostics
+        if: always()
+        run: |
+          python3 hack/recovery_campaign.py --collect --subject-sha "$SUBJECT_SHA" \
+            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
+            --profile "$PROFILE" --seed "$SEED" --duration-minutes "$DURATION"
+          if test -f artifacts/recovery-campaign/summary.md; then
+            python3 -c 'import os,pathlib; p=pathlib.Path("artifacts/recovery-campaign/summary.md"); open(os.environ["GITHUB_STEP_SUMMARY"],"a").write(p.read_text())'
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/recovery-campaign/
+          if-no-files-found: error
+          retention-days: 14
