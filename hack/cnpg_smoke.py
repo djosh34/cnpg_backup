@@ -22,9 +22,35 @@ OUT = ROOT / 'artifacts/cnpg-smoke'
 LOCK = json.loads((ROOT / 'build/kubernetes-inputs.lock.json').read_text())
 NAME = 'cnpg-backup-smoke'
 NS = 'backup-smoke'
+# Named acceptance evidence, appended only after each family's assertions pass.
+# This registry is not a declaration of data/replay or release qualification.
+MANDATORY_SCENARIOS = (
+    'real-CNPG-1.30-two-instance-initdb-join-WAL-tablespace-startup-and-CRD-CEL',
+    'actual-native-streaming-replica-cert-local-SAN-auth-settings-control-layout-and-standby-rejection',
+    'real-Repository-status-generation-secret-rotation-and-Warning-throttle',
+    'actual-capacity-finite-accepted',
+    'actual-capacity-emptydir-rejected',
+    'actual-capacity-localpath-rejected',
+    'manager-restart-reconcile-idempotency',
+    'actual-operator-server-leaf-rotation',
+    'actual-operator-leaf-and-private-CA-overlap-rotation-and-retirement',
+    'real-defaulted-live-Pod-config-and-immutable-image-rollout-idempotency',
+    'actual-CNPG-before-preflight-pgdata-poison-rejected-with-no-target-mutation',
+    'actual-CNPG-before-preflight-wal-poison-rejected-with-no-target-mutation',
+    'actual-CNPG-before-preflight-tablespace-poison-rejected-with-no-target-mutation',
+    'actual-fresh-Cluster-all-fresh-PVC-guard-Begin-CNPG-preflight-clean-Drain',
+    'plugin-uninstall',
+)
 spec = importlib.util.spec_from_file_location('install_render', ROOT / 'config/render.py')
 renderer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(renderer)
+
+
+def reconcile_scenarios(report):
+    completed = report['completed']
+    assert len(completed) == len(set(completed)), 'duplicate scenario evidence'
+    assert set(completed) <= set(MANDATORY_SCENARIOS), 'unknown scenario evidence'
+    report['remaining_mandatory'] = [name for name in MANDATORY_SCENARIOS if name not in completed]
 
 
 def redact_diagnostics(text):
@@ -562,8 +588,7 @@ def main():
     created = False
     report = {'subject_sha': run('git', 'rev-parse', 'HEAD').strip(), 'inputs': LOCK, 'completed': [],
               'profile': 'real-cnpg-lifecycle-smoke', 'release_qualified': False, 'pr_d_complete': False,
-              'remaining_mandatory': ['operator private-CA overlap rotation', 'real recovery Job Begin/Drain/poison placement',
-                                      'full lifecycle rollout/defaulting matrix and repository status reconciliation']}
+              'remaining_mandatory': list(MANDATORY_SCENARIOS)}
     try:
         run(WORK / 'kind-linux-amd64', 'create', 'cluster', '--name', NAME, '--image', LOCK['kindNode'],
             '--config', WORK / 'kind.json', '--kubeconfig', WORK / 'kubeconfig', '--wait', '120s')
@@ -657,8 +682,11 @@ def main():
         kube('delete', '-f', WORK / 'install.json', '--wait=true', '--timeout=120s')
         kube('delete', '-f', ROOT / 'config/repository-crd.json', '--wait=true', '--timeout=120s')
         report['completed'].append('plugin-uninstall')
+        reconcile_scenarios(report)
+        assert not report['remaining_mandatory'], 'mandatory lifecycle scenarios not completed'
         print('PASS real CNPG lifecycle smoke; NOT complete PR D acceptance')
     finally:
+        reconcile_scenarios(report)
         (OUT / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
         if created:
             collect_pod_evidence()

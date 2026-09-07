@@ -12,6 +12,22 @@ import godeps
 
 
 class LifecycleHarness(unittest.TestCase):
+    def test_manifest_remaining_matches_asserted_named_completions(self):
+        expected = cnpg_smoke.MANDATORY_SCENARIOS
+        self.assertEqual(len(expected), 15)
+        for missing in (None, *expected):
+            with self.subTest(missing=missing):
+                report = {'completed': [name for name in expected if name != missing],
+                          'remaining_mandatory': ['stale text'], 'release_qualified': False, 'pr_d_complete': False}
+                cnpg_smoke.reconcile_scenarios(report)
+                self.assertEqual(report['remaining_mandatory'], [missing] if missing else [])
+                self.assertFalse(set(report['completed']) & set(report['remaining_mandatory']))
+                self.assertFalse(report['release_qualified'])
+                self.assertFalse(report['pr_d_complete'])
+        for completed in ([expected[0], expected[0]], ['invented-case']):
+            with self.assertRaises(AssertionError):
+                cnpg_smoke.reconcile_scenarios({'completed': completed})
+
     def test_cnpg_image_keeps_version_tag_and_immutable_digest(self):
         self.assertRegex(cnpg_smoke.LOCK['database'], r':18\.6@sha256:[0-9a-f]{64}$')
         with self.assertRaises(RuntimeError):

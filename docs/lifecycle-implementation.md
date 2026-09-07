@@ -141,8 +141,22 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
   exported. Log redaction removes private-key blocks and credential-bearing
   lines; command failures/timeouts never reflect argv/input, and Secret command
   failures suppress output. Collection API errors record only exception types.
-- Real lifecycle matrix execution remains in progress. Definitions and local
-  fakes do not constitute a hosted CNPG PASS. Local Docker and GCC are unavailable;
+- First actual full lifecycle matrix PASS: run34089654866 at3074da6, with all15
+  completed cases retained in the orchestrator's `pr-d-cnpg-first-pass` evidence.
+  That includes native summary rejection/recovery, finite/emptyDir/localpath,
+  status/Warning/credential rotation, manager restart, live config/image rollout,
+  actual mTLS leaf/private-CA overlap, all three preflight poison controls, fresh
+  Begin/preflight/Drain and uninstall. This is prior-SHA scoped evidence, not
+  final-SHA review, full data recovery or product qualification. The historical
+  manifest's broad `remaining_mandatory` text was not updated during execution;
+  its exact completed list records the15 executed cases. The current harness
+  derives remaining entries from that exact15-name registry on success/failure,
+  rejects duplicate/unknown completion evidence and refuses PASS with a missing
+  family. Completions still occur only after the existing runtime assertions;
+  neither release_qualified nor pr_d_complete is promoted by this bookkeeping.
+  A regression omits each family in turn and rejects completed/remaining overlap.
+  Current final-SHA CI
+  and independent rechecks remain required. Local Docker/GCC are unavailable;
   hosted CI supplies real namespaces/CNPG and test-only race compilation.
 
 ## Preserved first failures and dependency reconciliation
@@ -192,9 +206,23 @@ and **all fresh target PVCs**, never marker removal based on a clock/dead PID.
    exact original error, cleanup after lost SET response/probe failure, and
    wrong-reason/zero-exit negative controls. Hosted confirmation remains pending.
 
+9. PR-result foundation34089658170 at3074da6 failed during repository test
+   bucket setup with `XMinioServerNotInitialized`/503; the paired foundation run
+   passed. Pinned MinIO07c3a429's `cmd/healthcheck-handler.go` readiness handler
+   returns200 with an offline header when ObjectAPI is nil, while
+   `cmd/bucket-handlers.go` rejects bucket creation before mutation. Both test
+   harnesses now use `hack/miniofixture.CreateBucket`:30s startup-only deadline,
+   100ms waits, retry only that exact code+503, SDK MaxRetries1. Auth/403, other
+   503s, already-existing buckets and ambiguous transport failures remain errors;
+   no product operation retries changed. Deterministic SDK regression reproduces
+   the original error and checks initialized progress, deadline/cancellation and
+   unrelated-error negative controls. This does not establish the cause of C's
+   historical failure whose original setup diagnostics were discarded.
+
 C mergecca29ed was reconciled into D at3074da6 without conflicts; both MinIO
-integration targets and D's guard/CNPG entry points remain. Repository/S3 source
-matches C exactly. Full local Go tests/vet, Python harness, CRD and static/native
+integration targets and D's guard/CNPG entry points remain. Repository/S3 product
+source still matches C exactly; only their test bucket setup now uses the narrow
+shared initialization barrier. Full local Go tests/vet, Python harness, CRD and static/native
 build checks pass at3074da6. This is not hosted acceptance or G's lifecycle hold
 integration; data capabilities remain safely unadvertised.
 

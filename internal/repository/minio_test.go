@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djosh34/cnpg_backup/hack/miniofixture"
 	"github.com/djosh34/cnpg_backup/internal/s3store"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -315,7 +316,7 @@ func startRepositoryMinIO(t *testing.T) s3store.Config {
 	}
 	setupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if e = core.MakeBucket(setupCtx, c.Bucket, minio.MakeBucketOptions{Region: c.Region}); e != nil {
+	if e = miniofixture.CreateBucket(setupCtx, core, c.Bucket, c.Region); e != nil {
 		re := minio.ToErrorResponse(e)
 		code := re.Code
 		if len(code) > 80 || strings.ContainsAny(code, " /\r\n") {
