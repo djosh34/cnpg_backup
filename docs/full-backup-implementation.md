@@ -43,6 +43,19 @@ downloaded artifact hashes, shell-free native verification/required-WAL failure,
 and a test-only downloaded-full SQL restore with tablespace/separate WAL. This
 is not the PR G production restore path or post-backup PITR qualification.
 
+Test-only `hack/backupcontrol` observes real native processes and injects SIGTERM,
+SIGKILL, bounded cgroup-v2 group OOM, and actual finite-workspace ENOSPC. The OOM
+case requires an observed `OOMKilled` termination, not just exit 137. Native
+processes are paused only to make the OOM/space fault preconditions deterministic.
+The proxy can hold an artifact body or an acknowledged commit response; the latter
+must reach the configured operation deadline and then replay the same UID's
+unchanged durable winner. None of these actors or controls ship in runtime images.
+
+The manager's independent S3 history metrics are compared with S3 LastModified,
+including a failed callback with a durable commit. Pinned promtool 3.5.0 runs all
+16 alert scenarios/128 assertions through `hack/test`; race CI provisions it too.
+Native parser fuzz targets also receive bounded hosted fuzz runs.
+
 ### Preserved initial failures
 
 At `1d34133b1c4c2c44681c4b7b29ce3375da16c48f`, hosted
@@ -61,6 +74,16 @@ paths, regular files with that prefix, and canonical alias duplicates remain
 rejected. This narrow native-format reconciliation preserves confinement and
 original tar bytes; it is not a general traversal exception. Local Unix-socket
 fixtures are parser/process evidence, not CNPG certificate/image qualification.
+
+At `6b15ceff3eff37e1a70c34d01f578e950554e90f`, all three hosted workflows passed,
+including both native captures and downloaded-input SQL oracles. At `3ebbe1e`,
+actual WAL-under-artifact-transfer, both capture types, S3-only SQL verification,
+and credential-failure freshness/counter/Warning assertions passed. That run then
+correctly failed because the next fault started before kubelet restored the valid
+credential generation. The harness now requires actual native projection recovery,
+not API Secret update acknowledgment. Earlier transfer evidence also exposed an
+empty-segment LSN guess; the oracle now inserts real WAL and uses the switch LSN.
+These failures remain in hosted artifacts, rather than being relabeled as passes.
 
 The harness records completed versus remaining fault families explicitly.
 Unexecuted SIGTERM/OOM/workspace/credential/late-commit and observability cases

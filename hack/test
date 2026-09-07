@@ -19,6 +19,7 @@ export GOTMPDIR="$PWD/.work/tmp" TMPDIR="$PWD/.work/tmp"
 go vet ./... 2>&1 | tee artifacts/fast/vet.log
 go test -count=1 -timeout=120s ./... 2>&1 | tee artifacts/fast/unit.log
 python3 -m unittest discover -s hack -p 'test_*.py' 2>&1 | tee artifacts/fast/harness-unit.log
+python3 hack/backup_metrics_smoke.py --self-test 2>&1 | tee artifacts/fast/metrics-harness-unit.log
 python3 hack/repository_crd.py --check
 python3 hack/build.py
 python3 hack/checkbuild.py | tee artifacts/fast/image-root-check.log

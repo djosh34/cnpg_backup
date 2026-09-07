@@ -323,6 +323,10 @@ def credential_failure(h, wal, report, metrics):
         h.kube('patch', 'secret', 's3-auth', '-n', h.NS, '--type=merge', '-p', json.dumps(
             {'data': {'secret': base64.b64encode(b'disposable-test-only-secret').decode()}}))
     assert attempted
+    # Restoring the API Secret does not synchronously update kubelet's volume.
+    # Require the next operation to see the actual valid native generation.
+    h.wait(lambda: h.kube('exec', '-n', h.NS, pod, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup',
+                          'instance', '--check-native', check=False) == '', 'actual restored native credential projection', 180)
     metrics.assert_failed('full-missing-credentials', before)
     report['full_completed'].append('credentials')
     report['full_remaining'].remove('credentials')
