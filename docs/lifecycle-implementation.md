@@ -65,7 +65,7 @@ retention and metrics are reserved for subsequent feature PRs.
 
 ## Evidence and commands
 
-- `go vet ./...`, CGO-disabled `go test -count=1 -timeout=120s ./...`, seven Python
+- `go vet ./...`, CGO-disabled `go test -count=1 -timeout=120s ./...`, eight Python
   harness tests, CRD generation check, and actual static binary/image-root builds
   with exact executable inventories passed locally for the current milestone.
 - Tests exercise real locks/marker poison, link/FIFO rejection, helper install,
@@ -80,7 +80,8 @@ retention and metrics are reserved for subsequent feature PRs.
   executable bits. Regression/fix af46a84 sets test binaries0555 without relaxing
   non-root/read-only/capability restrictions. Owner reports foundation34080053536
   and real namespace guard34080053527 PASS at af46a84; first-failure evidence is
-  retained. These results do not cover later manager/configuration changes.
+  retained. Owner subsequently reports foundation34081742505 and guard34081742557
+  PASS at01d0604, including the manager/configuration build changes.
 - `hack/test guard` runs production PID1/control code in real Docker namespaces
   with a **test-only replacement for CNPG's command**. This is not CNPG acceptance.
 - `hack/test cnpg-smoke` / `.github/workflows/cnpg-smoke.yml` define actual pinned
@@ -89,7 +90,13 @@ retention and metrics are reserved for subsequent feature PRs.
   leaf rotation and uninstall. Workspace fixtures use distinct finite ext4
   loopback filesystems, NOT kind's unbounded local-path directories. The harness
   consumes actual built-image digests resolved inside kind and preserves input
-  digests/logs. **New smoke is unexecuted locally (no Docker), not a PASS claim.**
+  digests/logs. **Local execution is unavailable (no Docker).** Hosted34081742644
+  at01d0604 provisioned real kind and reached Repository CRD installation, which
+  failed: composite `native.default={}` and `retention.default={}` lacked keys
+  referenced by CEL. The generator now materializes complete nested defaults;
+  CEL constraints are unchanged. A regression fails on the old empty defaults and
+  passes on the regenerated CRD. Hosted rerun is pending; real CNPG multi-instance,
+  restart, rotation and uninstall acceptance has **not** passed.
 - `build/kubernetes-inputs.lock.json` records downloaded-and-checksummed kind0.33,
   kubectl1.35.8, CNPG1.30 and cert-manager1.21.1 manifests. Registry manifest bytes
   were fetched and hashed for the CNPG/cert-manager images. The Kubernetes1.35.8
@@ -98,8 +105,9 @@ retention and metrics are reserved for subsequent feature PRs.
 
 ## Exact remaining mandatory frontier
 
-1. Run/diagnose the **new** hosted real CNPG smoke and current-SHA foundation/guard
-   regressions. No real lifecycle acceptance is established until those execute.
+1. Rerun/diagnose the hosted real CNPG smoke after the composite-default fix, plus
+   current-SHA foundation/guard regressions. The first real smoke stopped at CRD
+   application; no multi-instance lifecycle acceptance is established yet.
 2. Extend real CNPG tests to private-CA overlap rotation (not just leaf), recovery
    Job placement and ownership through actual CNPG preflight, and live image/config
    rollout/defaulting. Complete source/destination and supported bootstrap golden

@@ -12,7 +12,12 @@ def obj(properties, required=(), default=None, rules=()):
     if required:
         result['required'] = list(required)
     if default is not None:
-        result['default'] = default
+        # Kubernetes validates this declared object against its CEL rules before
+        # recursively applying child defaults. An empty object therefore cannot
+        # safely reference self.enabled / sibling budget fields. Materialize the
+        # same defaults explicitly, including nested objects; keep CEL unchanged.
+        result['default'] = {key: value['default'] for key, value in properties.items() if 'default' in value}
+        result['default'].update(default)
     if rules:
         result['x-kubernetes-validations'] = [{'rule': rule, 'message': message} for rule, message in rules]
     return result

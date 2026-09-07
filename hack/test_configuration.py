@@ -24,6 +24,20 @@ class ConfigurationManifests(unittest.TestCase):
         self.assertNotIn('x-kubernetes-preserve-unknown-fields', json.dumps(doc))
         self.assertIn('self == oldSelf', json.dumps(doc))
 
+    def test_cross_field_cel_defaults_are_complete_before_child_defaulting(self):
+        # Kubernetes validates the declared composite default itself. It does
+        # not first fill that object from each child's default for CEL validation.
+        fields = repository_crd.schema()['properties']['spec']['properties']
+        for name in ('native', 'retention'):
+            node = fields[name]
+            expected = {key: value['default'] for key, value in node['properties'].items() if 'default' in value}
+            self.assertEqual(node['default'], expected, name + ' has incomplete CEL default inputs')
+        native = fields['native']['default']
+        retention = fields['retention']['default']
+        self.assertLessEqual(native['maxBootstrapWALBytes'], native['maxBackupBytes'])
+        self.assertFalse(retention['enabled'])
+        self.assertTrue(retention['dryRun'])
+
     def test_install_discovery_recreate_mtls_and_secret_get_allowlist(self):
         # Deliberate non-existent digest fixture, never pulled or called a pin.
         image = 'example.invalid/test-fixture@sha256:' + '1' * 64

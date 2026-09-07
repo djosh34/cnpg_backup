@@ -303,7 +303,13 @@
                         "default": "6h"
                       }
                     },
-                    "default": {},
+                    "default": {
+                      "maxBackupBytes": 34359738368,
+                      "maxBootstrapWALBytes": 8589934592,
+                      "maxRestoredBytes": 34359738368,
+                      "maxReferenceAge": "192h",
+                      "captureTimeout": "6h"
+                    },
                     "x-kubernetes-validations": [
                       {
                         "rule": "self.maxBootstrapWALBytes <= self.maxBackupBytes",
@@ -391,7 +397,16 @@
                         "maximum": 2
                       }
                     },
-                    "default": {}
+                    "default": {
+                      "connectTimeout": "10s",
+                      "metadataTimeout": "30s",
+                      "dataRequestTimeout": "15m",
+                      "operationTimeout": "24h",
+                      "walUploadTimeout": "120s",
+                      "artifactUploads": 2,
+                      "partWorkers": 2,
+                      "walUploads": 2
+                    }
                   },
                   "retention": {
                     "type": "object",
@@ -433,7 +448,12 @@
                         "default": "1h"
                       }
                     },
-                    "default": {},
+                    "default": {
+                      "enabled": false,
+                      "dryRun": true,
+                      "minimumFulls": 2,
+                      "interval": "1h"
+                    },
                     "x-kubernetes-validations": [
                       {
                         "rule": "!self.enabled || has(self.window)",
@@ -456,7 +476,10 @@
                             "default": "256Mi"
                           }
                         },
-                        "default": {}
+                        "default": {
+                          "cpu": "100m",
+                          "memory": "256Mi"
+                        }
                       },
                       "limits": {
                         "type": "object",
@@ -470,10 +493,22 @@
                             "default": "3Gi"
                           }
                         },
-                        "default": {}
+                        "default": {
+                          "cpu": "2",
+                          "memory": "3Gi"
+                        }
                       }
                     },
-                    "default": {}
+                    "default": {
+                      "requests": {
+                        "cpu": "100m",
+                        "memory": "256Mi"
+                      },
+                      "limits": {
+                        "cpu": "2",
+                        "memory": "3Gi"
+                      }
+                    }
                   },
                   "backupFreshness": {
                     "type": "object",
