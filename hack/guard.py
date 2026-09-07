@@ -20,6 +20,11 @@ CONTAINERS = []
 IMAGE = 'cnpg-backup-guard-test:' + subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
 
 
+def stage_binary(source, destination):
+    shutil.copyfile(source, destination)
+    destination.chmod(0o555)  # COPY owns files as root; container UID must execute.
+
+
 def run(*args, check=True):
     p = subprocess.run(args, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
     if check and p.returncode:
@@ -88,8 +93,8 @@ class Fixture:
         else:
             command = ['/cnpg-backup/bin/cnpg-backup', 'recovery-guard', '--', '/controller/manager', 'instance', 'restore',
                        '--pg-wal', '/var/lib/postgresql/wal/pg_wal']
+        CONTAINERS.append(name)  # docker run can create a container before exec fails
         run(*args, IMAGE, *command)
-        CONTAINERS.append(name)
         return name
 
     def probe(self):
@@ -126,9 +131,10 @@ def main():
     WORK.mkdir(parents=True, exist_ok=False)
     context = WORK / 'image'
     context.mkdir()
-    shutil.copyfile(ROOT / 'build/out/cnpg-backup', context / 'cnpg-backup')
+    stage_binary(ROOT / 'build/out/cnpg-backup', context / 'cnpg-backup')
     run('go', 'build', '-trimpath', '-o', str(context / 'fixture'), './hack/guardfixture')
-    (context / 'Dockerfile').write_text('FROM scratch\nCOPY cnpg-backup /usr/local/bin/cnpg-backup\nCOPY fixture /controller/manager\n')
+    (context / 'fixture').chmod(0o555)
+    (context / 'Dockerfile').write_text('FROM scratch\nCOPY --chmod=0555 cnpg-backup /usr/local/bin/cnpg-backup\nCOPY --chmod=0555 fixture /controller/manager\n')
     run('docker', 'build', '--network=none', '-t', IMAGE, str(context))
     manifest = {'subject_sha': run('git', 'rev-parse', 'HEAD'), 'image_id': run('docker', 'image', 'inspect', '-f', '{{.Id}}', IMAGE),
                 'profile': 'guard-private-pid-namespace', 'real_cnpg': False, 'release_qualified': False,
