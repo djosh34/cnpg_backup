@@ -224,6 +224,20 @@ class WALFixture:
             assert name + '.ready' in pending
             sentinel = self.sql(pod, "SELECT md5(pg_read_binary_file('pg_wal/RECOVERYXLOG'))")
             self.report['wal_low_space_pending'] = pending
+            # A callback admitted before fallocate could drain after fault clear
+            # even with the old bug. Kill again UNDER pressure: all subsequent
+            # callbacks must re-run capacity preflight on the pressured mount.
+            observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
+            sidecar = next(c for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+            container_id = sidecar['containerID'].split('://')[1]
+            pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container_id))['info']['pid'])
+            assert pid > 1
+            h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-9', str(pid))
+            h.wait(restarted, 'fresh capacity preflight incarnation under WAL pressure')
+            assert self.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + name + ".done'") == '0'
+            block, available = map(int, self.shell(pod, "stat -f -c '%S:%a' pg_wal").strip().split(':'))
+            assert block * available < 48 << 20
+            self.report['wal_low_space_restart'] = {'killed_container': container_id, 'available_bytes': block * available, 'proxy': self.control()}
         finally:
             self.control('')
         try:
