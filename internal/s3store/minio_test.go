@@ -66,6 +66,7 @@ func TestMinIOPrimitives(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer log.Close()
+	t.Cleanup(func() { retainMinIOLog(t, log.Name(), c.AccessKey, c.SecretKey) })
 	cmd := exec.Command(binary, "server", "--address", endpoint, "--console-address", "127.0.0.1:0", "--certs-dir", filepath.Join(root, "certs"), filepath.Join(root, "data"))
 	cmd.Env = []string{"HOME=" + root, "MINIO_ROOT_USER=" + c.AccessKey, "MINIO_ROOT_PASSWORD=" + c.SecretKey, "MINIO_BROWSER=off", "MINIO_UPDATE=off"}
 	cmd.Stdout = log
@@ -112,7 +113,7 @@ func TestMinIOPrimitives(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	if e = readyStore.core.MakeBucket(ctx, c.Bucket, minio.MakeBucketOptions{Region: c.Region}); e != nil {
-		t.Fatal("test bucket setup failed")
+		t.Fatal("SETUP MakeBucket failed before product assertions:", setupError(e))
 	}
 	for _, signature := range []string{"v2", "v4"} {
 		t.Run(signature, func(t *testing.T) {

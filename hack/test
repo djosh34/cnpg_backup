@@ -33,9 +33,9 @@ if [[ $profile = guard ]]; then
 fi
 if [[ $profile = integration ]]; then
   mkdir -p artifacts/s3
-  CNPG_S3_INTEGRATION=1 CNPG_S3_MINIO_BINARY="$CNPG_BUILD_CACHE/downloads/minio" \
-    go test -json -count=1 -timeout=600s -run '^TestMinIOPrimitives$' ./internal/s3store \
-    | tee artifacts/s3/minio-primitives.jsonl
+  CNPG_S3_ARTIFACT_DIR="$PWD/artifacts/s3" CNPG_S3_INTEGRATION=1 CNPG_S3_MINIO_BINARY="$CNPG_BUILD_CACHE/downloads/minio" \
+    go test -json -count=1 -timeout=600s -run '^TestMinIO(Primitives|Repository)$' ./internal/s3store ./internal/repository \
+    | tee artifacts/s3/minio-integration.jsonl
   for arg in "$@"; do
     if [[ $arg = --images ]]; then
       python3 hack/images.py

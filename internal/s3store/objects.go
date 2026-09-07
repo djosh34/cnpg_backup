@@ -84,7 +84,12 @@ func artifactOptions(metadata map[string]string) (minio.PutObjectOptions, error)
 		}
 		copy[k] = v
 	}
-	return minio.PutObjectOptions{UserMetadata: copy, ContentType: "application/octet-stream", DisableContentSha256: true}, nil
+	contentType := "application/octet-stream"
+	// Permanent WAL retirement slots contain JSON, never compressed WAL bytes.
+	if copy["cnpg-format"] == "wal-retired-v1" {
+		contentType = "application/json"
+	}
+	return minio.PutObjectOptions{UserMetadata: copy, ContentType: contentType, DisableContentSha256: true}, nil
 }
 
 // PutFile is one known-length conditional PUT from an immutable caller-owned
