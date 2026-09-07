@@ -46,7 +46,7 @@ func main() {
 			defer state.Unlock()
 			if r.Method == "POST" {
 				mode := r.URL.Query().Get("mode")
-				if mode != "" && mode != "hold-wal-put" && mode != "fail-wal-get" {
+				if mode != "" && mode != "hold-wal-put" && mode != "fail-wal-get" && mode != "hold-artifact-put" {
 					w.WriteHeader(400)
 					return
 				}
@@ -73,6 +73,9 @@ func main() {
 				// barrier proves a live upload, not just a sleep or HEAD request delay.
 				r.Body = &partialBody{ReadCloser: r.Body, remaining: r.ContentLength / 2, state: state, release: release, done: r.Context().Done()}
 			}
+		}
+		if mode == "hold-artifact-put" && strings.Contains(r.URL.Path, "/attempts/") && strings.Contains(r.URL.Path, "/data/") && r.Method == "PUT" && r.ContentLength > 1 {
+			r.Body = &partialBody{ReadCloser: r.Body, remaining: r.ContentLength / 2, state: state, release: release, done: r.Context().Done()}
 		}
 		proxy.ServeHTTP(w, r)
 	})

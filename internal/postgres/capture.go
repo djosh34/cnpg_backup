@@ -165,6 +165,9 @@ func OpenCapture(ctx context.Context, root *os.Root) (*Capture, error) {
 	if e != nil {
 		return nil, e
 	}
+	if c.before.ArchiveMode != "on" && c.before.ArchiveMode != "always" {
+		return nil, errors.New("capture requires actual archive_mode on or always")
+	}
 	if c.before.FreeSenders < 2 || c.before.FreeSlots < 1 {
 		return nil, errors.New("capture requires two available walsenders and one temporary slot")
 	}

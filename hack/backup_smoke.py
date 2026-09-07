@@ -4,6 +4,8 @@ Only disposable test inputs are used. This is not G materialization/PITR, and a
 successful short profile is never release qualification.
 """
 import gzip
+import datetime
+from backup_metrics_smoke import BackupMetricsSmoke
 import hashlib
 import json
 import os
@@ -37,6 +39,24 @@ def definition(h, name, kind='Backup', backup_type='full'):
 
 
 def run(h, wal, report, data_image):
+    metrics = BackupMetricsSmoke(h, report, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').start()
+    try:
+        _run(h, wal, report, data_image, metrics)
+    finally:
+        metrics.close()
+
+
+def publication_epoch(wal, uid):
+    key = 'smoke/v1/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/backups/' + uid + '/commit.json'
+    listing = ET.fromstring(wal.s3('GET', '?list-type=2&prefix=' + key))
+    ns = {'s': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+    assert listing.findtext('s:IsTruncated', namespaces=ns) == 'false'
+    entries = listing.findall('s:Contents', ns)
+    assert len(entries) == 1 and entries[0].findtext('s:Key', namespaces=ns) == key
+    return datetime.datetime.fromisoformat(entries[0].findtext('s:LastModified', namespaces=ns)).timestamp()
+
+
+def _run(h, wal, report, data_image, metrics):
     report['full_completed'] = []
     report['full_remaining'] = ['on-demand', 'scheduled', 'S3-only-download-native-verification-SQL',
                                 'SIGTERM', 'OOM-process-death', 'full-workspace', 'credentials',
@@ -54,7 +74,10 @@ def run(h, wal, report, data_image):
                  'CREATE TABLE full_load AS SELECT n, repeat(md5(n::text),128) payload FROM generate_series(1,5000) n;')
     expected = wal.sql(pod, "SELECT count(*)::text || ':' || md5(string_agg(id::text || ':' || value, ',' ORDER BY id)) FROM full_oracle")
     commits = []
+    wal_serviced = False
     for name, kind in [('full-demand', 'Backup'), ('full-schedule', 'ScheduledBackup')]:
+        if kind == 'Backup':
+            wal.control('hold-artifact-put')
         h.apply(definition(h, name, kind))
         if kind == 'ScheduledBackup':
             def scheduled():
@@ -65,6 +88,21 @@ def run(h, wal, report, data_image):
             name = next(b['metadata']['name'] for b in items if b['metadata']['name'].startswith(name + '-'))
         writes = []
         def completed():
+            nonlocal wal_serviced
+            if kind == 'Backup' and not wal_serviced and wal.control().get('blocked', 0) > 0:
+                started = time.monotonic()
+                segment = wal.sql(pod, 'SELECT pg_walfile_name(pg_current_wal_lsn())')
+                wal.sql(pod, 'SELECT pg_switch_wal()')
+                h.wait(lambda: wal.sql(pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + segment + ".done'") == '1',
+                       'WAL acknowledgment while real artifact transfer is blocked', 90)
+                assert wal.control()['blocked'] > 0, 'artifact barrier disappeared before WAL completion'
+                wal.verify(pod, segment)
+                report.setdefault('full_fault_preconditions', []).append({'case': 'WAL-under-transfer', 'partial_artifact_body_forwarded': True,
+                    'durably_archived_segment': segment, 'wal_duration_seconds': time.monotonic() - started})
+                wal.control('')
+                wal_serviced = True
+                report['full_completed'].append('WAL-under-transfer')
+                report['full_remaining'].remove('WAL-under-transfer')
             b = json.loads(h.kube('get', 'backup', name, '-n', h.NS, '-o', 'json'))
             state = b.get('status', {}).get('phase')
             if state == 'failed':
@@ -82,8 +120,10 @@ def run(h, wal, report, data_image):
         h.wait(completed, 'actual durable full Backup completion', 600)
         assert any(w['native_active'] for w in writes), 'no committed workload write observed during native capture'
         assert commits[-1]['status']['backupId'] == commits[-1]['metadata']['uid']
+        metrics.assert_committed(publication_epoch(wal, commits[-1]['metadata']['uid']))
         report['full_completed'].append('on-demand' if kind == 'Backup' else 'scheduled')
         report['full_remaining'].remove(report['full_completed'][-1])
+    assert wal_serviced, 'real artifact-transfer/WAL overlap barrier never fired'
     # Remove Kubernetes Backup objects before authoritative S3-only enumeration.
     for b in commits:
         h.kube('delete', 'backup', b['metadata']['name'], '-n', h.NS)
@@ -100,6 +140,37 @@ def run(h, wal, report, data_image):
         (h.OUT / 'full-download-oracles.json').write_text(json.dumps(observations, indent=2))
     report['full_completed'].append('S3-only-download-native-verification-SQL')
     report['full_remaining'].remove('S3-only-download-native-verification-SQL')
+    credential_failure(h, wal, report, metrics)
+
+
+def credential_failure(h, wal, report, metrics):
+    import base64
+    before = metrics.snapshot('full')
+    pod = wal.primary()
+    attempted = False
+    try:
+        h.kube('patch', 'secret', 's3-auth', '-n', h.NS, '--type=merge', '-p', json.dumps({'data': {'secret': ''}}))
+        def invalid_projection():
+            result = h.kube('exec', '-n', h.NS, pod, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup',
+                            'instance', '--check-native', check=False)
+            return 'invalid credential snapshot' in result
+        h.wait(invalid_projection, 'actual missing-credential native projection')
+        report.setdefault('full_fault_preconditions', []).append({'case': 'credentials', 'actual_invalid_projection': True})
+        h.apply(definition(h, 'full-missing-credentials'))
+        attempted = True
+        def failed():
+            b = json.loads(h.kube('get', 'backup/full-missing-credentials', '-n', h.NS, '-o', 'json'))
+            if b.get('status', {}).get('phase') == 'completed':
+                raise AssertionError('missing credentials falsely succeeded')
+            return b.get('status', {}).get('phase') == 'failed'
+        h.wait(failed, 'actual CNPG failed full invocation')
+    finally:
+        h.kube('patch', 'secret', 's3-auth', '-n', h.NS, '--type=merge', '-p', json.dumps(
+            {'data': {'secret': base64.b64encode(b'disposable-test-only-secret').decode()}}))
+    assert attempted
+    metrics.assert_failed('full-missing-credentials', before)
+    report['full_completed'].append('credentials')
+    report['full_remaining'].remove('credentials')
 
 
 def verify_restore(h, wal, root, driver, data_image, index, commit, expected):
@@ -162,12 +233,15 @@ def verify_restore(h, wal, root, driver, data_image, index, commit, expected):
     (directory / 'oracle.conf').write_text("listen_addresses=''\nunix_socket_directories='/input'\nport=5544\nssl=off\narchive_mode=off\nshared_preload_libraries=''\nhba_file='/input/pg_hba.conf'\nident_file='/input/pg_ident.conf'\n")
     (directory / 'pg_hba.conf').write_text('local all all trust\n')
     (directory / 'pg_ident.conf').write_text('')
-    # PG requires private permissions, but extraction is performed by the same
-    # unprivileged hosted UID used for this isolated server.
+    # The independent oracle uses CNPG's known PostgreSQL UID, not an absent
+    # runner UID in the database image's passwd database. This test-only chown
+    # touches only this disposable downloaded fixture, after native verification.
     base.chmod(0o700)
+    h.run('docker', 'run', '--rm', '--network=none', '--user', '0', '-v', str(directory) + ':/input',
+          '--entrypoint', '/bin/chown', h.LOCK['database'], '-R', '26:26', '/input')
     container = 'cnpg-full-oracle-' + str(index)
     try:
-        h.run('docker', 'run', '-d', '--name', container, '--network=none', '--user', str(os.getuid()),
+        h.run('docker', 'run', '-d', '--name', container, '--network=none', '--user', '26',
               '-v', str(directory) + ':/input', '--entrypoint', '/usr/lib/postgresql/18/bin/postgres', h.LOCK['database'],
               '-D', '/input/base', '-c', 'config_file=/input/oracle.conf')
         def query(sql, check=True):

@@ -10,6 +10,10 @@ python3 hack/bootstrap.py
 export PATH="$CNPG_BUILD_CACHE/go/bin:$PATH" CGO_ENABLED=0 GOTOOLCHAIN=local
 export GOOS=linux GOARCH=amd64 GOAMD64=v1 GOEXPERIMENT='' GOFLAGS='-p=2' GOMAXPROCS=2 GOWORK=off
 mkdir -p .work/tmp artifacts/fast
+export CNPG_PROMTOOL
+CNPG_PROMTOOL=$(python3 hack/test_tools.py)
+"$CNPG_PROMTOOL" --version > artifacts/fast/promtool-version.txt 2>&1
+cp build/test-tools.lock.json artifacts/fast/
 export GOTMPDIR="$PWD/.work/tmp" TMPDIR="$PWD/.work/tmp"
 [[ -z $(gofmt -l cmd internal hack/*/*.go) ]] || { echo 'gofmt required' >&2; exit 1; }
 go vet ./... 2>&1 | tee artifacts/fast/vet.log

@@ -633,7 +633,8 @@ def main():
                           's3': {**wal_storage, 'bucket': 'test-bucket', 'prefix': 'smoke',
                                  'accessKeySecret': {'name': 's3-auth', 'key': 'access'}, 'secretKeySecret': {'name': 's3-auth', 'key': 'secret'}},
                           'workspace': {'storageClassName': 'cnpg-backup-capture', 'size': '8Gi'},
-                          'native': {'maxBackupBytes': 256 * 1024**2, 'maxBootstrapWALBytes': 128 * 1024**2}}}
+                          'native': {'maxBackupBytes': 256 * 1024**2, 'maxBootstrapWALBytes': 128 * 1024**2},
+                          'backupFreshness': {'fullMaxAge': '1h'}}}
         apply(repository)
         observed = json.loads(kube('get', 'repository', 'destination', '-n', NS, '-o', 'json'))
         assert observed['spec']['retention'] == {'enabled': False, 'dryRun': True, 'minimumFulls': 2, 'interval': '1h'}

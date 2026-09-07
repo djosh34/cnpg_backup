@@ -59,7 +59,7 @@ func (s Identity) Probe(context.Context, *identity.ProbeRequest) (*identity.Prob
 // Serve uses a real listener also shared by the private guard control stream.
 // Stopping is uncertainty, not a clean Drain acknowledgment.
 func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.Admission, revision string, wal ...*WALService) error {
-	server := grpc.NewServer(grpc.MaxRecvMsgSize((1<<20)+(32<<10)), grpc.MaxSendMsgSize(32<<10), grpc.MaxConcurrentStreams(16), grpc.WaitForHandlers(true))
+	server := grpc.NewServer(grpc.MaxRecvMsgSize((2<<20)+(64<<10)), grpc.MaxSendMsgSize(256<<10), grpc.MaxConcurrentStreams(16), grpc.WaitForHandlers(true))
 	enabled := len(wal) == 1 && wal[0] != nil && admission == nil
 	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: enabled, Backup: enabled})
 	if enabled {
