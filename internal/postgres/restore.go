@@ -63,7 +63,9 @@ func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Pla
 	if e != nil || duration <= 0 || duration > 6*time.Hour {
 		return nil, ErrInput
 	}
-	ctx, cancel := context.WithTimeout(ctx, duration)
+	// Transfer retains the caller's operation deadline (at most 24h), not
+	// captureTimeout. Start the separate native-phase deadline after downloads.
+	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour)
 	defer cancel()
 	done := make(chan struct{})
 	monitored := make(chan error, 1)
@@ -105,19 +107,21 @@ func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Pla
 	if monitorErr != nil {
 		return nil, monitorErr
 	}
+	nativeCtx, nativeCancel := context.WithTimeout(ctx, duration)
+	defer nativeCancel()
 	run := func(ctx context.Context, tool string, args ...string) ([]byte, error) {
 		return runTool(ctx, []string{"LANG=C", "LC_ALL=C", "HOME=/nonexistent"}, tool, args...)
 	}
 	for _, tool := range []string{"pg_verifybackup", "pg_waldump", "pg_controldata"} {
-		b, e := run(ctx, tool, "--version")
+		b, e := run(nativeCtx, tool, "--version")
 		if e != nil || !nativeVersion(b, tool) {
 			return nil, errors.New("native restore tool version mismatch")
 		}
 	}
-	if e = input.verify(ctx, c, plan.Source.WALSegmentBytes, run); e != nil {
+	if e = input.verify(nativeCtx, c, plan.Source.WALSegmentBytes, run); e != nil {
 		return nil, fmt.Errorf("native original verification: %w", e)
 	}
-	result, err = input.materialize(ctx, c, layout, run)
+	result, err = input.materialize(nativeCtx, c, layout, run)
 	if err != nil {
 		return nil, fmt.Errorf("native full materialization: %w", err)
 	}
