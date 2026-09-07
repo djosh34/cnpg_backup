@@ -183,6 +183,12 @@ func scanArchive(ctx context.Context, r io.Reader, limit int64, visit func(strin
 		name := h.Name
 		if h.Typeflag == tar.TypeDir {
 			name = strings.TrimSuffix(name, "/")
+			// PG18's server emits these two empty built-in directories with
+			// a literal ./ prefix. Normalize only these known native names
+			// before duplicate/ancestor checks; arbitrary dot paths fail.
+			if name == "./pg_wal/archive_status" || name == "./pg_wal/summaries" {
+				name = strings.TrimPrefix(name, "./")
+			}
 		}
 		if !nativePath(name) || (h.Format != tar.FormatUSTAR && h.Format != tar.FormatUnknown) || len(h.PAXRecords) != 0 || h.Linkname != "" || h.Size < 0 || h.Size > maxFileBytes || (h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir) {
 			return inv, ErrInput
@@ -219,6 +225,18 @@ func scanArchive(ctx context.Context, r io.Reader, limit int64, visit func(strin
 	tail, e := io.ReadAll(io.LimitReader(lr, 10241))
 	if e != nil || len(tail) > 10240 || !bytes.Equal(tail, make([]byte, len(tail))) || lr.N <= 0 {
 		return inv, ErrInput
+	}
+	// Check reverse-order ancestor conflicts without materializing up to 511
+	// implicit prefixes for each of 100,000 paths.
+	for name := range seen {
+		if e := ctx.Err(); e != nil {
+			return inv, e
+		}
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			if t, ok := seen[parent]; ok && t != tar.TypeDir {
+				return inv, ErrInput
+			}
+		}
 	}
 	return inv, nil
 }

@@ -25,13 +25,19 @@ func runTool(ctx context.Context, env []string, tool string, args ...string) ([]
 	default:
 		return nil, errors.New("unsupported native executable")
 	}
+	return runNative(ctx, env, tools+tool, args...)
+}
+
+// runNative separates process ownership from the fixed runtime executable
+// allowlist so tests can exercise real fork/cancel/reap with a test executable.
+func runNative(ctx context.Context, env []string, executable string, args ...string) ([]byte, error) {
 	subreaper.Do(func() { subreaper.err = unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) })
 	if subreaper.err != nil {
 		return nil, errors.New("native child ownership unavailable")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, tools+tool, args...)
+	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
@@ -60,7 +66,7 @@ func runTool(ctx context.Context, env []string, tool string, args ...string) ([]
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if err != nil || out.exceeded || diagnostic.exceeded {
+	if err != nil || out.exceeded || diagnostic.exceeded || len(diagnostic.data) != 0 {
 		return nil, errors.New("native command failed (authentication, input, capacity or output limit)")
 	}
 	return out.data, nil

@@ -41,15 +41,19 @@ type serverState struct {
 	TablespaceOIDs map[string]uint32 `json:"tablespaceOIDs"`
 	Postmaster     string            `json:"postmaster"`
 	Clock          string            `json:"clock"`
+	FreeSenders    int               `json:"freeSenders"`
+	FreeSlots      int               `json:"freeSlots"`
 }
 
 // All functions/settings here are public to CNPG's replication role. Privileged
 // physical identity is read separately using pg_controldata, never SQL superuser.
 const preflightSQL = `SELECT json_build_object(
  'version', current_setting('server_version_num')::int,
+ 'freeSenders', current_setting('max_wal_senders')::int - (SELECT count(*) FROM pg_stat_replication),
+ 'freeSlots', current_setting('max_replication_slots')::int - (SELECT count(*) FROM pg_replication_slots),
  'postmaster', to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
  'clock', to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
- 'tablespaceOIDs', COALESCE((SELECT json_object_agg(spcname,oid) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')), '{}'::json),
+ 'tablespaceOIDs', COALESCE((SELECT json_object_agg(spcname,oid::bigint) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')), '{}'::json),
  'role', current_user, 'primary', NOT pg_is_in_recovery(),
  'blockSize', current_setting('block_size')::bigint,
  'segmentSize', pg_size_bytes(current_setting('segment_size')),

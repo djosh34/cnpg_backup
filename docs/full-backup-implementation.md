@@ -43,6 +43,25 @@ downloaded artifact hashes, shell-free native verification/required-WAL failure,
 and a test-only downloaded-full SQL restore with tablespace/separate WAL. This
 is not the PR G production restore path or post-backup PITR qualification.
 
+### Preserved initial failures
+
+At `1d34133b1c4c2c44681c4b7b29ce3375da16c48f`, hosted
+[run 34110970396](https://github.com/djosh34/cnpg_backup/actions/runs/34110970396)
+failed the existing WAL acknowledgment regression before F capture. PG's JSON
+conversion emits `oid` values as strings, unlike `oid::bigint`. The added numeric
+OID map made metadata decoding fail. A local PG18.6 SQL regression reproduced
+that exact error; explicit bigint conversion corrects the wire type without
+changing role privileges or weakening the E gate. Foundation and namespace-guard
+checks passed at that first SHA; they were not F acceptance.
+
+A real local PG18.6 tar fixture also exposed two server-generated directory names,
+`./pg_wal/archive_status` and `./pg_wal/summaries`. The scanner normalizes **only**
+these two empty-directory names before duplicate/ancestor checks. Arbitrary dot
+paths, regular files with that prefix, and canonical alias duplicates remain
+rejected. This narrow native-format reconciliation preserves confinement and
+original tar bytes; it is not a general traversal exception. Local Unix-socket
+fixtures are parser/process evidence, not CNPG certificate/image qualification.
+
 The harness records completed versus remaining fault families explicitly.
 Unexecuted SIGTERM/OOM/workspace/credential/late-commit and observability cases
 are not implied by unit tests, workflow existence, or a successful native process.

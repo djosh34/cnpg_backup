@@ -17,6 +17,7 @@ import (
 	"github.com/djosh34/cnpg_backup/internal/postgres"
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
 	"github.com/djosh34/cnpg_backup/internal/repository"
+	"github.com/djosh34/cnpg_backup/internal/s3store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -116,16 +117,15 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 	if e != nil || b.Status.InstanceID.PodName == "" || b.Status.InstanceID.PodName != hostname {
 		return nil, status.Error(codes.FailedPrecondition, "backup must run on CNPG selected local instance")
 	}
-	capture, e := postgres.OpenCapture(ctx, root)
+	snapshot, e := configuration.LoadCaptureSnapshotFromRoot(root)
 	if e != nil {
 		return nil, backupError(e)
 	}
-	defer capture.Close()
-	spec := capture.Snapshot.Repository.Spec
+	spec := snapshot.Repository.Spec
 	duration, _ := time.ParseDuration(spec.IO.OperationTimeout)
 	ctx, stop := context.WithDeadline(ctx, start.Add(duration))
 	defer stop()
-	store, e := capture.Snapshot.Repository.Store()
+	store, e := snapshot.Repository.Store()
 	if e != nil {
 		return nil, backupError(e)
 	}
@@ -133,8 +133,62 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 	if e = store.CheckBucketSafety(ctx); e != nil {
 		return nil, backupError(e)
 	}
-	repo, e := repository.OpenWriter(ctx, store, capture.Identity(spec.RepositoryID, placement.ClusterUID), capture.Directory)
+	// A durable winner is checked before requiring a live primary or reserving
+	// raw capture capacity. Replay needs only bounded remote readback space.
+	data, e := configuration.Read(root, "capacity.json", 64<<10)
 	if e != nil {
+		return nil, backupError(e)
+	}
+	var budgets []configuration.FilesystemBudget
+	if configuration.StrictJSON(data, &budgets) != nil {
+		return nil, backupError(postgres.ErrInput)
+	}
+	found := false
+	for i := range budgets {
+		budgets[i].RequiredBytes = 0
+		if budgets[i].Mount == workspacePath {
+			found = true
+			a := spec.Native.MaxBackupBytes
+			budgets[i].RequiredBytes = a + max(configuration.GiB, (a+99)/100) + configuration.GiB + 6*((1<<30)+(1<<20)) + (16 << 20)
+		}
+	}
+	// Segment size is read from immutable repository metadata below. Initial
+	// setup checks only finite backing; replay allocation is applied afterward.
+	if !found {
+		return nil, backupError(postgres.ErrInput)
+	}
+	initial := append([]configuration.FilesystemBudget(nil), budgets...)
+	for i := range initial {
+		initial[i].RequiredBytes = 0
+	}
+	if e = configuration.CheckCapacity(initial); e != nil {
+		return nil, backupError(e)
+	}
+	directory, e := os.MkdirTemp(workspacePath, "backup-repository-")
+	if e != nil {
+		return nil, backupError(e)
+	}
+	defer os.RemoveAll(directory)
+	repo, e := repository.OpenSource(ctx, store, spec.RepositoryID, directory)
+	if s3store.Is(e, s3store.NotFound) {
+		control, ce := postgres.ReadControl(ctx)
+		if ce != nil {
+			return nil, backupError(ce)
+		}
+		repo, e = repository.OpenWriter(ctx, store, repository.Identity{Schema: 1, RepositoryID: spec.RepositoryID, PostgresMajor: 18, SystemIdentifier: control.SystemIdentifier, WALSegmentBytes: control.WALSegmentBytes, WriterClusterUID: placement.ClusterUID}, directory)
+	}
+	if e != nil {
+		return nil, backupError(e)
+	}
+	if repo.Identity().WriterClusterUID != placement.ClusterUID {
+		return nil, backupError(repository.ErrIdentity)
+	}
+	for i := range budgets {
+		if budgets[i].Mount == workspacePath {
+			budgets[i].RequiredBytes -= 6 * ((1 << 30) - repo.Identity().WALSegmentBytes)
+		}
+	}
+	if e = configuration.CheckCapacity(budgets); e != nil {
 		return nil, backupError(e)
 	}
 	hold, e := repo.AdmitBackup(ctx, placement.ClusterUID, string(b.Metadata.UID))
@@ -149,12 +203,22 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 		}
 	}()
 	// Credential/trust rotation and deadline changes do not change UID semantics.
+	data, e = configuration.Read(root, "native/connection.json", 64<<10)
+	if e != nil {
+		return nil, backupError(e)
+	}
+	var connection postgres.Connection
+	if configuration.StrictJSON(data, &connection) != nil {
+		return nil, backupError(postgres.ErrInput)
+	}
+	id := repo.Identity()
+	id.CreatedAt = ""
 	semantic, _ := json.Marshal(struct {
 		Identity    repository.Identity
 		Compression string
 		Connection  postgres.Connection
 		Tool        string
-	}{capture.Identity(spec.RepositoryID, placement.ClusterUID), spec.Compression, capture.Connection, "18.6/full"})
+	}{id, spec.Compression, connection, "18.6/full"})
 	digest := sha256.Sum256(semantic)
 	req := repository.Request{Schema: 1, RepositoryID: spec.RepositoryID, BackupUID: string(b.Metadata.UID), WriterClusterUID: placement.ClusterUID, RequestedKind: "full", ConfigSHA256: hex.EncodeToString(digest[:])}
 	attempt, winner, e := hold.Begin(ctx, req)
@@ -163,6 +227,14 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 	}
 	if winner != nil {
 		return backupResult(winner, repo.Identity().WALSegmentBytes), nil
+	}
+	capture, e := postgres.OpenCapture(ctx, root)
+	if e != nil {
+		return nil, backupError(e)
+	}
+	defer capture.Close()
+	if capture.Identity(spec.RepositoryID, placement.ClusterUID) != id {
+		return nil, backupError(repository.ErrIdentity)
 	}
 	captured, e := capture.Full(ctx, os.Getenv("POD_UID"))
 	if e != nil {

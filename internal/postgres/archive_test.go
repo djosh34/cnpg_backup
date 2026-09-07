@@ -66,15 +66,18 @@ func makeTar(t *testing.T, headers ...*tar.Header) []byte {
 }
 func TestArchiveConfinementAndLimits(t *testing.T) {
 	cases := map[string][]*tar.Header{
-		"escape":          {{Name: "../outside", Typeflag: tar.TypeReg, Size: 1}},
-		"absolute":        {{Name: "/outside", Typeflag: tar.TypeReg, Size: 1}},
-		"symlink":         {{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}},
-		"hardlink":        {{Name: "link", Typeflag: tar.TypeLink, Linkname: "../outside"}},
-		"fifo":            {{Name: "fifo", Typeflag: tar.TypeFifo}},
-		"duplicate":       {{Name: "same", Typeflag: tar.TypeReg, Size: 1}, {Name: "same", Typeflag: tar.TypeReg, Size: 1}},
-		"directory-alias": {{Name: "same/", Typeflag: tar.TypeDir}, {Name: "same", Typeflag: tar.TypeDir}},
-		"parent-file":     {{Name: "parent", Typeflag: tar.TypeReg, Size: 1}, {Name: "parent/child", Typeflag: tar.TypeReg, Size: 1}},
-		"pax":             {{Name: "pax", Typeflag: tar.TypeReg, Size: 1, Format: tar.FormatPAX, PAXRecords: map[string]string{"comment": "hidden"}}},
+		"dot-path":             {{Name: "./outside", Typeflag: tar.TypeDir}},
+		"native-dot-duplicate": {{Name: "./pg_wal/archive_status", Typeflag: tar.TypeDir}, {Name: "pg_wal/archive_status", Typeflag: tar.TypeDir}},
+		"reverse-parent-file":  {{Name: "parent/child", Typeflag: tar.TypeReg, Size: 1}, {Name: "parent", Typeflag: tar.TypeReg, Size: 1}},
+		"escape":               {{Name: "../outside", Typeflag: tar.TypeReg, Size: 1}},
+		"absolute":             {{Name: "/outside", Typeflag: tar.TypeReg, Size: 1}},
+		"symlink":              {{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}},
+		"hardlink":             {{Name: "link", Typeflag: tar.TypeLink, Linkname: "../outside"}},
+		"fifo":                 {{Name: "fifo", Typeflag: tar.TypeFifo}},
+		"duplicate":            {{Name: "same", Typeflag: tar.TypeReg, Size: 1}, {Name: "same", Typeflag: tar.TypeReg, Size: 1}},
+		"directory-alias":      {{Name: "same/", Typeflag: tar.TypeDir}, {Name: "same", Typeflag: tar.TypeDir}},
+		"parent-file":          {{Name: "parent", Typeflag: tar.TypeReg, Size: 1}, {Name: "parent/child", Typeflag: tar.TypeReg, Size: 1}},
+		"pax":                  {{Name: "pax", Typeflag: tar.TypeReg, Size: 1, Format: tar.FormatPAX, PAXRecords: map[string]string{"comment": "hidden"}}},
 	}
 	for name, headers := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -98,6 +101,10 @@ func TestArchiveConfinementAndLimits(t *testing.T) {
 				t.Fatal("escape modified outside sentinel")
 			}
 		})
+	}
+	nativeDirs := makeTar(t, &tar.Header{Name: "pg_wal", Typeflag: tar.TypeDir}, &tar.Header{Name: "./pg_wal/archive_status", Typeflag: tar.TypeDir}, &tar.Header{Name: "./pg_wal/summaries", Typeflag: tar.TypeDir})
+	if _, e := scanArchive(context.Background(), bytes.NewReader(nativeDirs), int64(len(nativeDirs)), nil); e != nil {
+		t.Fatal("actual PG18 built-in directories rejected", e)
 	}
 	good := makeTar(t, &tar.Header{Name: "global/", Typeflag: tar.TypeDir}, &tar.Header{Name: "global/pg_control", Typeflag: tar.TypeReg, Size: 8})
 	inv, e := scanArchive(context.Background(), bytes.NewReader(good), int64(len(good)), nil)

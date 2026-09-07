@@ -157,13 +157,16 @@ func OpenCapture(ctx context.Context, root *os.Root) (*Capture, error) {
 	c.env = []string{"LANG=C", "LC_ALL=C", "HOME=/nonexistent", "PGSERVICE=local", "PGSERVICEFILE=" + c.Directory + "/service.conf", "PGPASSFILE=/nonexistent", "PGOPTIONS=-c search_path=pg_catalog -c statement_timeout=30000", "PGAPPNAME=cnpg-backup"}
 	for _, tool := range []string{"pg_basebackup", "pg_verifybackup", "pg_waldump", "pg_controldata", "psql"} {
 		b, e := command(ctx, c.env, tool, "--version")
-		if e != nil || !strings.HasPrefix(string(b), tool+" (PostgreSQL) 18.6") {
+		if e != nil || !(strings.HasPrefix(string(b), tool+" (PostgreSQL) 18.6 ") || string(b) == tool+" (PostgreSQL) 18.6\n") {
 			return nil, errors.New("native tool version mismatch")
 		}
 	}
 	c.before, e = c.state(ctx)
 	if e != nil {
 		return nil, e
+	}
+	if c.before.FreeSenders < 2 || c.before.FreeSlots < 1 {
+		return nil, errors.New("capture requires two available walsenders and one temporary slot")
 	}
 	after, e := controlAt(ctx, liveData)
 	if e != nil || after != c.control {
@@ -215,6 +218,9 @@ func (c *Capture) Postflight(ctx context.Context) (string, error) {
 	}
 	clock := s.Clock
 	s.Clock = c.before.Clock
+	// Availability can legitimately change as CNPG joins standbys. Native PG
+	// reserves/releases its own two senders and temporary slot; no shared slot.
+	s.FreeSenders, s.FreeSlots = c.before.FreeSenders, c.before.FreeSlots
 	if !reflect.DeepEqual(s, c.before) {
 		return "", errors.New("capture source changed (restart, role, settings or tablespaces)")
 	}
