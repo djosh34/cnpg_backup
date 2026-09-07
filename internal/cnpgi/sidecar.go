@@ -1,6 +1,6 @@
 // Copyright 2026 cnpg_backup contributors. All rights reserved.
-// Package cnpgi implements the currently available CNPG-I wire surface. Until
-// lifecycle/configuration and data features land, only Identity is advertised.
+// Package cnpgi implements lifecycle and the available CNPG-I WAL wire surface.
+// Primary backup/restore capabilities remain unadvertised until implemented.
 package cnpgi
 
 import (

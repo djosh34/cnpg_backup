@@ -92,7 +92,7 @@ func run(args []string, out, errOut io.Writer) (exit int) {
 			return 0
 		}
 	}
-	fmt.Fprintln(errOut, "usage: cnpg-backup version|manager|instance|recovery-job|recovery-guard|wal-fetch (lifecycle and data services not implemented)")
+	fmt.Fprintln(errOut, "usage: cnpg-backup version|manager|instance|recovery-job|recovery-guard|wal-fetch (primary backup/restore and wal-fetch recovery plans not implemented)")
 	return 2
 }
 
