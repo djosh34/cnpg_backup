@@ -16,6 +16,7 @@ import (
 )
 
 type repositoryStatus struct {
+	Retention          *retentionStatus   `json:"retention,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration"`
 	ConfigurationHash  string             `json:"configurationHash"`
 	Conditions         []metav1.Condition `json:"conditions"`
@@ -55,10 +56,10 @@ func (a *API) ReconcileRepositoryStatus(ctx context.Context, object *unstructure
 		condition := metav1.Condition{Type: c.kind, Status: value, ObservedGeneration: object.GetGeneration(), Reason: reason, Message: message, LastTransitionTime: metav1.NewTime(now)}
 		meta.SetStatusCondition(&next.Conditions, condition)
 	}
-	// Do not fabricate retention health before its implementation. Future storage
-	// reconcilers own RetentionBlocked; preserve it if present.
+	// The serial retention worker owns storage diagnostics. Configuration checks
+	// cannot fabricate a successful inventory or overwrite that observation.
 	if meta.FindStatusCondition(next.Conditions, "RetentionBlocked") == nil {
-		meta.SetStatusCondition(&next.Conditions, metav1.Condition{Type: "RetentionBlocked", Status: metav1.ConditionUnknown, Reason: "NotImplemented", Message: "Automated retention is not implemented; recovery admission and its durable holds remain enforced.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
+		meta.SetStatusCondition(&next.Conditions, metav1.Condition{Type: "RetentionBlocked", Status: metav1.ConditionUnknown, Reason: "NotObserved", Message: "Retention has not been observed; recovery admission and its durable holds remain enforced.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
 	}
 	warn := !valid && (previous.LastWarningTime == nil || !now.Before(previous.LastWarningTime.Add(5*time.Minute)))
 	if warn {

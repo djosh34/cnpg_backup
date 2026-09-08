@@ -27,12 +27,13 @@ type backupSeries struct {
 // Only the manager owns these series. Scrapes never perform API or S3 I/O.
 // UID observation state lives separately and is never a metric label.
 type backupMetrics struct {
-	mu     sync.Mutex
-	series map[backupLabels]backupSeries
+	mu              sync.Mutex
+	series          map[backupLabels]backupSeries
+	retentionSeries map[backupLabels]retentionSeries
 }
 
 func newBackupMetrics() *backupMetrics {
-	return &backupMetrics{series: map[backupLabels]backupSeries{}}
+	return &backupMetrics{series: map[backupLabels]backupSeries{}, retentionSeries: map[backupLabels]retentionSeries{}}
 }
 func (m *backupMetrics) configure(base backupLabels, f configuration.Freshness) {
 	m.mu.Lock()
@@ -94,6 +95,7 @@ func (m *backupMetrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	m.writeRetention(w)
 	values := m.snapshot()
 	labels := make([]backupLabels, 0, len(values))
 	for k := range values {

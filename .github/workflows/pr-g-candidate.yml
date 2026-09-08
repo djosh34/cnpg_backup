@@ -1,7 +1,7 @@
 name: premerge-exact-candidate
 on:
   push:
-    branches: [implementation/pr-g, implementation/pr-h]
+    branches: [implementation/pr-g, implementation/pr-h, implementation/pr-i]
 permissions:
   contents: read
 concurrency:
@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   subject:
-    if: github.repository == 'djosh34/cnpg_backup' && github.event_name == 'push' && (github.ref == 'refs/heads/implementation/pr-g' || github.ref == 'refs/heads/implementation/pr-h')
+    if: github.repository == 'djosh34/cnpg_backup' && github.event_name == 'push' && (github.ref == 'refs/heads/implementation/pr-g' || github.ref == 'refs/heads/implementation/pr-h' || github.ref == 'refs/heads/implementation/pr-i')
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
