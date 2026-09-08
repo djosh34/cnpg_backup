@@ -156,12 +156,13 @@ class Fixture:
             # scheduling/admission reasons while the failed target still exists.
             try:
                 with self.commands.budget(10):
-                    result = self.kube_result('get', 'events', '-n', 'campaign-target', '-o', 'json', timeout=8)
+                    result = self.kube_result('get', '--raw', '/api/v1/namespaces/campaign-target/events?limit=100&fieldSelector=type%3DWarning', timeout=8)
                 if result.ok:
-                    events = json.loads(result.stdout).get('items', [])
+                    data = json.loads(result.require().stdout)
+                    events = data.get('items', [])
                     reasons = [{'reason': e.get('reason'), 'object': e.get('involvedObject', {}).get('name'),
                                 'message': e.get('message')} for e in events if e.get('type') == 'Warning'][-12:]
-                    self.save_log('last-barrier-events.json', json.dumps(reasons))
+                    self.save_log('last-barrier-events.json', json.dumps({'warnings': reasons, 'has_more': bool(data['metadata'].get('continue'))}))
                     error = CommandFailure(str(error) + '; observed warning reasons: ' + json.dumps(reasons))
             except Exception as diagnostic_error:
                 self.commands.record({'diagnostic_unavailable': type(diagnostic_error).__name__, 'barrier': description})
@@ -394,6 +395,21 @@ rmdir "$path"
         allocation['state'] = 'retired'
         self.record_ownership()
 
+    def stop_sandbox(self, identity):
+        # Kubelet may remove an already-deleted Pod between listing and stopping
+        # its sandbox. Never infer absence from a CLI error's spelling/status:
+        # require a fresh successful CRI list, or retain the original failure.
+        for operation in ('stopp', 'rmp'):
+            result = self.commands.command('cleanup/cri-' + operation, 'docker', 'exec', self.NAME + '-control-plane',
+                'crictl', operation, identity, timeout=30)
+            if not result.ok:
+                remaining = self.commands.command('cleanup/cri-absence-observation', 'docker', 'exec', self.NAME + '-control-plane',
+                    'crictl', 'pods', '-q', timeout=10)
+                if remaining.ok and not remaining.dropped_bytes and identity not in remaining.stdout.split():
+                    self.m.event('owned-sandbox-already-removed', identity=identity, operation=operation, observed_absent=True)
+                    return
+                result.require()
+
     def quiesce_pods(self, namespace, uids=None):
         if namespace != 'campaign-source' and not uids:
             raise ValueError('exact target Pod UIDs required for CRI disposal')
@@ -404,8 +420,7 @@ rmdir "$path"
                 continue
             # Only already-deleted Kubernetes Pod identities. The maintained CRI
             # stop/remove operations reap their sandboxes before filesystem disposal.
-            self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'stopp', sandbox['id'], timeout=30)
-            self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'rmp', sandbox['id'], timeout=30)
+            self.stop_sandbox(sandbox['id'])
 
     def retire_claims(self, state):
         self.quiesce_pods('campaign-target', state['retired_pod_uids'])
@@ -437,6 +452,31 @@ rmdir "$path"
         if self.captures_enabled and maintain:
             self.reclaim()
 
+    def collect_events(self, namespace):
+        # Paginate at the API, not kubectl's auto-aggregated list. Full campaigns
+        # have MiB of managedFields/event history; only bounded useful event
+        # projections belong in diagnostics, never truncated oracle JSON.
+        import urllib.parse
+        continuation = ''
+        for page in range(50):
+            query = {'limit': 100}
+            if continuation:
+                query['continue'] = continuation
+            url = '/api/v1/namespaces/' + namespace + '/events?' + urllib.parse.urlencode(query)
+            result = self.kube_result('get', '--raw', url, timeout=10).require()
+            data = json.loads(result.stdout)
+            events = []
+            for event in data['items']:
+                item = {key: event.get(key) for key in ('type', 'reason', 'message', 'count', 'firstTimestamp', 'lastTimestamp', 'eventTime', 'series', 'involvedObject')}
+                message = (item.get('message') or '').encode()
+                item.update(message=message[:4096].decode(errors='replace'), message_truncated=len(message) > 4096)
+                events.append(item)
+            continuation = data['metadata'].get('continue', '')
+            self.save_log(f'{namespace}-events-{page + 1:03d}.json', json.dumps({'events': events, 'has_more': bool(continuation)}, ensure_ascii=False), 768000)
+            if not continuation:
+                return
+        self.m.event('collection-event-cap', namespace=namespace, max_events=5000, more=True)
+
     def collect(self):
         errors = []
         def blocked(requirement):
@@ -454,7 +494,7 @@ rmdir "$path"
                 try:
                     pods = json.loads(self.kube('get', 'pods', '-n', namespace, '-o', 'json', timeout=10))['items']
                     self.save_log(namespace + '-statuses.json', json.dumps([self.pod_evidence(p) for p in pods]))
-                    self.save_log(namespace + '-events.json', self.kube('get', 'events', '-n', namespace, '-o', 'json', timeout=10))
+                    self.collect_events(namespace)
                     for pod in sorted(pods, key=lambda p: p['metadata']['creationTimestamp'], reverse=True)[:24]:
                         for container in self.pod_evidence(pod)['containers']:
                             self.save_log(pod['metadata']['name'] + '-' + container['name'] + '.log', self.kube('logs', pod['metadata']['name'], '-n', namespace,
@@ -490,8 +530,7 @@ rmdir "$path"
             self.run('docker', 'exec', self.NAME + '-control-plane', 'systemctl', 'stop', 'kubelet', timeout=30)
             ids = self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=30).split()
             for identity in ids:
-                self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'stopp', identity, timeout=30)
-                self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'rmp', identity, timeout=30)
+                self.stop_sandbox(identity)
             if self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=30).strip():
                 raise CommandFailure('cleanup: CRI sandboxes remain; no backing may be unmounted')
             self.quiesced = True

@@ -124,7 +124,9 @@ rebind a poisoned target. Normal teardown stops owned sandboxes, verifies exact
 loop/backing associations, unmounts/detaches only owned backing and removes the
 owned node/private data. After stopping kubelet and removing every CRI sandbox,
 whole-node disposal explicitly unmounts residual binds of verified owned devices
-under kubelet Pod volume roots; it does not wait for a stopped kubelet to act. Unknown ownership or unmount failure is a reported leak.
+under kubelet Pod volume roots; it does not wait for a stopped kubelet to act.
+Concurrent kubelet sandbox removal is accepted only after a fresh successful CRI
+list proves that exact sandbox absent, never because an error says NotFound. Unknown ownership or unmount failure is a reported leak.
 
 Commands preserve return code and bounded separate output; child groups are killed
 and reaped on deadline. Waits cap children by remaining case/run time and report
@@ -132,6 +134,9 @@ last operation/status plus available scheduling/admission observations. Failures
 are collected before teardown. Fresh runs bind the120-minute budget into the immutable plan; only diagnostic
 runs can override it, and their actual budget is recorded. The campaign reserves five
 minutes each for collection and teardown; hosted jobs have a150-minute hard cap.
+Event diagnostics use bounded API pages (100 events, maximum50 pages), omit bulky
+managedFields and explicitly mark any remaining pages. They do not concatenate
+an unbounded event list or turn a truncated JSON payload into oracle input.
 Progress is incremental. Hard runner death cannot guarantee final collection and
 never counts as success. Evidence uploads cap at100MiB with explicit truncation/
 dropped-artifact records; Secrets, kubeconfigs, auth files, private keys and raw

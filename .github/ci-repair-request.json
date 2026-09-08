@@ -1,6 +1,6 @@
 {
   "purpose": "CI REPAIR; G delivery paused",
-  "series": 1,
+  "series": 2,
   "seeds": [1806, 1806, 1807],
-  "reason": "Validate repaired stream parsing and certified owned disposal; preserve all prior failures. No product builds or G delivery."
+  "reason": "Verify canonical archive/config identity, observed CRI disposal races, and bounded event pagination. Series1 failures preserved; no product builds or G delivery."
 }

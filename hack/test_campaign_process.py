@@ -122,6 +122,41 @@ class ProcessTests(unittest.TestCase):
         with self.assertRaises(CommandFailure):
             fixture.container_exists(name)
 
+    def test_cri_removal_race_requires_fresh_successful_absence_observation(self):
+        from campaign_fixture import Fixture
+        from campaign_process import CommandResult
+        identity = 'a' * 64
+        failure = CommandResult('stopp', 1, '', 'sandbox NotFound', 0, False, 0)
+        for code, stdout, accepted in ((0, '', True), (0, identity, False), (1, '', False)):
+            fixture = Fixture.__new__(Fixture)
+            fixture.NAME = 'cb-repair-aaaaaaaaaaaa'
+            fixture.commands, fixture.m = Mock(), Mock()
+            fixture.commands.command.side_effect = [failure, CommandResult('list', code, stdout, '', 0, False, 0)]
+            if accepted:
+                fixture.stop_sandbox(identity)
+                self.assertTrue(fixture.m.event.call_args.kwargs['observed_absent'])
+            else:
+                with self.assertRaisesRegex(CommandFailure, 'NotFound'):
+                    fixture.stop_sandbox(identity)
+
+    def test_event_collection_paginates_and_preserves_valid_bounded_projections(self):
+        import json
+        from campaign_fixture import Fixture
+        from campaign_process import CommandResult
+        fixture = Fixture.__new__(Fixture)
+        fixture.kube_result, fixture.save_log, fixture.m = Mock(), Mock(), Mock()
+        def page(token, message):
+            data = {'metadata': {'continue': token}, 'items': [{'metadata': {'managedFields': 'not diagnostic input'}, 'reason': 'FailedScheduling', 'message': message}]}
+            return CommandResult('events', 0, json.dumps(data), '', 0, False, 0)
+        fixture.kube_result.side_effect = [page('token/+=', 'first reason'), page('', 'second reason')]
+        fixture.collect_events('campaign-target')
+        self.assertEqual(fixture.kube_result.call_count, 2)
+        self.assertIn('continue=token%2F%2B%3D', fixture.kube_result.call_args.args[-1])
+        projections = [json.loads(call.args[1]) for call in fixture.save_log.call_args_list]
+        self.assertEqual([p['events'][0]['message'] for p in projections], ['first reason', 'second reason'])
+        self.assertNotIn('managedFields', str(projections))
+        self.assertFalse(projections[-1]['has_more'])
+
     def test_quiesced_owned_bind_disposal_and_unknown_mount_rejection(self):
         from campaign_fixture import Fixture
         from types import SimpleNamespace
