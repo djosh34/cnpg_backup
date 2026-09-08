@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository-owned G candidate publication, never version/release publication."""
+"""Repository-owned G/H candidate publication, never version/release publication."""
 import argparse
 import json
 import os
@@ -15,7 +15,8 @@ OUT = Path('artifacts/candidate')
 
 def trust(env, head, origin):
     if (env.get('GITHUB_REPOSITORY') != REPO or env.get('GITHUB_EVENT_NAME') != 'push'
-            or env.get('GITHUB_REF') != BRANCH or env.get('GITHUB_WORKFLOW_REF') != WORKFLOW
+            or env.get('GITHUB_REF') not in (BRANCH, 'refs/heads/implementation/pr-h')
+            or env.get('GITHUB_WORKFLOW_REF') != REPO + '/.github/workflows/pr-g-candidate.yml@' + env.get('GITHUB_REF', '')
             or not re.fullmatch('[0-9a-f]{40}', head) or env.get('GITHUB_SHA') != head
             or env.get('GITHUB_WORKFLOW_SHA') != head
             or origin not in ('https://github.com/' + REPO, 'https://github.com/' + REPO + '.git')):
@@ -39,8 +40,11 @@ def require_absent(result):
 
 
 def reuse_subject(head):
-    """The final G harness consumes the already published, unchanged product."""
-    subject = json.loads(Path('.github/ci-repair-subject.json').read_text())
+    """Reuse only an explicitly recorded candidate with unchanged build inputs."""
+    record = Path('.github/pr-h-subject.json') if os.environ.get('GITHUB_REF') == 'refs/heads/implementation/pr-h' else Path('.github/ci-repair-subject.json')
+    if not record.exists():
+        return None
+    subject = json.loads(record.read_text())
     sha = subject['revision']
     if not re.fullmatch('[0-9a-f]{40}', sha):
         raise RuntimeError('invalid frozen product revision')
@@ -109,7 +113,7 @@ def main():
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write(flavor + '=' + ref + '\n')
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-        summary.write('Unqualified G candidate `' + sha + '` (no version tags):\n\n')
+        summary.write('Unqualified premerge candidate `' + sha + '` (no version tags):\n\n')
         for image in record['images'].values():
             summary.write('- `' + image['digest_reference'] + '`\n')
 

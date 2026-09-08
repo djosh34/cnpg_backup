@@ -1,7 +1,7 @@
-name: pr-g-exact-candidate
+name: premerge-exact-candidate
 on:
   push:
-    branches: [implementation/pr-g]
+    branches: [implementation/pr-g, implementation/pr-h]
 permissions:
   contents: read
 concurrency:
@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   subject:
-    if: github.repository == 'djosh34/cnpg_backup' && github.event_name == 'push' && github.ref == 'refs/heads/implementation/pr-g'
+    if: github.repository == 'djosh34/cnpg_backup' && github.event_name == 'push' && (github.ref == 'refs/heads/implementation/pr-g' || github.ref == 'refs/heads/implementation/pr-h')
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
@@ -28,7 +28,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify trusted push and unchanged product; reuse exact published G digests
+      - name: Verify trusted push and unchanged product; reuse only recorded exact digests
         id: subject
         run: python3 hack/premerge_candidate.py reuse
       - name: Private ephemeral package authentication for changed product only
@@ -76,5 +76,5 @@ jobs:
       subject_sha: ${{ needs.subject.outputs.sha }}
       manager_image: ${{ needs.subject.outputs.manager }}
       data_image: ${{ needs.subject.outputs.pg18 }}
-      trusted_ref: implementation/pr-g
+      trusted_ref: ${{ github.ref_name }}
       seeds: '[1806]'

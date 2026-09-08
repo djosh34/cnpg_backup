@@ -17,10 +17,10 @@ INPUTS = Path('artifacts/repair-inputs')
 def prepare():
     if os.environ.get('GITHUB_REPOSITORY') != 'djosh34/cnpg_backup':
         raise ValueError('repository-owned execution required')
-    if os.environ.get('GITHUB_REF') not in ('refs/heads/main', 'refs/heads/implementation/pr-g', 'refs/heads/implementation/ci-reliability'):
+    if os.environ.get('GITHUB_REF') not in ('refs/heads/main', 'refs/heads/implementation/pr-g', 'refs/heads/implementation/pr-h', 'refs/heads/implementation/ci-reliability'):
         raise ValueError('untrusted harness branch')
     ref = os.environ['TRUSTED_REF']
-    if ref not in ('main', 'implementation/pr-g', 'implementation/ci-reliability'):
+    if ref not in ('main', 'implementation/pr-g', 'implementation/pr-h', 'implementation/ci-reliability'):
         raise ValueError('untrusted subject branch')
     sha = os.environ['SUBJECT_SHA']
     if not re.fullmatch('[a-f0-9]{40}', sha):

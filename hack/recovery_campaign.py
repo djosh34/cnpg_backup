@@ -476,7 +476,11 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                     manifest.block(name, blocked or ['owned cleanup failed' if not healthy else 'campaign deadline'],
                                    branch, requirement=case['requirement'])
                     continue
-                if fixture and plan['recipe']['layout'] == 'grouped' and group != case['group']:
+                # H's live-primary mutation branches each require a fresh source;
+                # never reuse a promoted/checksum-changed/disaster fixture. The
+                # existing verified disposal path owns every boundary.
+                if fixture and (case['group'] == 'differential' or group == 'differential' or
+                                (plan['recipe']['layout'] == 'grouped' and group != case['group'])):
                     dispose()
                     if not healthy:
                         manifest.block(name, ['owned cleanup failed'], branch)
@@ -490,6 +494,7 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                     # First monolithic fixture gets the full declared closure;
                     # after a failure only prerequisites for remaining cases.
                     needed = {f for c in cases if any(b['status'] == 'not_executed' for b in manifest.data['scenarios'][c['id']]['branches'].values())
+                              and ((c['group'] == 'differential') == (case['group'] == 'differential'))
                               and (plan['recipe']['layout'] != 'grouped' or c['group'] == case['group']) for f in c['fixtures']}
                     args = SimpleNamespace(profile=plan['recipe']['profile'], seed=plan['recipe']['seed'], fixtures=needed,
                                            subject_sha=plan['subject']['revision'], manager_image=plan['subject']['images']['manager'],

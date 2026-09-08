@@ -206,7 +206,7 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "full",
-      "expression": "h.wait(done, 'actual CNPG committed full', 600)",
+      "expression": "h.wait(done, 'actual CNPG committed ' + backup_type, 600)",
       "id": "1071a40c1d03289f",
       "category": "eventual-outcome",
       "requirement": "design \u00a73/4: actual CNPG full capture commits under original Backup UID; failed capture blocks dependent restores",
@@ -1195,7 +1195,7 @@
     },
     {
       "file": "hack/recovery_cases.py",
-      "function": "prepare_recovery",
+      "function": "destroy_source",
       "expression": "not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']",
       "id": "514b2f52518ae625",
       "category": "fixture-precondition",
@@ -1892,6 +1892,326 @@
       "requirement": "testing named scenario retire_backing",
       "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
       "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_differential_workload",
+      "expression": "len(commands) == 3 and sum(('INCREMENTAL' in c.upper() for c in commands)) == 2",
+      "id": "c07e1b8ed51da86d",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_differential_workload",
+      "expression": "c['kind'] == 'differential' and c['parent_backup_uid'] == c['root_backup_uid'] == self.base['backup_uid']",
+      "id": "e6adc9fc5b9f2f41",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_differential_workload",
+      "expression": "c['root_manifest_sha256'] == self.base['manifest_sha256']",
+      "id": "8301e1e21b369a26",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_differential_workload",
+      "expression": "sizes['D2'] < sizes['F']",
+      "id": "7c7278546411d360",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_differential_workload",
+      "expression": "self.sql(SOURCE, pod, \"SELECT count(*)||':'||md5(string_agg(id::text||':'||value,',' ORDER BY id)) FROM h_data\") == self.differential_expected",
+      "id": "464e0cc6b633733d",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_restore",
+      "expression": "keys and all((k.startswith(prefix) for k in keys))",
+      "id": "cb4cc51da014a683",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_restore",
+      "expression": "not self.inventory(prefix)",
+      "id": "927f3eda7dabaf94",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_restore",
+      "expression": "lsn(point) > lsn(self.d2['bundled_wal_end_lsn'])",
+      "id": "29dff4e7ff1b4209",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_restore",
+      "expression": "int(remote_file[8:16], 16) * 256 + int(remote_file[16:], 16) > (lsn(self.d2['bundled_wal_end_lsn']) - 1) // (16 << 20)",
+      "id": "a5c608405f737926",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_restore",
+      "expression": "[c['backup_uid'] for c in plan['plan']['chain']] == [self.base['backup_uid'], self.d2['backup_uid']]",
+      "id": "8c0264976e6aff95",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_restore",
+      "expression": "plan['plan']['required_archive']",
+      "id": "42a6094ad1435773",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "key not in self.inventory(key)",
+      "id": "adc5553a0a1e5e8d",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "int(count) > 0 and self.sql(SOURCE, pod, 'SHOW summarize_wal') == 'on'",
+      "id": "aa9ddd3497cf8100",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "self.sql(SOURCE, pod, 'SHOW data_checksums') == 'off'",
+      "id": "5f359d34dbf2e5e6",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.wait(lambda: len(json.loads(h.kube('get', 'pods', '-n', SOURCE, '-l', 'cnpg.io/cluster=database,cnpg.io/podRole=instance', '-o', 'json'))['items']) == 2 and self.sql(SOURCE, self.primary(), \"SELECT count(*) FROM pg_stat_replication WHERE state='streaming'\") == '1', 'differential promotion standby streaming', 360)",
+      "id": "7224259de962a24f",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.wait(lambda: self.primary() != old, 'differential primary promotion', 180)",
+      "id": "41793d17dbd8576d",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.wait(lambda: self.sql(SOURCE, pod, 'SELECT NOT pg_is_in_recovery()') == 't', 'promoted primary accepts SQL', 180)",
+      "id": "c261802745979d26",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "int(self.sql(SOURCE, pod, 'SELECT timeline_id FROM pg_control_checkpoint()')) > self.base['timeline']",
+      "id": "9cd22881c52c87f3",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.wait(lambda: self.sql(SOURCE, pod, 'SELECT count(*) FROM pg_stat_progress_basebackup') == '1', 'real differential native capture active', 180)",
+      "id": "e35d82af4f8c2a93",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "'INCREMENTAL' in active.upper()",
+      "id": "c6230e48b8811abe",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "pid > 1",
+      "id": "1a4546573552cb27",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "failed",
+      "expression": "b.get('status', {}).get('phase') != 'completed'",
+      "id": "27ef2905449d29a2",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.wait(failed, 'terminal requested differential failure', 360)",
+      "id": "f46c81b26775dade",
+      "category": "eventual-outcome",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "not any(('/data/' in k or k.endswith('/commit.json') or k.endswith('/manifest.pg.json') for k in keys))",
+      "id": "ef561b8af5b69c40",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.wait(lambda: self.sql(SOURCE, pod, 'SELECT count(*) FROM pg_stat_progress_basebackup') == '0', 'canceled native replication drained', 60)",
+      "id": "ad88367a774777ba",
+      "category": "eventual-outcome",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "sum(('INCREMENTAL' not in c.upper() for c in commands_after)) == sum(('INCREMENTAL' not in c.upper() for c in commands_before))",
+      "id": "238824ae67e76058",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "after_full == full_before",
+      "id": "d82c52e11d622496",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_checksum_change",
+      "expression": "h.wait(lambda: not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-l', 'cnpg.io/cluster=database', '-o', 'json'))['items'], 'source clean hibernation before checksum tool', 360)",
+      "id": "4c2c8565cb34c987",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_checksum_change",
+      "expression": "h.wait(lambda: json.loads(h.kube('get', 'pod', name, '-n', SOURCE, '-o', 'json')).get('status', {}).get('phase') in ('Succeeded', 'Failed'), 'actual offline checksum change', 120)",
+      "id": "9fd44ab654831a08",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_checksum_change",
+      "expression": "changed['status']['phase'] == 'Succeeded'",
+      "id": "ca85c58107560e62",
+      "category": "fixture-precondition",
+      "requirement": "PR H fixture: positively observe the owned source/fault/command/WAL-boundary prerequisite before judging recovery or requested-type failure.",
+      "temporal_semantics": "Required observed prerequisite; absence blocks its dependent assertion, never fabricates an injected fault or product defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "observed == expected",
+      "id": "058be28e12682806",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.sql(TARGET, primary, \"SELECT (SELECT id FROM h_truncated)||':'||(SELECT id FROM h_recreated)||':'||(SELECT value FROM h_space)\") == '3:3:d2'",
+      "id": "a4556c27a0e5c380",
+      "category": "safety-invariant",
+      "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
+      "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
+      "failure_layer": "product"
     }
   ]
 }

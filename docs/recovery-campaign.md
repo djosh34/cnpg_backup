@@ -58,6 +58,31 @@ local subject/harness. Artifact transport loses executable bits: restore `555` o
 Use the recorded Python version. Native database bytes/UIDs/timestamps naturally
 vary: compare recipe and independent invariants, not fresh database byte identity.
 
+## PR H extension
+
+H adds `differential-native` to the same registry (seven independently recorded
+branches: reconstruction, remote-PITR/source-loss, missing full, missing summaries,
+checksum change, promotion and cancellation). Current full scope is **34 families /
+54 branches**, including the two seeded supplements. The counts below describe
+the historical G/CI-repair slice, not an H qualification claim.
+
+Each H branch gets a fresh live-source fixture through the existing verified
+disposal path; a checksum/promotion/disaster mutation never contaminates another
+branch. Original full and two direct-F differentials establish exact manifest
+parentage and reduced **stored** transfer on a largely unchanged fixture. Recovery
+deletes unrelated D1, checks update/delete/truncate/drop/recreate/data hashes,
+tablespaces/separate WAL, and reuses the mandatory G holder/ownership/disposal
+oracles. Remote PITR explicitly deletes the source namespace and compares
+post-D2-bundle sentinels. Native replication-command logs are **required** for the
+no-full-fallback oracle, not optional forensic diagnostics; F/D/D positives prove
+the log source distinguishes the command types. Per-type metrics and Warning
+receipts are mandatory failure assertions. Unrelated logs/events remain optional.
+
+H product code requires new immutable images. The existing premerge candidate
+caller accepts the H branch and can reuse only the explicitly recorded H candidate
+when actual build inputs are unchanged. No new CI runner or qualification system
+is introduced. Current execution results and remaining gates live in PR H's report.
+
 ## Scope and independent failures
 
 `campaign_plan.REGISTRY` is the sole execution/dependency registry: all **31 fixed

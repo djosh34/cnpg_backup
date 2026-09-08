@@ -242,12 +242,17 @@ class Campaign:
                                  'postgresql': {'parameters': {'summarize_wal': 'on', 'wal_summary_keep_time': '14d',
                                                               'archive_timeout': '60s', 'track_commit_timestamp': 'on'}},
                                  'plugins': [{'name': PLUGIN, 'isWALArchiver': True, 'parameters': {'repository': 'destination'}}]}}
+        if 'differential' in getattr(self.args, 'fixtures', []):
+            self.cluster['spec']['postgresql']['parameters']['log_replication_commands'] = 'on'
         h.wait(lambda: h.admission_ready(h.kube('apply', '--server-side', '--dry-run=server', '-f', '-',
                                                 input=json.dumps(self.cluster), check=False)), 'actual mTLS discovery')
         h.apply(self.cluster)
         h.kube('wait', '-n', SOURCE, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
         self.install_observer()
-        self.make_workload()
+        if 'differential' in getattr(self.args, 'fixtures', []):
+            self.make_differential_workload()
+        else:
+            self.make_workload()
 
     def install_observer(self):
         h = self.h
@@ -318,18 +323,18 @@ class Campaign:
     def wal_key(name):
         return 'smoke/v1/' + SOURCE_ID + '/wal/' + name[:8] + '/' + name
 
-    def full(self, name):
+    def full(self, name, backup_type='full'):
         h = self.h
         OUT = h.OUT
-        d = backup_smoke.definition(h, name)
+        d = backup_smoke.definition(h, name, backup_type=backup_type)
         d['metadata']['namespace'] = SOURCE
         h.apply(d)
         def done():
             b = json.loads(h.kube('get', 'backup', name, '-n', SOURCE, '-o', 'json'))
             state = b.get('status', {}).get('phase')
-            assert state != 'failed', 'actual full capture failed'
+            assert state != 'failed', 'actual requested capture failed: ' + backup_type
             return state == 'completed'
-        h.wait(done, 'actual CNPG committed full', 600)
+        h.wait(done, 'actual CNPG committed ' + backup_type, 600)
         b = json.loads(h.kube('get', 'backup', name, '-n', SOURCE, '-o', 'json'))
         uid = b['status']['backupId']
         assert uid == b['metadata']['uid']
@@ -338,6 +343,198 @@ class Campaign:
         self.m.data['native_backup_count'] = self.m.data.get('native_backup_count', 0) + 1
         self.m.save()
         return commit
+
+    def make_differential_workload(self):
+        h = self.h
+        pod = self.primary()
+        self.sql(SOURCE, pod, "CREATE TABLE g_oracle(id integer PRIMARY KEY,value text) TABLESPACE fast_space; "
+                             "CREATE TABLE g_drop(id integer PRIMARY KEY); INSERT INTO g_drop VALUES(71); "
+                             "CREATE TABLE h_data(id integer PRIMARY KEY,value text); "
+                             "INSERT INTO h_data SELECT i,repeat(md5(i::text),16) FROM generate_series(1,60000)i; "
+                             "CREATE TABLE h_space(value text) TABLESPACE fast_space; INSERT INTO h_space VALUES('full'); "
+                             "CREATE TABLE h_truncated(id int); INSERT INTO h_truncated VALUES(1); "
+                             "CREATE TABLE h_recreated(id int); INSERT INTO h_recreated VALUES(1)")
+        self.acknowledge(1, 'base')
+        self.base = self.full('h-full')
+        self.sql(SOURCE, pod, "UPDATE h_data SET value='d1' WHERE id=1; DELETE FROM h_data WHERE id=2; "
+                             "TRUNCATE h_truncated; INSERT INTO h_truncated VALUES(2); "
+                             "DROP TABLE h_recreated; CREATE TABLE h_recreated(id int); INSERT INTO h_recreated VALUES(2); "
+                             "UPDATE h_space SET value='d1'")
+        self.d1 = self.full('h-d1', 'differential')
+        self.sql(SOURCE, pod, "UPDATE h_data SET value='d2' WHERE id=3; DELETE FROM h_data WHERE id=4; "
+                             "TRUNCATE h_truncated; INSERT INTO h_truncated VALUES(3); "
+                             "DROP TABLE h_recreated; CREATE TABLE h_recreated(id int); INSERT INTO h_recreated VALUES(3); "
+                             "UPDATE h_space SET value='d2'")
+        self.d2 = self.full('h-d2', 'differential')
+        commands = self.native_backup_commands(pod)
+        assert len(commands) == 3 and sum('INCREMENTAL' in c.upper() for c in commands) == 2, 'native F/D/D command oracle absent'
+        for c in (self.d1, self.d2):
+            assert c['kind'] == 'differential' and c['parent_backup_uid'] == c['root_backup_uid'] == self.base['backup_uid']
+            assert c['root_manifest_sha256'] == self.base['manifest_sha256'], 'not the exact original full manifest'
+        sizes = {name: sum(a['stored_bytes'] for a in c['artifacts']) + c['manifest_bytes']
+                 for name, c in (('F', self.base), ('D1', self.d1), ('D2', self.d2))}
+        assert sizes['D2'] < sizes['F'], 'largely unchanged fixture did not reduce actual S3 transfer'
+        self.event('differential-direct-F-transfers', stored_bytes=sizes, full=self.base['backup_uid'], d1=self.d1['backup_uid'], d2=self.d2['backup_uid'])
+        digest = hashlib.md5()
+        count = 0
+        for i in range(1, 60001):
+            if i in (2, 4):
+                continue
+            value = {1: 'd1', 3: 'd2'}.get(i, hashlib.md5(str(i).encode()).hexdigest() * 16)
+            digest.update(((',' if count else '') + str(i) + ':' + value).encode())
+            count += 1
+        self.differential_expected = str(count) + ':' + digest.hexdigest()
+        assert self.sql(SOURCE, pod, "SELECT count(*)||':'||md5(string_agg(id::text||':'||value,',' ORDER BY id)) FROM h_data") == self.differential_expected
+        atomic_json(h.OUT / 'differential-oracle.json', {'data_hash': self.differential_expected, 'stored_bytes': sizes})
+
+    def differential_restore(self, remote=False):
+        h = self.h
+        # Delete only the explicitly unrelated D1 test namespace. F+D2 must be
+        # sufficient; this is an injected object-loss case, not retention code.
+        prefix = 'smoke/v1/' + SOURCE_ID + '/backups/' + self.d1['backup_uid'] + '/'
+        keys = self.inventory(prefix)
+        assert keys and all(k.startswith(prefix) for k in keys)
+        for key in keys:
+            self.wal.s3('DELETE', key)
+        assert not self.inventory(prefix), 'unrelated D1 was not actually removed'
+        target = {'backupID': self.d2['backup_uid'], 'targetImmediate': True}
+        rows = BASE
+        if remote:
+            self.archive()
+            self.acknowledge(2, 'before')
+            point = self.sql(SOURCE, self.primary(), "SELECT pg_create_restore_point('h_after_d2')")
+            self.acknowledge(3, 'target')
+            self.acknowledge(4, 'after')
+            remote_file = self.archive()
+            assert lsn(point) > lsn(self.d2['bundled_wal_end_lsn'])
+            assert int(remote_file[8:16], 16) * 256 + int(remote_file[16:], 16) > (lsn(self.d2['bundled_wal_end_lsn']) - 1) // (16 << 20)
+            self.event('differential-remote-sentinel', bundle_end=self.d2['bundled_wal_end_lsn'], target_lsn=point, remote_file=remote_file)
+            target = {'backupID': self.d2['backup_uid'], 'targetName': 'h_after_d2'}
+            rows = BEFORE
+        else:
+            for c in (self.base, self.d2):
+                self.case_shell_free_original_verification(c, ('missing-WAL', 'corrupt-WAL'))
+        self.destroy_source()
+        state = self.start(target)
+        state['differential_expected'] = self.differential_expected
+        plan = self.materialize(state)
+        assert [c['backup_uid'] for c in plan['plan']['chain']] == [self.base['backup_uid'], self.d2['backup_uid']]
+        if remote:
+            assert plan['plan']['required_archive'], 'D PITR did not require remote post-bundle WAL'
+        self.finish(state, rows, drop_present=True)
+
+    def native_backup_commands(self, pod):
+        # REQUIRED command oracle, not optional forensic collection. Positive
+        # F/D/D setup proves the log source distinguishes full from incremental.
+        text = self.h.kube('logs', '-n', SOURCE, pod, '-c', 'postgres', '--limit-bytes=1048576')
+        commands = [line for line in text.splitlines() if 'received replication command: BASE_BACKUP' in line]
+        return commands
+
+    def differential_failed(self, fault):
+        from backup_metrics_smoke import BackupMetricsSmoke
+        h = self.h
+        metrics = BackupMetricsSmoke(h, self.m.data, SOURCE_ID)
+        try:
+            metrics.start()
+            before = metrics.assert_committed(backup_smoke.publication_epoch(self.wal, self.d2['backup_uid']), 'differential')
+            full_before = metrics.snapshot('full')
+            pod = self.primary()
+            restore = []
+            with self.cleanup(restore):
+                if fault == 'missing-full':
+                    key = 'smoke/v1/' + SOURCE_ID + '/backups/' + self.base['backup_uid'] + '/attempts/' + self.base['attempt_id'] + '/manifest.pg.json'
+                    saved = h.WORK / 'withheld-full-manifest'
+                    self.wal.s3('GET', key, saved)
+                    restore.append(('restore-full-manifest', lambda: self.put_fixture(key, saved)))
+                    self.wal.s3('DELETE', key)
+                    assert key not in self.inventory(key), 'full manifest loss did not fire'
+                elif fault == 'missing-summary':
+                    count = self.sql(SOURCE, pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/summaries') n WHERE n LIKE '%.summary'")
+                    assert int(count) > 0 and self.sql(SOURCE, pod, 'SHOW summarize_wal') == 'on'
+                    h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
+                           'find "$PGDATA/pg_wal/summaries" -type f -name "*.summary" -delete')
+                    self.event('differential-summary-loss', removed_count=int(count), summarize_wal='on')
+                elif fault == 'checksum':
+                    self.differential_checksum_change()
+                    pod = self.primary()
+                    assert self.sql(SOURCE, pod, 'SHOW data_checksums') == 'off'
+                elif fault == 'promotion':
+                    self.pool(3)
+                    h.kube('patch', 'cluster/database', '-n', SOURCE, '--type=merge', '-p', '{"spec":{"instances":2}}')
+                    h.wait(lambda: len(json.loads(h.kube('get', 'pods', '-n', SOURCE, '-l', 'cnpg.io/cluster=database,cnpg.io/podRole=instance', '-o', 'json'))['items']) == 2
+                           and self.sql(SOURCE, self.primary(), 'SELECT count(*) FROM pg_stat_replication WHERE state=\'streaming\'') == '1', 'differential promotion standby streaming', 360)
+                    old = self.primary()
+                    h.kube('delete', 'pod', old, '-n', SOURCE, '--grace-period=0', '--force', '--wait=false')
+                    h.wait(lambda: self.primary() != old, 'differential primary promotion', 180)
+                    pod = self.primary()
+                    h.wait(lambda: self.sql(SOURCE, pod, 'SELECT NOT pg_is_in_recovery()') == 't', 'promoted primary accepts SQL', 180)
+                    assert int(self.sql(SOURCE, pod, 'SELECT timeline_id FROM pg_control_checkpoint()')) > self.base['timeline']
+                commands_before = self.native_backup_commands(pod)
+                name = 'h-failed-' + fault
+                if fault == 'cancellation':
+                    self.sql(SOURCE, pod, "UPDATE h_data SET value=repeat(md5(id::text||'cancel'),16)")
+                h.apply(backup_smoke.definition(h, name, backup_type='differential'))
+                if fault == 'cancellation':
+                    h.wait(lambda: self.sql(SOURCE, pod, 'SELECT count(*) FROM pg_stat_progress_basebackup') == '1', 'real differential native capture active', 180)
+                    active = self.sql(SOURCE, pod, "SELECT query FROM pg_stat_activity WHERE backend_type='walsender' AND query LIKE 'BASE_BACKUP%'")
+                    assert 'INCREMENTAL' in active.upper(), 'fault did not hit a native differential command'
+                    observed = json.loads(h.kube('get', 'pod', pod, '-n', SOURCE, '-o', 'json'))
+                    sidecar = next(c for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+                    container = sidecar['containerID'].split('://')[1]
+                    pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container))['info']['pid'])
+                    assert pid > 1
+                    h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-TERM', str(pid))
+                    self.event('differential-cancellation-fired', container_id=container, native_query=active)
+                def failed():
+                    b = json.loads(h.kube('get', 'backup', name, '-n', SOURCE, '-o', 'json'))
+                    assert b.get('status', {}).get('phase') != 'completed', 'requested D fault falsely succeeded'
+                    return b.get('status', {}).get('phase') == 'failed'
+                h.wait(failed, 'terminal requested differential failure', 360)
+                b = json.loads(h.kube('get', 'backup', name, '-n', SOURCE, '-o', 'json'))
+                uid = b['metadata']['uid']
+                keys = self.inventory('smoke/v1/' + SOURCE_ID + '/backups/' + uid + '/')
+                assert not any('/data/' in k or k.endswith('/commit.json') or k.endswith('/manifest.pg.json') for k in keys), 'failure uploaded/published a replacement backup'
+                if fault == 'cancellation':
+                    h.wait(lambda: self.sql(SOURCE, pod, 'SELECT count(*) FROM pg_stat_progress_basebackup') == '0', 'canceled native replication drained', 60)
+                commands_after = self.native_backup_commands(pod)
+                assert sum('INCREMENTAL' not in c.upper() for c in commands_after) == sum('INCREMENTAL' not in c.upper() for c in commands_before), 'requested D started a replacement full command'
+                self.event('requested-differential-failed-closed', fault=fault, uid=uid, keys=keys, native_commands=commands_after, no_replacement_upload=True)
+            metrics.assert_failed(name, before, 'differential', require_warning=True)
+            after_full = metrics.snapshot('full')
+            assert after_full == full_before, 'failed D changed full success/failure metrics'
+        finally:
+            metrics.close()
+
+    def differential_checksum_change(self):
+        h = self.h
+        pod = json.loads(h.kube('get', 'pod', self.primary(), '-n', SOURCE, '-o', 'json'))
+        volume = next(v for v in pod['spec']['volumes'] if v['name'] == 'pgdata')
+        h.kube('annotate', 'cluster/database', '-n', SOURCE, 'cnpg.io/hibernation=on', '--overwrite')
+        h.wait(lambda: not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-l', 'cnpg.io/cluster=database', '-o', 'json'))['items'], 'source clean hibernation before checksum tool', 360)
+        h.quiesce_pods(SOURCE)
+        name = 'h-checksums'
+        h.apply({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': name, 'namespace': SOURCE},
+                 'spec': {'restartPolicy': 'Never', 'securityContext': {'runAsUser': 26, 'runAsGroup': 26, 'fsGroup': 26},
+                          'imagePullSecrets': self.image_pull_secrets,
+                          'containers': [{'name': 'checksums', 'image': h.LOCK['database'],
+                                          'command': ['/usr/lib/postgresql/18/bin/pg_checksums', '--disable', '-D', '/var/lib/postgresql/data/pgdata'],
+                                          'resources': {'limits': {'memory': '128Mi', 'cpu': '1'}},
+                                          'volumeMounts': [{'name': 'pgdata', 'mountPath': '/var/lib/postgresql/data'}]}], 'volumes': [volume]}})
+        h.wait(lambda: json.loads(h.kube('get', 'pod', name, '-n', SOURCE, '-o', 'json')).get('status', {}).get('phase') in ('Succeeded', 'Failed'), 'actual offline checksum change', 120)
+        changed = json.loads(h.kube('get', 'pod', name, '-n', SOURCE, '-o', 'json'))
+        assert changed['status']['phase'] == 'Succeeded', 'offline checksum tool failed'
+        h.kube('delete', 'pod', name, '-n', SOURCE, '--wait=true', '--timeout=120s')
+        h.kube('annotate', 'cluster/database', '-n', SOURCE, 'cnpg.io/hibernation-', '--overwrite')
+        h.kube('wait', '-n', SOURCE, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
+        self.event('actual-checksum-transition', old=1, new=0, source_restart=True)
+
+    def case_differential_native(self):
+        with self.m.case('differential-native'):
+            for branch in self.variants(('reconstruction', 'remote-PITR-source-loss', 'missing-full', 'missing-summary', 'checksum', 'promotion', 'cancellation')):
+                if branch in ('reconstruction', 'remote-PITR-source-loss'):
+                    self.differential_restore(remote=branch == 'remote-PITR-source-loss')
+                else:
+                    self.differential_failed(branch)
 
     def make_workload(self):
         h = self.h
@@ -581,6 +778,12 @@ class Campaign:
                        source_timeline=state['plan']['plan']['target']['timeline'], new_timeline=timeline,
                        history=history, history_sha256=hashlib.sha256(history.encode()).hexdigest(),
                        endpoint=state['replay_endpoint'], admitted_frontier=state['same_segment_floor'])
+        if 'differential_expected' in state:
+            expected = state['differential_expected']
+            observed = self.sql(TARGET, primary, "SELECT count(*)||':'||md5(string_agg(id::text||':'||value,',' ORDER BY id)) FROM h_data")
+            assert observed == expected, 'differential update/delete data hash differs'
+            assert self.sql(TARGET, primary, "SELECT (SELECT id FROM h_truncated)||':'||(SELECT id FROM h_recreated)||':'||(SELECT value FROM h_space)") == '3:3:d2', 'differential truncate/drop/recreate/tablespace changes lost'
+            self.event('differential-datahash-SQL', expected=expected, observed=observed)
         self.event('recovered-SQL', cluster=state['name'], rows=actual, drop_present=drop_present, timeline=timeline, wal_path=wal_path)
         # New lineage archives through ordinary instance mode, source declaration
         # remains in Cluster. S3 source inventory must not change from that write.
@@ -1068,6 +1271,11 @@ class Campaign:
 
 
     def prepare_recovery(self):
+        if 'differential' in getattr(self.args, 'fixtures', []):
+            return  # H faults need their fresh live primary; H PITR deletes it explicitly.
+        self.destroy_source()
+
+    def destroy_source(self):
         # Source disaster is a fixture precondition, NOT a dependency on a
         # particular named-point restore passing. A named-target defect must
         # not prevent independent latest/time/ownership cases from exercising.
@@ -1136,10 +1344,10 @@ class Campaign:
         with self.m.case('target-unreached'):
             self.reject({'backupID': self.base['backup_uid'], 'targetName': 'g_never_created'}, 'target-unreached', materialized=True)
 
-    def case_shell_free_original_verification(self):
+    def case_shell_free_original_verification(self, commit=None, controls=None):
         h = self.h
         WORK = h.WORK
-        with self.m.case('shell-free-original-verification'):
+        with self.m.case('shell-free-original-verification') if commit is None else contextlib.nullcontext():
             directory = WORK / ('original-verification-' + uuid.uuid4().hex[:12])
             directory.mkdir(mode=0o700)
             exported = directory / 'subject.tar'
@@ -1155,7 +1363,7 @@ class Campaign:
             tar_dir, wal_dir = directory / 'tar', directory / 'wal'
             tar_dir.mkdir()
             wal_dir.mkdir()
-            commit = self.base
+            commit = commit or self.base
             prefix = 'smoke/v1/' + SOURCE_ID + '/backups/' + commit['backup_uid'] + '/attempts/' + commit['attempt_id'] + '/'
             self.wal.s3('GET', prefix + 'manifest.pg.json', tar_dir / 'backup_manifest')
             for artifact in commit['artifacts']:
@@ -1180,7 +1388,7 @@ class Campaign:
             tool('/usr/lib/postgresql/18/bin/pg_verifybackup', '--exit-on-error', '--no-parse-wal', '/input/tar')
             tool('/input/verify', '/input/tar/backup_manifest', '/input/wal')
             segment = next(p for p in wal_dir.iterdir() if re.fullmatch('[0-9A-F]{24}', p.name))
-            controls = self.variants(('missing-WAL', 'corrupt-WAL'))
+            controls = controls or self.variants(('missing-WAL', 'corrupt-WAL'))
             for control in controls:
                 if control == 'missing-WAL':
                     hidden = directory / 'withheld'
