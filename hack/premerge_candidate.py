@@ -39,9 +39,9 @@ def require_absent(result):
         raise RuntimeError('cannot positively establish candidate tag absence')
 
 
-def reuse_subject(head):
+def reuse_subject(head, branch=BRANCH):
     """Reuse only an explicitly recorded candidate with unchanged build inputs."""
-    record = Path('.github/pr-h-subject.json') if os.environ.get('GITHUB_REF') == 'refs/heads/implementation/pr-h' else Path('.github/ci-repair-subject.json')
+    record = Path('.github/pr-h-subject.json') if branch == 'refs/heads/implementation/pr-h' else Path('.github/ci-repair-subject.json')
     if not record.exists():
         return None
     subject = json.loads(record.read_text())
@@ -77,7 +77,7 @@ def main():
         (OUT / 'trust.json').write_text(json.dumps({'subject_sha': sha, 'trusted': True, 'release_qualified': False}) + '\n')
         return
     if phase == 'reuse':
-        subject = reuse_subject(sha)
+        subject = reuse_subject(sha, os.environ['GITHUB_REF'])
         (OUT / 'reused-subject.json').write_text(json.dumps({
             'harness_revision': sha, 'subject': subject, 'release_qualified': False}, indent=2) + '\n')
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:

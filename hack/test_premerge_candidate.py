@@ -55,6 +55,16 @@ class CandidateTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 c.reuse_subject('c' * 40)
 
+    def test_H_requires_its_own_explicit_subject_record(self):
+        with patch.object(Path, 'exists', return_value=False), patch.object(c, 'run') as run:
+            self.assertIsNone(c.reuse_subject('c' * 40, 'refs/heads/implementation/pr-h'))
+            run.assert_not_called()
+        subject = {'revision': 'a' * 40, 'images': {
+            f: 'ghcr.io/djosh34/cnpg-backup-' + f + '@sha256:' + 'b' * 64 for f in ('manager', 'pg18')}}
+        with patch.object(Path, 'exists', return_value=True), patch.object(Path, 'read_text', return_value=json.dumps(subject)), \
+             patch.object(c, 'run', return_value=SimpleNamespace(stdout='docs/recovery-campaign.md\n')):
+            self.assertEqual(c.reuse_subject('c' * 40, 'refs/heads/implementation/pr-h'), subject)
+
     def test_private_auth_is_scoped_and_removed_even_on_failure(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
