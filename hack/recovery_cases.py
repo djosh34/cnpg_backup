@@ -720,7 +720,10 @@ class Campaign:
         # Delete catalog and namespace BEFORE any recovery. MinIO/config survive
         # in separate namespaces; no target has source connection credentials.
         with self.m.case('source-namespace-catalog-loss-S3-only'):
-            h.kube('delete', 'namespace', SOURCE, '--wait=true', '--timeout=180s', timeout=200)
+            # CNPG's default source Pod grace is 1800s; Kubernetes can delay
+            # namespace requeue by half that estimate even after Pods are gone.
+            # Wait for real finalization, never strip finalizers or infer deletion.
+            h.kube('delete', 'namespace', SOURCE, '--wait=true', '--timeout=1200s', timeout=1220)
             assert not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']
             self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
         if self.args.profile == 'ownership':

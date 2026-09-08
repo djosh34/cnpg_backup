@@ -46,7 +46,11 @@ class CampaignTests(unittest.TestCase):
                  patch.object(campaign, 'process_drain', side_effect=lambda: calls.append('drain')), \
                  patch.object(campaign, 'protection', side_effect=lambda: calls.append('protection')):
                 campaign.run()
-            self.assertEqual(kube.call_args_list[0].args[:3], ('delete', 'namespace', 'campaign-source'))
+            deletion = kube.call_args_list[0]
+            self.assertEqual(deletion.args[:3], ('delete', 'namespace', 'campaign-source'))
+            self.assertIn('--wait=true', deletion.args)
+            self.assertIn('--timeout=1200s', deletion.args)
+            self.assertGreater(deletion.kwargs['timeout'], 1200)
             self.assertEqual(calls, ['source-restore', 'ownership', 'drain', 'protection'])
             self.assertFalse(m.finish())  # Mocked methods are not actual coverage.
 
