@@ -46,11 +46,11 @@ class CandidateTests(unittest.TestCase):
                 self.assertEqual((root / 'registry-auth.json').stat().st_mode & 0o777, 0o600)
                 self.assertNotIn('test-token', ' '.join(args))
                 seen.append(args)
-            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases, 'WORK', root), patch.object(cases.h, 'kube', side_effect=kube):
+            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases.h, 'WORK', root), patch.object(cases.h, 'kube', side_effect=kube):
                 self.assertEqual(cases.registry_pull_secrets(), [{'name': 'campaign-ghcr'}])
                 self.assertEqual(len(seen), 3)
                 self.assertFalse((root / 'registry-auth.json').exists())
-            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases, 'WORK', root), patch.object(cases.h, 'kube', side_effect=RuntimeError):
+            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases.h, 'WORK', root), patch.object(cases.h, 'kube', side_effect=RuntimeError):
                 with self.assertRaises(RuntimeError):
                     cases.registry_pull_secrets()
                 self.assertFalse((root / 'registry-auth.json').exists())

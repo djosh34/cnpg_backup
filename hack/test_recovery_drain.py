@@ -54,13 +54,13 @@ class ProcessDrainTests(unittest.TestCase):
              patch('recovery_cases.h.wait', side_effect=wait):
             if adopted:
                 with self.assertRaises(DetachedCaseFinished):
-                    campaign.process_drain()
+                    campaign.case_detached_PG_descendants()
                 self.assertEqual(seen, [[pg], [orphan]])
                 replacement.assert_called_once_with(state)
                 self.assertIn(('actual-recovery', 'release-shutdown'), [x.args for x in release.call_args_list])
             else:
                 with self.assertRaisesRegex(RuntimeError, 'barrier timed out: .*PostgreSQL orphan adoption'):
-                    campaign.process_drain()
+                    campaign.case_detached_PG_descendants()
                 replacement.assert_not_called()
                 self.assertNotIn(('actual-recovery', 'release-shutdown'), [x.args for x in release.call_args_list])
                 self.assertEqual(len(seen), 2)

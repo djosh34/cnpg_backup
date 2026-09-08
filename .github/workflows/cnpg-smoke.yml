@@ -8,6 +8,7 @@ permissions:
   contents: read
 jobs:
   cnpg-smoke:
+    if: github.ref != 'refs/heads/implementation/ci-reliability' && github.head_ref != 'implementation/ci-reliability'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:

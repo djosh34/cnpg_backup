@@ -1,0 +1,49 @@
+name: CI REPAIR validation (G delivery paused)
+on:
+  push:
+    branches: [implementation/ci-reliability]
+    paths: [.github/ci-repair-request.json]
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: ci-repair-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  subject:
+    if: github.repository == 'djosh34/cnpg_backup' && github.ref == 'refs/heads/implementation/ci-reliability'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.inputs.outputs.sha }}
+      manager: ${{ steps.inputs.outputs.manager }}
+      pg18: ${{ steps.inputs.outputs.pg18 }}
+      seeds: ${{ steps.inputs.outputs.seeds }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - id: inputs
+        name: Read frozen product publication and explicit repair-only request
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          subject = json.loads(pathlib.Path('.github/ci-repair-subject.json').read_text())
+          request = json.loads(pathlib.Path('.github/ci-repair-request.json').read_text())
+          assert request['purpose'] == 'CI REPAIR; G delivery paused'
+          assert request['seeds'] == [1806, 1806, 1807]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('sha=' + subject['revision'] + '\n')
+              for flavor, value in subject['images'].items():
+                  f.write(flavor + '=' + value + '\n')
+              f.write('seeds=' + json.dumps(request['seeds']) + '\n')
+          PY
+  validate:
+    needs: subject
+    uses: ./.github/workflows/recovery-campaign.yml
+    with:
+      subject_sha: ${{ needs.subject.outputs.sha }}
+      manager_image: ${{ needs.subject.outputs.manager }}
+      data_image: ${{ needs.subject.outputs.pg18 }}
+      trusted_ref: implementation/ci-reliability
+      seeds: ${{ needs.subject.outputs.seeds }}

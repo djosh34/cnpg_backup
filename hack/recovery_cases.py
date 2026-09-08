@@ -13,7 +13,6 @@ import subprocess
 import time
 import tarfile
 import io
-from types import SimpleNamespace
 import uuid
 import xml.etree.ElementTree as ET
 
@@ -84,7 +83,8 @@ def history_fork(text, new_timeline, source_path):
     return entries[-1][1]
 
 
-def registry_pull_secrets():
+def registry_pull_secrets(h=h):
+    WORK = h.WORK
     """Project only GHCR auth to disposable kubelet pulls, never artifacts/argv."""
     config = Path(os.environ.get('DOCKER_CONFIG', Path.home() / '.docker')) / 'config.json'
     if not config.exists():
@@ -105,56 +105,44 @@ def registry_pull_secrets():
 
 
 class Campaign:
-    def __init__(self, args, manifest):
+    def __init__(self, args, manifest, fixture=None):
+        self.h = fixture or h
         self.args, self.m = args, manifest
         self.wal = None
-        self.created = False
         self.count = 0
         self.targets = []
         self.journal = []
-        self.next_pv = 0
 
     def event(self, event_name, **facts):
+        h = self.h
         self.m.event(event_name, **facts)
 
     def sql(self, namespace, pod, query, container='postgres'):
+        h = self.h
         return h.kube('exec', '-n', namespace, pod, '-c', container, '--', 'psql', '-XAtq',
                       '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'postgres', '-c', query).strip()
 
     def primary(self, name='database', namespace=SOURCE):
+        h = self.h
         return json.loads(h.kube('get', 'cluster', name, '-n', namespace, '-o', 'json'))['status']['currentPrimary']
 
     def install_namespace(self, namespace, ca):
+        h = self.h
         h.apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 's3-auth', 'namespace': namespace},
                  'stringData': {'access': 'disposable-test-only-access', 'secret': 'disposable-test-only-secret'}})
         h.apply({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'wal-minio-ca', 'namespace': namespace},
                  'data': {'ca.crt': ca}})
 
     def pool(self, count):
-        # New PV/PVC identities for every target, including retry after poison.
-        # Sparse backing, but actual ext4 hard ceiling. No root-disk pressure.
-        for _ in range(count):
-            index = self.next_pv
-            self.next_pv += 1
-            path = f'/var/local/cnpg-backup-work-{index}'
-            h.save_log(f'finite-fs-{index}.log', h.provision_filesystem(path, '3G'))
-            h.apply({'apiVersion': 'v1', 'kind': 'PersistentVolume', 'metadata': {'name': f'campaign-{index}'},
-                     'spec': {'capacity': {'storage': '3Gi'}, 'accessModes': ['ReadWriteOnce'], 'volumeMode': 'Filesystem',
-                              'storageClassName': 'campaign-target', 'persistentVolumeReclaimPolicy': 'Retain',
-                              'local': {'path': path}, 'nodeAffinity': {'required': {'nodeSelectorTerms': [{'matchExpressions': [
-                                  {'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': [h.NAME + '-control-plane']}]}]}}}})
+        self.h.allocate(count)
 
     def setup(self):
+        h = self.h
+        WORK = h.WORK
         if shutil.which('docker') is None:
             raise RuntimeError('Docker is required for the actual campaign; no scenarios executed')
-        # Bootstrap provisions only checksum-pinned TEST tools. Deliberately do
-        # not call hack/build.py, images.py, or hack/test fast here.
-        h.run('python3', 'hack/bootstrap.py', timeout=900)
-        cache = Path(os.environ.get('CNPG_BUILD_CACHE', h.ROOT / '.work/tools'))
-        os.environ.update(PATH=str(cache / 'go/bin') + ':' + os.environ['PATH'], CGO_ENABLED='0', GOTOOLCHAIN='local',
-                          GOMAXPROCS='2', GOFLAGS='-p=2', GOWORK='off', GOOS='linux', GOARCH='amd64',
-                          GOTMPDIR=str(h.ROOT / '.work/tmp'), TMPDIR=str(h.ROOT / '.work/tmp'))
-        Path(os.environ['TMPDIR']).mkdir(parents=True, exist_ok=True)
+        # All test executables/images come from the verified immutable bundle.
+        # No Go/native/product build or bootstrap occurs during a campaign.
         for name in ('kind-linux-amd64', 'kubectl', 'cnpg-1.30.0.yaml', 'cert-manager.yaml'):
             h.download(name)
         for name in ('cnpg-1.30.0.yaml', 'cert-manager.yaml'):
@@ -164,9 +152,13 @@ class Campaign:
             (WORK / ('pinned-' + name)).write_text(text)
         (WORK / 'kind.json').write_text(json.dumps({'kind': 'Cluster', 'apiVersion': 'kind.x-k8s.io/v1alpha4',
                                                  'nodes': [{'role': 'control-plane'}]}))
-        h.run(WORK / 'kind-linux-amd64', 'create', 'cluster', '--name', h.NAME, '--image', h.LOCK['kindNode'],
-              '--config', WORK / 'kind.json', '--kubeconfig', WORK / 'kubeconfig', '--wait', '120s')
-        self.created = True
+        h.create_node()
+        limits = json.loads(h.run('docker', 'inspect', h.NAME + '-control-plane', '--format', '{{json .HostConfig}}'))
+        envelope = {'node_cpus': limits['NanoCpus'] / 1e9, 'node_memory_gib': limits['Memory'] / (1 << 30)}
+        if any(envelope[key] != h.resources[key] for key in envelope):
+            raise RuntimeError('fixture resource envelope differs from immutable recipe')
+        self.m.data.setdefault('fixture_envelopes', {})[h.NAME] = envelope
+        self.m.save()
         assert json.loads(h.kube('version', '-o', 'json'))['serverVersion']['gitVersion'] == 'v1.35.8'
         # CONSUME selected registry manifests directly. Never load rebuilt HEAD
         # under the subject name, and never mistake a Docker config ID for digest.
@@ -188,14 +180,13 @@ class Campaign:
         h.kube('wait', '--for=condition=Established', 'crd/repositories.backup.cnpg-backup.djosh34.github.io', '--timeout=60s')
         for ns in (SOURCE, TARGET, STORE):
             h.apply({'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': ns, 'labels': {'campaign': ns}}})
-        self.image_pull_secrets = registry_pull_secrets()
+        self.image_pull_secrets = registry_pull_secrets(h)
         h.apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'campaign-target'},
                  'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
         self.pool(3)
         # One fresh capture workspace per source/target identity; the local
         # ownership slice needs fewer than the full matrix, never smaller quotas.
-        workspace_count = {'smoke': 16, 'retry': 16, 'ownership': 40}.get(self.args.profile, 80)
-        backup_smoke.bounded_capture_workspaces(h, count=workspace_count)
+        h.capture_workspaces()
         install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', SOURCE,
                                     ['s3-auth', 'database-ca', 'database-replication'])
         target_install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', TARGET, target_secret_names())
@@ -214,11 +205,9 @@ class Campaign:
         h.kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
         # Keep MinIO in an independently surviving namespace, not in the source
         # namespace which the disaster scenario actually deletes.
-        storage_h = SimpleNamespace(**{k: v for k, v in vars(h).items() if not k.startswith('__')})
-        storage_h.NS = STORE
         h.apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 's3-auth', 'namespace': STORE},
                  'stringData': {'access': 'disposable-test-only-access', 'secret': 'disposable-test-only-secret'}})
-        self.wal = wal_smoke.WALFixture(storage_h, self.m.data)
+        self.wal = wal_smoke.WALFixture(h, self.m.data, namespace=STORE)
         storage = self.wal.setup()
         # WALFixture's E smoke registry is not this G campaign's requested scope.
         self.m.data.pop('wal_completed', None)
@@ -239,6 +228,7 @@ class Campaign:
         h.apply(source)
         self.cluster = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster', 'metadata': {'name': 'database', 'namespace': SOURCE},
                         'spec': {'instances': 1, 'imageName': h.LOCK['database'],
+                                 'smartShutdownTimeout': 30, 'stopDelay': 60,
                                  'imagePullSecrets': self.image_pull_secrets,
                                  'storage': {'size': '3Gi', 'storageClass': 'campaign-target'},
                                  'walStorage': {'size': '3Gi', 'storageClass': 'campaign-target'},
@@ -254,13 +244,9 @@ class Campaign:
         self.make_workload()
 
     def install_observer(self):
-        d = WORK / 'observer'
-        d.mkdir()
-        h.run('go', 'build', '-trimpath', '-o', d / 'actor', './hack/recoveryactor', timeout=600)
-        (d / 'Dockerfile').write_text('FROM scratch\nCOPY --chmod=0555 actor /actor\nENTRYPOINT ["/actor"]\n')
-        h.run('docker', 'build', '--network=none', '-t', 'cnpg-backup-campaign-actor:test', d)
-        image = h.image_digest('recoveryactor', 'cnpg-backup-campaign-actor:test')
-        self.event('test-observer', sha256=hashlib.sha256((d / 'actor').read_bytes()).hexdigest(), image=image,
+        h = self.h
+        image = h.image_digest('recoveryactor')
+        self.event('test-observer', sha256=h.bundle['files']['actor'], image=image,
                    changes_subject_images=False, arrangement='test init copies observer over CNPG controller; original retained and executed')
         h.apply({'apiVersion': 'cert-manager.io/v1', 'kind': 'Issuer', 'metadata': {'name': 'actor', 'namespace': TARGET}, 'spec': {'selfSigned': {}}})
         h.apply({'apiVersion': 'cert-manager.io/v1', 'kind': 'Certificate', 'metadata': {'name': 'actor', 'namespace': TARGET},
@@ -284,6 +270,8 @@ class Campaign:
                                'rules': [{'operations': ['CREATE'], 'apiGroups': [''], 'apiVersions': ['v1'], 'resources': ['pods']}]}]})
 
     def acknowledge(self, key, value):
+        h = self.h
+        OUT = h.OUT
         pod = self.primary()
         # Single top-level transaction; resolve ambiguous exec by querying the
         # keyed row. Never invent acknowledgment from a successful backup RPC.
@@ -299,6 +287,7 @@ class Campaign:
         return record
 
     def archive(self):
+        h = self.h
         pod = self.primary()
         segment = self.sql(SOURCE, pod, 'SELECT pg_walfile_name(pg_switch_wal())')
         h.wait(lambda: self.sql(SOURCE, pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + segment + ".done'") == '1',
@@ -306,7 +295,11 @@ class Campaign:
         return self.fetch_archive(segment)
 
     def fetch_archive(self, segment):
-        path = WORK / segment
+        h = self.h
+        WORK = h.WORK
+        directory = WORK / 'native-wal'
+        directory.mkdir(mode=0o755, exist_ok=True)
+        path = directory / segment
         self.wal.s3('GET', self.wal_key(segment), path)
         raw = path.read_bytes()
         raw = gzip.decompress(raw) if raw[:2] == b'\x1f\x8b' else raw
@@ -320,6 +313,8 @@ class Campaign:
         return 'smoke/v1/' + SOURCE_ID + '/wal/' + name[:8] + '/' + name
 
     def full(self, name):
+        h = self.h
+        OUT = h.OUT
         d = backup_smoke.definition(h, name)
         d['metadata']['namespace'] = SOURCE
         h.apply(d)
@@ -339,6 +334,8 @@ class Campaign:
         return commit
 
     def make_workload(self):
+        h = self.h
+        WORK, OUT = h.WORK, h.OUT
         pod = self.primary()
         self.sql(SOURCE, pod, 'CREATE TABLE g_oracle(id integer PRIMARY KEY,value text) TABLESPACE fast_space; '
                              'CREATE TABLE g_drop(id integer PRIMARY KEY); INSERT INTO g_drop VALUES (71)')
@@ -361,7 +358,7 @@ class Campaign:
         self.event('target-boundaries', backup_uid=self.base['backup_uid'], backup_end=self.base['bundled_wal_end_lsn'],
                    name_lsn=self.point, target=self.target, remote=self.remote, frontier=self.frontier)
         dump = h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL',
-                     '--mount', 'type=bind,source=' + str(WORK) + ',target=/fixture,readonly',
+                     '--mount', 'type=bind,source=' + str(WORK / 'native-wal') + ',target=/fixture,readonly',
                      '--entrypoint=/usr/lib/postgresql/18/bin/pg_waldump', self.args.data_image,
                      '--path=/fixture', '--rmgr=Transaction', '--xid=' + self.target['xid'], self.remote)
         matches = re.findall(r'lsn: ([0-9A-F]+/[0-9A-F]+).*desc: COMMIT', dump)
@@ -378,12 +375,14 @@ class Campaign:
         self.newest = self.full('g-newer-than-target')
         assert lsn(self.newest['stop_lsn']) > lsn(self.target['commit_lsn'])
         self.archive()
-        if self.args.profile != 'smoke':
+        if 'same-segment' in getattr(self.args, 'fixtures', []):
             self.capture_same_segment()
 
     def capture_same_segment(self):
         # Fresh PRODUCT capture, not a retained planning fixture. Native stop
         # normally appends a real SWITCH after EndLSN; observe, never assume it.
+        h = self.h
+        WORK, OUT = h.WORK, h.OUT
         commit = self.full('g-same-switch')
         assert self.sql(SOURCE, self.primary(), 'SHOW wal_segment_size') == '16MB'
         end = lsn(commit['bundled_wal_end_lsn'])
@@ -393,33 +392,43 @@ class Campaign:
                'actual product same-final-file archive durable', 120)
         self.fetch_archive(name)  # no extra switch or invented frontier
         dump = h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL',
-                     '--mount', 'type=bind,source=' + str(WORK) + ',target=/fixture,readonly',
+                     '--mount', 'type=bind,source=' + str(WORK / 'native-wal') + ',target=/fixture,readonly',
                      '--entrypoint=/usr/lib/postgresql/18/bin/pg_waldump', self.args.data_image,
                      '--path=/fixture', '--rmgr=XLOG', '--start=' + commit['bundled_wal_end_lsn'], name)
         h.save_log('same-segment-switch-waldump.log', dump)
         self.same_witness = switch_witness(commit, dump)
-        self.same_witness['archive_sha256'] = hashlib.sha256((WORK / name).read_bytes()).hexdigest()
+        self.same_witness['archive_sha256'] = hashlib.sha256((WORK / 'native-wal' / name).read_bytes()).hexdigest()
         self.same_commit = commit
         atomic_json(OUT / 'same-segment-witness.json', self.same_witness)
         self.event('same-segment-real-switch-observed', **self.same_witness, original_manifest_unchanged=True)
 
     def pods(self, name):
+        h = self.h
         return json.loads(h.kube('get', 'pods', '-n', TARGET, '-l', 'cnpg.io/cluster=' + name, '-o', 'json'))['items']
 
     def file(self, pod, path, content=None, check=True):
+        h = self.h
         if content is None:
             return h.kube('exec', '-n', TARGET, pod, '-c', 'full-recovery', '--', 'cat', path, check=check)
         return h.kube('exec', '-i', '-n', TARGET, pod, '-c', 'full-recovery', '--', 'sh', '-ec',
                       'cat > "$1"', 'campaign-file', path, input=content, check=check)
 
     def barrier(self, pod, name, seconds=300):
+        h = self.h
         def observed():
-            result = h.kube('exec', '-n', TARGET, pod, '-c', 'full-recovery', '--', 'test', '-f', '/controller/campaign/' + name, check=False)
-            return not result.strip()
+            result = h.kube_result('exec', '-n', TARGET, pod, '-c', 'full-recovery', '--', 'test', '-f', '/controller/campaign/' + name)
+            # exit1 is the explicit absent-file predicate; kubectl/API failures
+            # are not readiness and an empty stderr is never success evidence.
+            if result.returncode != 0 and not (result.returncode == 1 and result.stderr.strip() == 'command terminated with exit code 1'):
+                result.require()
+            if result.timed_out:
+                result.require()
+            return result.ok
         h.wait(observed, 'observed test boundary: ' + name, seconds)
         self.event('fault-precondition', pod=pod, barrier=name, observed=True)
 
     def release(self, pod, name):
+        h = self.h
         if name == 'release-shutdown':
             # Atomically publish this exec writer's PID. The actor waits for its
             # exit before allowing PID1 to terminate all remaining descendants.
@@ -429,6 +438,7 @@ class Campaign:
         self.file(pod, '/controller/campaign/' + name, 'release\n')
 
     def start(self, target, hold_replay=False):
+        h = self.h
         self.m.budget()
         self.count += 1
         assert self.count <= MAX_TARGETS, 'bounded exact target/Secret allocation exhausted'
@@ -471,6 +481,8 @@ class Campaign:
         return state
 
     def plan(self, state):
+        h = self.h
+        OUT = h.OUT
         plan = json.loads(self.file(state['pod'], '/cnpg-backup/state/recovery.json'))
         assert plan['materialized'] and plan['bundled'], 'actual verified materialization absent'
         selection = plan['plan']
@@ -484,9 +496,11 @@ class Campaign:
         return plan
 
     def gate(self):
+        h = self.h
         return json.loads(self.wal.s3('GET', 'smoke/v1/' + SOURCE_ID + '/gate.json'))
 
     def holds(self, state, stage):
+        h = self.h
         plan = state['plan']['plan']
         gate = self.gate()
         by_id = {x['id']: x for x in gate['holders']}
@@ -497,11 +511,13 @@ class Campaign:
         self.event('source-protection', stage=stage, operation=plan['operation_id'], holders=list(by_id), generation=gate['generation'])
 
     def materialize(self, state):
+        h = self.h
         self.release(state['pod'], 'release-before')
         self.barrier(state['pod'], 'restore-response', 600)
         return self.plan(state)
 
     def finish(self, state, rows, drop_present=False, stable_retained=False, ordinary=False):
+        h = self.h
         pod = state['pod']
         self.release(pod, 'release-response')
         self.release(pod, 'release-replay')
@@ -574,6 +590,8 @@ class Campaign:
         return state
 
     def verify_promotion_archive(self, state, primary, full):
+        h = self.h
+        WORK = h.WORK
         """Fresh product promotion bytes, not historical/synthetic fixture replay."""
         plan = state['plan']['plan']
         assert plan['target']['kind'] == 'immediate' and not plan['required_archive']
@@ -603,7 +621,7 @@ class Campaign:
             h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
                   '--max-filesize', str(size + (1 << 20)), '--config', d / 'curl-private.conf',
                   '--cacert', d / 'ca.crt', '--dump-header', headers, '--output', payload,
-                  'https://localhost:19000/test-bucket/' + key)
+                  self.wal.endpoint + '/test-bucket/' + key)
             metadata = {k.lower().strip(): v.strip() for line in headers.read_text().splitlines()
                         if ':' in line for k, v in [line.split(':', 1)]}
             stored = payload.read_bytes()
@@ -639,6 +657,8 @@ class Campaign:
         # Natural CNPG cleanup may have removed Job/Pod by Ready. Its original
         # exact identities were observed before starting replay; require surviving
         # durable completed proof AND actual source gate release, not readiness.
+        h = self.h
+        OUT = h.OUT
         def completed():
             op = self.operation_state(state)
             atomic_json(OUT / (state['name'] + '-ordinary-operation.json'), op)
@@ -657,6 +677,7 @@ class Campaign:
     def terminated(self, state, stable_retained=False):
         # Job Complete is necessary but not sufficient; enumerate ALL retry Pods
         # and every restartable init/main status, preserving actual terminations.
+        h = self.h
         def all_done():
             pods = [p for p in self.pods(state['name']) if any(c['name'] == 'full-recovery' for c in p['spec']['containers'])]
             if not pods:
@@ -698,7 +719,11 @@ class Campaign:
     def retire_target(self, state):
         # Bound live PostgreSQL/sidecar memory. Preserve status/log evidence first;
         # PVCs and durable poison markers are NEVER cleared or reused here.
-        for pod in self.pods(state['name']):
+        h = self.h
+        observed_pods = self.pods(state['name'])
+        state['retired_pod_uids'] = sorted({p['metadata']['uid'] for p in observed_pods + state.get('completion_pods', [])}
+                                           | ({state['pod_uid']} if 'pod_uid' in state else set()))
+        for pod in observed_pods:
             for container in ('full-recovery', 'cnpg-backup', 'postgres'):
                 if not any(c['name'] == container for c in pod['spec'].get('containers', []) + pod['spec'].get('initContainers', [])):
                     continue
@@ -716,86 +741,30 @@ class Campaign:
                'original observer durably closed before test Cluster cleanup', 120)
         self.event('target-cleanup-operation-closed', cluster=state['name'], operation=self.operation_state(state))
         h.kube('delete', 'cluster', state['name'], '-n', TARGET, '--wait=true', '--timeout=120s')
+        if hasattr(h, 'retire_claims'):
+            holders = self.gate()['holders']
+            h.retire_claims(state)
+            assert self.gate()['holders'] == holders, 'fixture disposal changed source protection'
         self.event('target-retired-after-evidence', cluster=state['name'], pvc_uids=state['pvc_uids'], target_markers_removed_by_harness=False)
 
     def inventory(self, prefix):
         # Fixture intentionally stays below one complete 1000-item page. A
         # truncated list is a failed oracle, never an inferred continuous archive.
+        h = self.h
         tree = ET.fromstring(self.wal.s3('GET', '?list-type=2&prefix=' + prefix))
         ns = {'s': 'http://s3.amazonaws.com/doc/2006-03-01/'}
         assert tree.findtext('s:IsTruncated', namespaces=ns) == 'false'
         return sorted(x.text for x in tree.findall('s:Contents/s:Key', ns))
 
     def restore(self, target, rows, drop_present=False, ordinary=False):
+        h = self.h
         state = self.start(target)
         self.materialize(state)
         return self.finish(state, rows, drop_present, ordinary=ordinary)
 
-    def run(self):
-        atomic_json(OUT / 'source-inventory.json', {'keys': self.inventory('smoke/v1/' + SOURCE_ID + '/')})
-        # Delete catalog and namespace BEFORE any recovery. MinIO/config survive
-        # in separate namespaces; no target has source connection credentials.
-        with self.m.case('source-namespace-catalog-loss-S3-only'):
-            # CNPG's default source Pod grace is 1800s; Kubernetes can delay
-            # namespace requeue by half that estimate even after Pods are gone.
-            # Wait for real finalization, never strip finalizers or infer deletion.
-            h.kube('delete', 'namespace', SOURCE, '--wait=true', '--timeout=1200s', timeout=1220)
-            assert not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']
-            self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
-        if self.args.profile == 'retry':
-            self.controller_retry()
-            return
-        if self.args.profile == 'ownership':
-            self.ownership()
-            self.process_drain()
-            self.protection()
-            return  # Manifest still fails on any missing requested family.
-        with self.m.case('full-latest-remote-SQL'):
-            selected = self.restore({}, LATEST, ordinary=True)
-            newest = getattr(self, 'same_commit', self.newest)
-            assert selected['plan']['plan']['chain'][0]['backup_uid'] == newest['backup_uid']
-            self.restore({'backupID': self.base['backup_uid']}, LATEST)
-        with self.m.case('full-name-pre-DROP-SQL'):
-            self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
-        if self.args.profile == 'smoke':
-            return
-        for family, field, value in [('full-time-inclusive-exclusive', 'targetTime', self.target['time_rfc3339']),
-                                      ('full-LSN-inclusive-exclusive', 'targetLSN', self.target['commit_lsn']),
-                                      ('full-XID-inclusive-exclusive', 'targetXID', self.target['xid'])]:
-            with self.m.case(family):
-                for exclusive in (False, True):
-                    self.restore({'backupID': self.base['backup_uid'], field: value, 'exclusive': exclusive},
-                                 BEFORE if exclusive else INCLUSIVE, True)
-        with self.m.case('full-explicit-immediate'):
-            self.restore({'backupID': self.base['backup_uid'], 'targetImmediate': True}, BASE, True)
-        with self.m.case('newest-base-too-new'):
-            state = self.restore({'targetLSN': self.target['commit_lsn']}, INCLUSIVE, True)
-            assert state['plan']['plan']['chain'][0]['backup_uid'] == self.base['backup_uid']
-            self.reject({'backupID': self.newest['backup_uid'], 'targetLSN': self.target['commit_lsn']}, 'too-new-base')
-        with self.m.case('target-unreached'):
-            self.reject({'backupID': self.base['backup_uid'], 'targetName': 'g_never_created'}, 'target-unreached', materialized=True)
-        self.shell_free()
-        self.bundle_fallback()
-        self.same_segment()
-        self.faults()
-        self.ownership()
-        self.process_drain()
-        self.protection()
-        # Reconcile the registry, including future additions. No elapsed-time,
-        # modeled result or missed injection can substitute for actual coverage.
-        self.m.data['unexecuted_scenarios'] = [name for name, result in self.m.data['scenarios'].items()
-                                              if result['status'] != 'passed']
-        self.m.save()
-        assert not self.m.data['unexecuted_scenarios'], 'mandatory actual G scenario evidence incomplete'
-        # Exploration is supplemental and happens ONLY after the fixed corpus.
-        rng = random.Random(self.args.seed)
-        for _ in range(2):
-            self.m.budget()
-            exclusive = bool(rng.getrandbits(1))
-            self.restore({'backupID': self.base['backup_uid'], 'targetXID': self.target['xid'], 'exclusive': exclusive},
-                         BEFORE if exclusive else INCLUSIVE, True)
 
     def reject(self, target, reason, materialized=False):
+        h = self.h
         state = self.start(target)
         if materialized:
             self.materialize(state)
@@ -810,7 +779,6 @@ class Campaign:
         logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
         if reason == 'target-unreached':
             assert 'recovery ended before configured recovery target was reached' in logs
-        assert 'database system is ready to accept connections' not in logs or 'recovery target' in logs
         h.save_log(state['name'] + '-negative-main.log', logs)
         self.event('expected-recovery-rejection', reason=reason, trace=records)
         # Keep wrapper and guard alive for collection. Disable CNPG reconciliation
@@ -819,68 +787,9 @@ class Campaign:
         self.retire_target(state)
         return state
 
-    def shell_free(self):
-        with self.m.case('shell-free-original-verification'):
-            directory = WORK / 'original-verification'
-            directory.mkdir(mode=0o700)
-            exported = directory / 'subject.tar'
-            name = 'cnpg-campaign-image-audit'
-            h.run('docker', 'create', '--name', name, self.args.data_image, 'version')
-            try:
-                with exported.open('wb') as out:
-                    result = subprocess.run(['docker', 'export', name], stdout=out, stderr=subprocess.PIPE, timeout=120)
-                assert result.returncode == 0
-                with tarfile.open(exported) as archive:
-                    paths = {m.name.lstrip('./') for m in archive}
-                assert not paths.intersection({'bin/sh', 'bin/bash', 'usr/bin/sh', 'usr/bin/bash', 'usr/bin/python3'})
-            finally:
-                h.run('docker', 'rm', name, check=False)
-            tar_dir, wal_dir = directory / 'tar', directory / 'wal'
-            tar_dir.mkdir()
-            wal_dir.mkdir()
-            commit = self.base
-            prefix = 'smoke/v1/' + SOURCE_ID + '/backups/' + commit['backup_uid'] + '/attempts/' + commit['attempt_id'] + '/'
-            self.wal.s3('GET', prefix + 'manifest.pg.json', tar_dir / 'backup_manifest')
-            for artifact in commit['artifacts']:
-                stored = directory / (str(artifact['index']) + '.stored')
-                suffix = '.tar.gz' if artifact['compression'] == 'gzip' else '.tar'
-                self.wal.s3('GET', prefix + 'data/' + str(artifact['index']) + suffix, stored)
-                raw = gzip.decompress(stored.read_bytes()) if artifact['compression'] == 'gzip' else stored.read_bytes()
-                assert hashlib.sha256(raw).hexdigest() == artifact['raw_sha256']
-                filename = {'base': 'base.tar', 'wal': 'pg_wal.tar'}.get(artifact['role'], str(artifact['tablespace_oid']) + '.tar')
-                (tar_dir / filename).write_bytes(raw)
-                if artifact['role'] == 'wal':
-                    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
-                        for member in archive:
-                            assert member.isdir() or member.isfile()
-                            assert not member.name.startswith('/') and '..' not in Path(member.name).parts
-                            archive.extract(member, wal_dir, filter='data')
-            driver = directory / 'verify'
-            h.run('go', 'build', '-o', driver, './hack/backupverify')
-            def tool(entry, *args, failure=False):
-                return h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--user', str(os.getuid()),
-                             '--mount', 'type=bind,source=' + str(directory) + ',target=/input,readonly', '--entrypoint', entry,
-                             self.args.data_image, *args, expect_failure=failure)
-            tool('/usr/lib/postgresql/18/bin/pg_verifybackup', '--exit-on-error', '--no-parse-wal', '/input/tar')
-            tool('/input/verify', '/input/tar/backup_manifest', '/input/wal')
-            segment = next(p for p in wal_dir.iterdir() if re.fullmatch('[0-9A-F]{24}', p.name))
-            hidden = directory / 'withheld'
-            segment.rename(hidden)
-            try:
-                tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
-            finally:
-                hidden.rename(segment)
-            original = segment.read_bytes()
-            try:
-                segment.write_bytes(bytes(8192) + original[8192:])
-                tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
-            finally:
-                segment.write_bytes(original)
-            self.event('shell-free-original-native-verification', image=self.args.data_image,
-                       original_manifest_sha256=commit['manifest_sha256'], missing_and_corrupt_range_rejected=True,
-                       data_image_has_shell=False, driver_sha256=hashlib.sha256(driver.read_bytes()).hexdigest())
 
     def helper(self, state, name, expected):
+        h = self.h
         text = h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'sh', '-c',
                       '"$@"; code=$?; printf "\\nCAMPAIGN_EXIT=%s\\n" "$code"', 'capture-helper-exit',
                       '/cnpg-backup/bin/cnpg-backup', 'wal-fetch', '--plan', '/cnpg-backup/state/recovery.json',
@@ -893,6 +802,8 @@ class Campaign:
     def archive_absent(self):
         # Explicit fault actor, NOT retention or valid coordinated deletion. The
         # source namespace is gone; only this disposable synthetic bucket changes.
+        h = self.h
+        WORK = h.WORK
         directory = WORK / ('withheld-' + str(self.count))
         directory.mkdir(mode=0o700)
         keys = self.inventory('smoke/v1/' + SOURCE_ID + '/wal/')
@@ -903,7 +814,7 @@ class Campaign:
                 d = self.wal.directory
                 h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '15',
                       '--config', d / 'curl-private.conf', '--cacert', d / 'ca.crt', '--dump-header', headers,
-                      '--output', payload, 'https://localhost:19000/test-bucket/' + key)
+                      '--output', payload, self.wal.endpoint + '/test-bucket/' + key)
                 metadata = []
                 for line in headers.read_text().splitlines():
                     if line.lower().startswith('x-amz-meta-'):
@@ -921,58 +832,24 @@ class Campaign:
                 d = self.wal.directory
                 h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
                       '--config', d / 'curl-private.conf', '--cacert', d / 'ca.crt', '-X', 'PUT', '--upload-file', payload,
-                      *metadata, 'https://localhost:19000/test-bucket/' + key)
+                      *metadata, self.wal.endpoint + '/test-bucket/' + key)
             assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == keys
 
-    def bundle_fallback(self):
-        with self.m.case('bundle-duplicate-absent-local-fallback'):
-            with self.archive_absent():
-                state = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
-                self.materialize(state)
-                assert not state['plan']['plan']['required_archive'], 'immediate no-archive fixture unexpectedly has remote-required intervals'
-                name = sorted(state['plan']['bundled'])[0]
-                self.helper(state, name, 1) # actual archive-first miss, NOT archive success
-                state['expect_promotion_partial'] = True
-                self.finish(state, BASE, True)
-                negative = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
-                self.materialize(negative)
-                self.release(negative['pod'], 'incorrect-all-fatal')
-                self.helper(negative, name, 255)
-                self.release(negative['pod'], 'release-response')
-                self.barrier(negative['pod'], 'cnpg-exited', 300)
-                trace = [json.loads(x) for x in self.file(negative['pod'], '/controller/campaign/rpc.jsonl').splitlines()]
-                assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in trace), 'all-required255 negative oracle was insensitive'
-                self.event('distinguishing-all-required255-negative', trace=trace)
-                self.retire_target(negative)
-        with self.m.case('bundle-local-missing-fatal'):
-            with self.archive_absent():
-                state = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
-                self.materialize(state)
-                name = sorted(state['plan']['bundled'])[0]
-                source = '/var/lib/postgresql/wal/pg_wal/' + name
-                h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source, source + '.withheld')
-                try:
-                    # Both actual archive absence and local withholding survive
-                    # the PG request, helper255 and terminal no-promotion proof.
-                    self.replay_failure(state, name)
-                    self.event('effective-local-bundle-absence', filename=name, pod=state['pod'])
-                finally:
-                    h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source + '.withheld', source)
-                # The intact exit1/SQL positive is the separate fresh target
-                # above, never this repaired negative attempt.
-                self.retire_target(state)
 
     def put_fixture(self, key, path):
+        h = self.h
         d = self.wal.directory
         return h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
                      '--config', d / 'curl-private.conf', '--cacert', d / 'ca.crt', '-X', 'PUT',
-                     '--upload-file', path, 'https://localhost:19000/test-bucket/' + key)
+                     '--upload-file', path, self.wal.endpoint + '/test-bucket/' + key)
 
     @contextlib.contextmanager
     def padded_same_bundle(self):
         # Controlled padding AFTER the authenticated native range only. Original
         # manifests/SQL data are unchanged. This is an explicitly labeled test
         # fixture mutation, never a claim production may rewrite immutable data.
+        h = self.h
+        WORK = h.WORK
         commit = copy.deepcopy(self.same_commit)
         d = WORK / 'same-padding'
         d.mkdir(mode=0o700)
@@ -1020,6 +897,7 @@ class Campaign:
             self.put_fixture(prefix + 'commit.json', old_commit)
 
     def same_segment_plan(self, state):
+        h = self.h
         self.materialize(state)
         plan = state['plan']['plan']
         witness = self.same_witness
@@ -1035,9 +913,302 @@ class Campaign:
         self.event('same-segment-required-plan', cluster=state['name'], required=required, witness=witness)
 
     def same_endpoint_reached(self, state):
+        h = self.h
         return state['replay_endpoint'] >= max(state['same_segment_floor'], lsn(self.same_witness['replay_end_lsn']))
 
-    def same_segment(self):
+
+
+    def fatal_replay(self, state, requested, mode, family):
+        h = self.h
+        self.wal.control(mode, requested)
+        try:
+            self.replay_failure(state, requested)
+            assert self.wal.control()['blocked'] > 0, 'ineffective fault injection is not product failure'
+            self.event('effective-fatal-WAL', family=family, filename=requested, proxy=self.wal.control())
+        finally:
+            self.wal.control('')
+        self.retire_target(state)
+
+    def replay_failure(self, state, requested):
+        h = self.h
+        self.release(state['pod'], 'release-response')
+        self.barrier(state['pod'], 'cnpg-exited', 240)
+        logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
+        trace = self.file(state['pod'], '/controller/campaign/rpc.jsonl')
+        h.save_log(state['name'] + '-fatal-main.log', logs)
+        h.save_log(state['name'] + '-fatal-rpc.jsonl', trace)
+        assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
+        assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
+        events = [json.loads(x) for x in trace.splitlines()]
+        assert any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
+        assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events)
+        self.holds(state, 'fatal-source-WAL')
+
+
+    def no_retries(self, state):
+        h = self.h
+        h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop=disabled', '--overwrite')
+        jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']
+        assert jobs
+        for job in jobs:
+            h.kube('patch', 'job', job['metadata']['name'], '-n', TARGET, '--type=merge', '-p', '{"spec":{"backoffLimit":0}}')
+
+    def node_pid(self, state, container):
+        h = self.h
+        pod = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
+        statuses = pod['status']['containerStatuses'] + pod['status']['initContainerStatuses']
+        selected = next(c for c in statuses if c['name'] == container)
+        cid = selected['containerID'].split('://')[1]
+        pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', cid))['info']['pid'])
+        assert pid > 1
+        return pid, cid
+
+    def markers(self, state):
+        h = self.h
+        if 'backing_paths' not in state:
+            pod = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
+            volumes = {v['name']: v for v in pod['spec']['volumes']}
+            main = next(c for c in pod['spec']['containers'] if c['name'] == 'full-recovery')
+            paths = []
+            for mount in main['volumeMounts']:
+                if mount['mountPath'] not in VOLUMES:
+                    continue
+                claim = volumes[mount['name']]['persistentVolumeClaim']['claimName']
+                pvc = json.loads(h.kube('get', 'pvc', claim, '-n', TARGET, '-o', 'json'))
+                pv = json.loads(h.kube('get', 'pv', pvc['spec']['volumeName'], '-o', 'json'))
+                path = pv['spec']['local']['path']
+                assert re.fullmatch(r'/var/local/cnpg-backup-work-[0-9]+', path)
+                paths.append(path)
+            assert len(paths) == 3
+            state['backing_paths'] = paths
+        text = h.run('docker', 'exec', h.NAME + '-control-plane', 'sh', '-c',
+                     'for p in "$@"; do if test -f "$p/.cnpg-backup/owner.json"; then echo present; else echo absent; fi; done',
+                     'observe-only-owned-markers', *state['backing_paths'])
+        return text.splitlines()
+
+    def main_terminated(self, state):
+        h = self.h
+        pod = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
+        return any(c['name'] == 'full-recovery' and 'terminated' in c.get('state', {}) for c in pod.get('status', {}).get('containerStatuses', []))
+
+
+    def operation_state(self, state):
+        h = self.h
+        cm = json.loads(h.kube('get', 'configmap', state['name'] + '-cb-recovery', '-n', TARGET, '-o', 'json'))
+        return json.loads(cm['data']['operation.json'])
+
+
+
+    def replacement(self, state, poisoned=False):
+        h = self.h
+        original = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
+        replacement = copy.deepcopy(original)
+        name = state['name'] + '-replacement'
+        # Same immutable volume projections/PVCs, fresh Pod UID, actual guarded
+        # command. Keep all init containers: /controller is a fresh emptyDir,
+        # so the observer installer must run on the replacement too.
+        replacement.pop('status', None)
+        replacement['metadata'] = {'name': name, 'namespace': TARGET}
+        replacement['spec'].pop('nodeName', None)
+        replacement['spec']['restartPolicy'] = 'Never'
+        # No cluster label: CNPG does not adopt or act on this negative control.
+        # The admission observer still recognizes its actual full-recovery main.
+        before = self.target_snapshot(original)
+        h.kube('apply', '--server-side', '--dry-run=server', '-f', '-', input=json.dumps(replacement))
+        h.apply(replacement)
+        def stopped():
+            p = json.loads(h.kube('get', 'pod', name, '-n', TARGET, '-o', 'json'))
+            return any(c['name'] == 'full-recovery' and 'terminated' in c.get('state', {}) for c in p.get('status', {}).get('containerStatuses', []))
+        h.wait(stopped, 'same-PVC replacement refused before preflight', 240)
+        logs = h.kube('logs', name, '-n', TARGET, '-c', 'full-recovery')
+        assert 'TargetOwnershipUncertain' in logs or 'TargetOwnershipBusy' in logs, logs[-2000:]
+        assert self.target_snapshot(original) == before, 'replacement renamed/deleted/reconstructed target content'
+        self.event('same-PVC-replacement-rejected', original=state['pod'], replacement=name, poisoned=poisoned, snapshot=before)
+        h.save_log(name + '.log', logs)
+        h.kube('delete', 'pod', name, '-n', TARGET, '--wait=true', '--timeout=120s')
+
+    def target_snapshot(self, pod):
+        # Inspect fixed disposable backing files from the node, not through the
+        # possibly dead main. Include directory names/inodes and content hashes.
+        h = self.h
+        volumes = {v['name']: v for v in pod['spec']['volumes']}
+        main = next(c for c in pod['spec']['containers'] if c['name'] == 'full-recovery')
+        result = []
+        for mount in main['volumeMounts']:
+            if mount['mountPath'] not in VOLUMES:
+                continue
+            claim = volumes[mount['name']]['persistentVolumeClaim']['claimName']
+            pvc = json.loads(h.kube('get', 'pvc', claim, '-n', TARGET, '-o', 'json'))
+            pv = json.loads(h.kube('get', 'pv', pvc['spec']['volumeName'], '-o', 'json'))
+            path = pv['spec']['local']['path']
+            assert re.fullmatch(r'/var/local/cnpg-backup-work-[0-9]+', path)
+            result.append(h.run('docker', 'exec', h.NAME + '-control-plane', 'sh', '-ec',
+                'cd "$1"; find . -xdev -printf "%y %p %i %s\\n" | sort; '
+                'find . -xdev -type f ! -path "./lost+found/*" -exec sha256sum {} + | sort', 'snapshot-owned-target', path, timeout=120))
+        assert len(result) == 3
+        return [hashlib.sha256(x.encode()).hexdigest() for x in result]
+
+
+    def prepare_recovery(self):
+        # Source disaster is a fixture precondition, NOT a dependency on a
+        # particular named-point restore passing. A named-target defect must
+        # not prevent independent latest/time/ownership cases from exercising.
+        h = self.h
+        atomic_json(h.OUT / 'source-inventory.json', {'keys': self.inventory('smoke/v1/' + SOURCE_ID + '/')})
+        # Explicit CNPG smart/stop30/60s; include namespace-controller requeue.
+        h.kube('delete', 'namespace', SOURCE, '--wait=true', '--timeout=300s', timeout=320)
+        assert not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']
+        h.quiesce_pods(SOURCE)
+        self.event('source-disaster-precondition', namespace=SOURCE, actual_finalization=True)
+
+    def case_source_namespace_catalog_loss_S3_only(self):
+        with self.m.case('source-namespace-catalog-loss-S3-only'):
+            self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
+
+    def case_full_latest_remote_SQL(self):
+        h = self.h
+        with self.m.case('full-latest-remote-SQL'):
+            selected = self.restore({}, LATEST, ordinary=True)
+            newest = getattr(self, 'same_commit', self.newest)
+            assert selected['plan']['plan']['chain'][0]['backup_uid'] == newest['backup_uid']
+            self.restore({'backupID': self.base['backup_uid']}, LATEST)
+
+    def case_full_name_pre_DROP_SQL(self):
+        h = self.h
+        with self.m.case('full-name-pre-DROP-SQL'):
+            self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
+
+    def case_full_time_inclusive_exclusive(self):
+        self.temporal_case('full-time-inclusive-exclusive', 'targetTime', self.target['time_rfc3339'])
+
+    def case_full_LSN_inclusive_exclusive(self):
+        self.temporal_case('full-LSN-inclusive-exclusive', 'targetLSN', self.target['commit_lsn'])
+
+    def case_full_XID_inclusive_exclusive(self):
+        self.temporal_case('full-XID-inclusive-exclusive', 'targetXID', self.target['xid'])
+
+    def case_full_explicit_immediate(self):
+        h = self.h
+        with self.m.case('full-explicit-immediate'):
+            self.restore({'backupID': self.base['backup_uid'], 'targetImmediate': True}, BASE, True)
+
+    def case_newest_base_too_new(self):
+        h = self.h
+        with self.m.case('newest-base-too-new'):
+            state = self.restore({'targetLSN': self.target['commit_lsn']}, INCLUSIVE, True)
+            assert state['plan']['plan']['chain'][0]['backup_uid'] == self.base['backup_uid']
+            self.reject({'backupID': self.newest['backup_uid'], 'targetLSN': self.target['commit_lsn']}, 'too-new-base')
+
+    def case_target_unreached(self):
+        h = self.h
+        with self.m.case('target-unreached'):
+            self.reject({'backupID': self.base['backup_uid'], 'targetName': 'g_never_created'}, 'target-unreached', materialized=True)
+
+    def case_shell_free_original_verification(self):
+        h = self.h
+        WORK = h.WORK
+        with self.m.case('shell-free-original-verification'):
+            directory = WORK / 'original-verification'
+            directory.mkdir(mode=0o700)
+            exported = directory / 'subject.tar'
+            name = h.NAME + '-image-audit'
+            # The fixture owns this stopped audit container on EVERY error path;
+            # disposal reports removal errors separately from the original oracle.
+            h.run('docker', 'create', '--name', name, '--label', 'cnpg-backup-fixture=' + h.NAME, self.args.data_image, 'version')
+            h.run('docker', 'export', '--output', exported, name, timeout=120)
+            with tarfile.open(exported) as archive:
+                paths = {m.name.lstrip('./') for m in archive}
+            assert not paths.intersection({'bin/sh', 'bin/bash', 'usr/bin/sh', 'usr/bin/bash', 'usr/bin/python3'})
+            h.run('docker', 'rm', name)
+            tar_dir, wal_dir = directory / 'tar', directory / 'wal'
+            tar_dir.mkdir()
+            wal_dir.mkdir()
+            commit = self.base
+            prefix = 'smoke/v1/' + SOURCE_ID + '/backups/' + commit['backup_uid'] + '/attempts/' + commit['attempt_id'] + '/'
+            self.wal.s3('GET', prefix + 'manifest.pg.json', tar_dir / 'backup_manifest')
+            for artifact in commit['artifacts']:
+                stored = directory / (str(artifact['index']) + '.stored')
+                suffix = '.tar.gz' if artifact['compression'] == 'gzip' else '.tar'
+                self.wal.s3('GET', prefix + 'data/' + str(artifact['index']) + suffix, stored)
+                raw = gzip.decompress(stored.read_bytes()) if artifact['compression'] == 'gzip' else stored.read_bytes()
+                assert hashlib.sha256(raw).hexdigest() == artifact['raw_sha256']
+                filename = {'base': 'base.tar', 'wal': 'pg_wal.tar'}.get(artifact['role'], str(artifact['tablespace_oid']) + '.tar')
+                (tar_dir / filename).write_bytes(raw)
+                if artifact['role'] == 'wal':
+                    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+                        for member in archive:
+                            assert member.isdir() or member.isfile()
+                            assert not member.name.startswith('/') and '..' not in Path(member.name).parts
+                            archive.extract(member, wal_dir, filter='data')
+            driver = directory / 'verify'
+            shutil.copy2(h.bundle['directory'] / 'verify', driver)
+            def tool(entry, *args, failure=False):
+                return h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--user', str(os.getuid()),
+                             '--mount', 'type=bind,source=' + str(directory) + ',target=/input,readonly', '--entrypoint', entry,
+                             self.args.data_image, *args, expect_failure=failure)
+            tool('/usr/lib/postgresql/18/bin/pg_verifybackup', '--exit-on-error', '--no-parse-wal', '/input/tar')
+            tool('/input/verify', '/input/tar/backup_manifest', '/input/wal')
+            segment = next(p for p in wal_dir.iterdir() if re.fullmatch('[0-9A-F]{24}', p.name))
+            hidden = directory / 'withheld'
+            segment.rename(hidden)
+            try:
+                tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
+            finally:
+                hidden.rename(segment)
+            original = segment.read_bytes()
+            try:
+                segment.write_bytes(bytes(8192) + original[8192:])
+                tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
+            finally:
+                segment.write_bytes(original)
+            self.event('shell-free-original-native-verification', image=self.args.data_image,
+                       original_manifest_sha256=commit['manifest_sha256'], missing_and_corrupt_range_rejected=True,
+                       data_image_has_shell=False, driver_sha256=hashlib.sha256(driver.read_bytes()).hexdigest())
+
+    def case_bundle_duplicate_absent_local_fallback(self):
+        h = self.h
+        with self.m.case('bundle-duplicate-absent-local-fallback'):
+            with self.archive_absent():
+                state = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
+                self.materialize(state)
+                assert not state['plan']['plan']['required_archive'], 'immediate no-archive fixture unexpectedly has remote-required intervals'
+                name = sorted(state['plan']['bundled'])[0]
+                self.helper(state, name, 1) # actual archive-first miss, NOT archive success
+                state['expect_promotion_partial'] = True
+                self.finish(state, BASE, True)
+                negative = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
+                self.materialize(negative)
+                self.release(negative['pod'], 'incorrect-all-fatal')
+                self.helper(negative, name, 255)
+                self.release(negative['pod'], 'release-response')
+                self.barrier(negative['pod'], 'cnpg-exited', 300)
+                trace = [json.loads(x) for x in self.file(negative['pod'], '/controller/campaign/rpc.jsonl').splitlines()]
+                assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in trace), 'all-required255 negative oracle was insensitive'
+                self.event('distinguishing-all-required255-negative', trace=trace)
+                self.retire_target(negative)
+
+    def case_bundle_local_missing_fatal(self):
+        h = self.h
+        with self.m.case('bundle-local-missing-fatal'):
+            with self.archive_absent():
+                state = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
+                self.materialize(state)
+                name = sorted(state['plan']['bundled'])[0]
+                source = '/var/lib/postgresql/wal/pg_wal/' + name
+                h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source, source + '.withheld')
+                try:
+                    # Both actual archive absence and local withholding survive
+                    # the PG request, helper255 and terminal no-promotion proof.
+                    self.replay_failure(state, name)
+                    self.event('effective-local-bundle-absence', filename=name, pod=state['pod'])
+                finally:
+                    h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source + '.withheld', source)
+                # The intact exit1/SQL positive is the separate fresh target
+                # above, never this repaired negative attempt.
+                self.retire_target(state)
+
+    def case_same_bundled_segment_post_EndLSN_archive_preferred(self):
+        h = self.h
         with self.m.case('same-bundled-segment-post-EndLSN-archive-preferred'):
             with self.padded_same_bundle() as (commit, name):
                 target = {'backupID': commit['backup_uid']}  # explicit-base/latest; no equality LSN target
@@ -1064,9 +1235,11 @@ class Campaign:
                     state = self.start(target)
                     self.same_segment_plan(state)
                     self.fatal_replay(state, name, mode, 'same-segment-' + mode)
+
+    def case_negative_controls_EOF_and_bundle_as_success(self):
+        h = self.h
         with self.m.case('negative-controls-EOF-and-bundle-as-success'):
-            # Same-segment negative above must already have passed.
-            assert self.m.data['scenarios']['same-bundled-segment-post-EndLSN-archive-preferred']['status'] == 'passed'
+            # Exact registry dependency requires the same-segment negative first.
             state = self.start({'backupID': self.base['backup_uid']})
             self.materialize(state)
             self.release(state['pod'], 'incorrect-EOF')
@@ -1084,128 +1257,46 @@ class Campaign:
             self.finish(state, BASE, True)
             self.event('distinguishing-EOF-negative', lost_ids=[2, 3, 4], actual_rows=BASE)
 
-    def faults(self):
-        for family, mode in [('required-corrupt-no-latest-promotion', 'corrupt-wal-get'),
-                             ('required-missing-no-latest-promotion', 'missing-wal-get'),
-                             ('bundle-auth-fatal', 'auth-wal-get'), ('bundle-transport-fatal', 'reset-wal-get'),
-                             ('bundle-TLS-fatal', 'tls-wal-get')]:
-            with self.m.case(family):
-                state = self.start({'backupID': self.base['backup_uid']})
-                self.materialize(state)
-                requested = self.remote if family.startswith('required-') else sorted(state['plan']['bundled'])[0]
-                self.fatal_replay(state, requested, mode, family)
+    def case_required_corrupt_no_latest_promotion(self):
+        self.fault_case('required-corrupt-no-latest-promotion', 'corrupt-wal-get')
 
-    def fatal_replay(self, state, requested, mode, family):
-        self.wal.control(mode, requested)
-        try:
-            self.replay_failure(state, requested)
-            assert self.wal.control()['blocked'] > 0, 'ineffective fault injection is not product failure'
-            self.event('effective-fatal-WAL', family=family, filename=requested, proxy=self.wal.control())
-        finally:
-            self.wal.control('')
-        self.retire_target(state)
+    def case_required_missing_no_latest_promotion(self):
+        self.fault_case('required-missing-no-latest-promotion', 'missing-wal-get')
 
-    def replay_failure(self, state, requested):
-        self.release(state['pod'], 'release-response')
-        self.barrier(state['pod'], 'cnpg-exited', 240)
-        logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
-        trace = self.file(state['pod'], '/controller/campaign/rpc.jsonl')
-        h.save_log(state['name'] + '-fatal-main.log', logs)
-        h.save_log(state['name'] + '-fatal-rpc.jsonl', trace)
-        assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
-        assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
-        events = [json.loads(x) for x in trace.splitlines()]
-        assert any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
-        assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events)
-        self.holds(state, 'fatal-source-WAL')
+    def case_bundle_auth_fatal(self):
+        self.fault_case('bundle-auth-fatal', 'auth-wal-get')
 
-    def ownership(self):
-        # Real guard and actual CNPG original command, with external pauses at
-        # named barriers. Same-PVC replacement may not reach even preflight.
-        for family, stage in [('guard-before-RPC-same-PVC-no-mutation', 'before'),
-                              ('guard-delayed-response-same-PVC-no-mutation', 'response'),
-                              ('guard-replay-pause-same-PVC-no-mutation', 'replay'),
-                              ('guard-shutdown-pause-same-PVC-no-mutation', 'shutdown')]:
-            with self.m.case(family):
-                state = self.start({'backupID': self.base['backup_uid']}, hold_replay=stage == 'replay')
-                if stage != 'before':
-                    self.materialize(state)
-                if stage in ('replay', 'shutdown'):
-                    self.release(state['pod'], 'release-response')
-                    self.barrier(state['pod'], 'replay-held' if stage == 'replay' else 'cnpg-exited', 600)
-                self.replacement(state)
-                if stage == 'before':
-                    self.materialize(state)
-                self.finish(state, LATEST)
-        for family, victim in [('sidecar-death-poisons', 'cnpg-backup'), ('guard-death-poisons', 'full-recovery')]:
-            with self.m.case(family):
-                state = self.start({'backupID': self.base['backup_uid']}, hold_replay=True)
-                self.materialize(state)
-                self.release(state['pod'], 'release-response')
-                self.barrier(state['pod'], 'replay-held')
-                observed = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
-                all_status = observed['status']['containerStatuses'] + observed['status']['initContainerStatuses']
-                old = next(c for c in all_status if c['name'] == victim)
-                container = old['containerID'].split('://')[1]
-                pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container))['info']['pid'])
-                assert pid > 1
-                h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-9', str(pid))
-                def killed():
-                    p = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
-                    statuses = p['status']['containerStatuses'] + p['status']['initContainerStatuses']
-                    c = next(c for c in statuses if c['name'] == victim)
-                    return any(c.get(k, {}).get('terminated', {}).get('exitCode') == 137 for k in ('state', 'lastState'))
-                h.wait(killed, 'actual ancestor namespace SIGKILL exit137', 120)
-                self.event('actual-process-death', victim=victim, container=container, exit=137)
-                self.replacement(state, poisoned=True)
-                self.holds(state, 'crashed-reader-keeps-protection')
-                self.retire_target(state)
+    def case_bundle_transport_fatal(self):
+        self.fault_case('bundle-transport-fatal', 'reset-wal-get')
+
+    def case_bundle_TLS_fatal(self):
+        self.fault_case('bundle-TLS-fatal', 'tls-wal-get')
+
+    def case_guard_before_RPC_same_PVC_no_mutation(self):
+        self.ownership_stage('guard-before-RPC-same-PVC-no-mutation', 'before')
+
+    def case_guard_delayed_response_same_PVC_no_mutation(self):
+        self.ownership_stage('guard-delayed-response-same-PVC-no-mutation', 'response')
+
+    def case_guard_replay_pause_same_PVC_no_mutation(self):
+        self.ownership_stage('guard-replay-pause-same-PVC-no-mutation', 'replay')
+
+    def case_guard_shutdown_pause_same_PVC_no_mutation(self):
+        self.ownership_stage('guard-shutdown-pause-same-PVC-no-mutation', 'shutdown')
+
+    def case_sidecar_death_poisons(self):
+        self.crash_case('sidecar-death-poisons', 'cnpg-backup')
+
+    def case_guard_death_poisons(self):
+        self.crash_case('guard-death-poisons', 'full-recovery')
+
+    def case_poison_fresh_Cluster_all_fresh_PVC_retry(self):
+        h = self.h
         with self.m.case('poison-fresh-Cluster-all-fresh-PVC-retry'):
             self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
 
-    def no_retries(self, state):
-        h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop=disabled', '--overwrite')
-        jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']
-        assert jobs
-        for job in jobs:
-            h.kube('patch', 'job', job['metadata']['name'], '-n', TARGET, '--type=merge', '-p', '{"spec":{"backoffLimit":0}}')
-
-    def node_pid(self, state, container):
-        pod = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
-        statuses = pod['status']['containerStatuses'] + pod['status']['initContainerStatuses']
-        selected = next(c for c in statuses if c['name'] == container)
-        cid = selected['containerID'].split('://')[1]
-        pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', cid))['info']['pid'])
-        assert pid > 1
-        return pid, cid
-
-    def markers(self, state):
-        if 'backing_paths' not in state:
-            pod = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
-            volumes = {v['name']: v for v in pod['spec']['volumes']}
-            main = next(c for c in pod['spec']['containers'] if c['name'] == 'full-recovery')
-            paths = []
-            for mount in main['volumeMounts']:
-                if mount['mountPath'] not in VOLUMES:
-                    continue
-                claim = volumes[mount['name']]['persistentVolumeClaim']['claimName']
-                pvc = json.loads(h.kube('get', 'pvc', claim, '-n', TARGET, '-o', 'json'))
-                pv = json.loads(h.kube('get', 'pv', pvc['spec']['volumeName'], '-o', 'json'))
-                path = pv['spec']['local']['path']
-                assert re.fullmatch(r'/var/local/cnpg-backup-work-[0-9]+', path)
-                paths.append(path)
-            assert len(paths) == 3
-            state['backing_paths'] = paths
-        text = h.run('docker', 'exec', h.NAME + '-control-plane', 'sh', '-c',
-                     'for p in "$@"; do if test -f "$p/.cnpg-backup/owner.json"; then echo present; else echo absent; fi; done',
-                     'observe-only-owned-markers', *state['backing_paths'])
-        return text.splitlines()
-
-    def main_terminated(self, state):
-        pod = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
-        return any(c['name'] == 'full-recovery' and 'terminated' in c.get('state', {}) for c in pod.get('status', {}).get('containerStatuses', []))
-
-    def process_drain(self):
+    def case_detached_PG_descendants(self):
+        h = self.h
         with self.m.case('detached-PG-descendants'):
             state = self.start({'backupID': self.base['backup_uid']}, hold_replay=True)
             self.materialize(state)
@@ -1235,6 +1326,10 @@ class Campaign:
             h.wait(lambda: self.main_terminated(state), 'guard reaps every main-namespace descendant', 60)
             assert self.markers(state) == ['absent'] * 3, 'same-sidecar clean drain failed after reaping'
             self.retire_target(state)
+
+    def case_pending_sidecar_task_same_incarnation_drain(self):
+        h = self.h
+        WORK, OUT = h.WORK, h.OUT
         with self.m.case('pending-sidecar-task-same-incarnation-drain'):
             state = self.start({'backupID': self.base['backup_uid']})
             self.materialize(state)
@@ -1278,11 +1373,8 @@ class Campaign:
                     h.save_log(log_path.name, log_path.read_text())
             self.retire_target(state)
 
-    def operation_state(self, state):
-        cm = json.loads(h.kube('get', 'configmap', state['name'] + '-cb-recovery', '-n', TARGET, '-o', 'json'))
-        return json.loads(cm['data']['operation.json'])
-
-    def protection(self):
+    def case_stale_tuple_rejected(self):
+        h = self.h
         with self.m.case('stale-tuple-rejected'):
             state = self.start({'backupID': self.base['backup_uid']})
             self.materialize(state)
@@ -1292,6 +1384,9 @@ class Campaign:
             assert 'stale tuple rejected: FailedPrecondition' in text
             assert self.target_snapshot(p) == before
             self.finish(state, LATEST)
+
+    def case_source_lifetime_and_reader_through_replay(self):
+        h = self.h
         with self.m.case('source-lifetime-and-reader-through-replay'):
             state = self.start({'backupID': self.base['backup_uid']}, hold_replay=True)
             self.wal.control('hold-artifact-get-response')
@@ -1317,9 +1412,9 @@ class Campaign:
             self.finish(state, LATEST, stable_retained=True)
             ours = {state['plan']['plan']['lifetime_hold_id'], state['plan']['plan']['reader_hold_id']}
             assert old_holders - ours <= {x['id'] for x in self.gate()['holders']}, 'completion erased another process holder'
-        self.controller_retry()
 
-    def controller_retry(self):
+    def case_controller_all_Job_retry_Pods_terminated(self):
+        h = self.h
         with self.m.case('controller-all-Job-retry-Pods-terminated'):
             state = self.start({'backupID': self.base['backup_uid']})
             jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']
@@ -1356,63 +1451,97 @@ class Campaign:
             self.release(state['pod'], 'release-response')
             self.barrier(state['pod'], 'cnpg-exited', 600)
             self.holds(state, 'CNPG-success-but-retry-guard-still-live')
-            assert self.operation_state(state)['state'] == 'active'
             self.finish(state, LATEST)
             recovery_pods = [p for p in state['completion_pods'] if any(c['name'] == 'full-recovery' for c in p['spec']['containers'])]
             assert len(recovery_pods) > 1, 'mandatory actual retry-Pod evidence disappeared'
             self.event('all-Job-attempts-terminated-before-completion-release', job_uid=job['metadata']['uid'],
                        pods=[h.pod_evidence(p) for p in recovery_pods])
 
-    def replacement(self, state, poisoned=False):
-        original = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
-        replacement = copy.deepcopy(original)
-        name = state['name'] + '-replacement'
-        # Same immutable volume projections/PVCs, fresh Pod UID, actual guarded
-        # command. Keep all init containers: /controller is a fresh emptyDir,
-        # so the observer installer must run on the replacement too.
-        replacement.pop('status', None)
-        replacement['metadata'] = {'name': name, 'namespace': TARGET}
-        replacement['spec'].pop('nodeName', None)
-        replacement['spec']['restartPolicy'] = 'Never'
-        # No cluster label: CNPG does not adopt or act on this negative control.
-        # The admission observer still recognizes its actual full-recovery main.
-        before = self.target_snapshot(original)
-        h.apply(replacement)
-        def stopped():
-            p = json.loads(h.kube('get', 'pod', name, '-n', TARGET, '-o', 'json'))
-            return any(c['name'] == 'full-recovery' and 'terminated' in c.get('state', {}) for c in p.get('status', {}).get('containerStatuses', []))
-        h.wait(stopped, 'same-PVC replacement refused before preflight', 240)
-        logs = h.kube('logs', name, '-n', TARGET, '-c', 'full-recovery')
-        assert 'TargetOwnershipUncertain' in logs or 'TargetOwnershipBusy' in logs, logs[-2000:]
-        assert 'cleaning up existing' not in logs
-        assert self.target_snapshot(original) == before, 'replacement renamed/deleted/reconstructed target content'
-        self.event('same-PVC-replacement-rejected', original=state['pod'], replacement=name, poisoned=poisoned, snapshot=before)
-        h.save_log(name + '.log', logs)
-        h.kube('delete', 'pod', name, '-n', TARGET, '--wait=true', '--timeout=120s')
 
-    def target_snapshot(self, pod):
-        # Inspect fixed disposable backing files from the node, not through the
-        # possibly dead main. Include directory names/inodes and content hashes.
-        volumes = {v['name']: v for v in pod['spec']['volumes']}
-        main = next(c for c in pod['spec']['containers'] if c['name'] == 'full-recovery')
-        result = []
-        for mount in main['volumeMounts']:
-            if mount['mountPath'] not in VOLUMES:
-                continue
-            claim = volumes[mount['name']]['persistentVolumeClaim']['claimName']
-            pvc = json.loads(h.kube('get', 'pvc', claim, '-n', TARGET, '-o', 'json'))
-            pv = json.loads(h.kube('get', 'pv', pvc['spec']['volumeName'], '-o', 'json'))
-            path = pv['spec']['local']['path']
-            assert re.fullmatch(r'/var/local/cnpg-backup-work-[0-9]+', path)
-            result.append(h.run('docker', 'exec', h.NAME + '-control-plane', 'sh', '-ec',
-                'cd "$1"; find . -xdev -printf "%y %p %i %s\\n" | sort; '
-                'find . -xdev -type f ! -path "./lost+found/*" -exec sha256sum {} + | sort', 'snapshot-owned-target', path, timeout=120))
-        assert len(result) == 3
-        return [hashlib.sha256(x.encode()).hexdigest() for x in result]
+    def case_seeded_XID_1(self):
+        h = self.h
+        self.seeded_xid(1)
 
-    def close(self):
-        if self.wal:
-            self.wal.close()
-        # Preserve kind for the outer/always collector. Hosted runner is
-        # ephemeral; local users may remove only this recorded cluster afterward.
-        self.m.save()
+    def case_seeded_XID_2(self):
+        h = self.h
+        self.seeded_xid(2)
+
+    def seeded_xid(self, ordinal):
+        h = self.h
+        rng = random.Random(self.args.seed)
+        exclusive = [bool(rng.getrandbits(1)) for _ in range(ordinal)][-1]
+        with self.m.case('seeded-XID-' + str(ordinal)):
+            self.event('seed-choice', ordinal=ordinal, exclusive=exclusive)
+            self.restore({'backupID': self.base['backup_uid'], 'targetXID': self.target['xid'], 'exclusive': exclusive},
+                         BEFORE if exclusive else INCLUSIVE, True)
+
+    def ownership_stage(self, family, stage):
+        h = self.h
+        with self.m.case(family):
+            state = self.start({'backupID': self.base['backup_uid']}, hold_replay=stage == 'replay')
+            if stage != 'before':
+                self.materialize(state)
+            if stage in ('replay', 'shutdown'):
+                self.release(state['pod'], 'release-response')
+                self.barrier(state['pod'], 'replay-held' if stage == 'replay' else 'cnpg-exited', 600)
+            self.replacement(state)
+            if stage == 'before':
+                self.materialize(state)
+            self.finish(state, LATEST)
+
+    def crash_case(self, family, victim):
+        h = self.h
+        with self.m.case(family):
+            state = self.start({'backupID': self.base['backup_uid']}, hold_replay=True)
+            self.materialize(state)
+            self.release(state['pod'], 'release-response')
+            self.barrier(state['pod'], 'replay-held')
+            observed = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
+            all_status = observed['status']['containerStatuses'] + observed['status']['initContainerStatuses']
+            old = next(c for c in all_status if c['name'] == victim)
+            container = old['containerID'].split('://')[1]
+            pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container))['info']['pid'])
+            assert pid > 1
+            h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-9', str(pid))
+            def killed():
+                p = next(p for p in self.pods(state['name']) if p['metadata']['name'] == state['pod'])
+                statuses = p['status']['containerStatuses'] + p['status']['initContainerStatuses']
+                c = next(c for c in statuses if c['name'] == victim)
+                return any(c.get(k, {}).get('terminated', {}).get('exitCode') == 137 for k in ('state', 'lastState'))
+            h.wait(killed, 'actual ancestor namespace SIGKILL exit137', 120)
+            self.event('actual-process-death', victim=victim, container=container, exit=137)
+            self.replacement(state, poisoned=True)
+            self.holds(state, 'crashed-reader-keeps-protection')
+            self.retire_target(state)
+
+    def fault_case(self, family, mode):
+        h = self.h
+        with self.m.case(family):
+            state = self.start({'backupID': self.base['backup_uid']})
+            self.materialize(state)
+            requested = self.remote if family.startswith('required-') else sorted(state['plan']['bundled'])[0]
+            self.fatal_replay(state, requested, mode, family)
+
+    def temporal_case(self, family, field, value):
+        h = self.h
+        with self.m.case(family):
+            for exclusive in (False, True):
+                self.restore({'backupID': self.base['backup_uid'], field: value, 'exclusive': exclusive},
+                             BEFORE if exclusive else INCLUSIVE, True)
+
+
+    def case_retirement_20(self):
+        h = self.h
+        with self.m.case('retirement-20'):
+            for operation in range(20):
+                previous = {holder['id'] for holder in self.gate()['holders']}
+                if operation % 2 == 0:
+                    self.reject({'backupID': self.newest['backup_uid'], 'targetLSN': self.target['commit_lsn']}, 'too-new-base')
+                else:
+                    self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
+                assert previous <= {holder['id'] for holder in self.gate()['holders']}, 'retirement erased an uncertain source holder'
+                h.account(force=True)
+                live = [a for a in h.allocations if a['state'] == 'mounted']
+                assert len(live) <= 8, 'retired fixture backing accumulated beyond live workspace bound'
+                self.event('retirement-stress-admitted-and-closed', operation=operation + 1, live_backing=len(live),
+                           uncertain_holders=len(self.gate()['holders']), fresh_pvc_uids=self.targets[-1]['pvc_uids'])

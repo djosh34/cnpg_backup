@@ -20,12 +20,15 @@ def construct(original):
     state = {'name': 'g-032', 'pod': original['metadata']['name']}
     with patch.object(campaign, 'pods', return_value=[original]), \
          patch.object(campaign, 'target_snapshot', return_value=['snapshot'] * 3), \
+         patch('recovery_cases.h.kube') as dry_run, \
          patch('recovery_cases.h.apply', side_effect=apply):
         try:
             campaign.replacement(state)
         except Captured:
             pass
     assert len(result) == 1
+    assert '--dry-run=server' in dry_run.call_args.args
+    assert json.loads(dry_run.call_args.kwargs['input']) == result[0]
     return result[0]
 
 

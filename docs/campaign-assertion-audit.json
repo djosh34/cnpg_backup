@@ -1,0 +1,1872 @@
+{
+  "schema": 1,
+  "scope": "Every assert and wait/barrier in recovery_cases.py, recovery_campaign.py, campaign_fixture.py and the consumed WALFixture setup methods; registry maps all31+2 cases. Go actors and PostgreSQL tools remain unchanged independent observers, consumed through these assertions. Command status and input/resource/cleanup boundaries below are additional fail-closed harness contracts.",
+  "runtime_boundaries": [
+    {
+      "function": "Commands.command/run/require/wait",
+      "category": "safety-invariant",
+      "requirement": "A nonzero status, killed child, exceeded deadline or truncated oracle input is never successful proof. Separate bounded diagnostics retain actual status; all child groups are reaped."
+    },
+    {
+      "function": "Fixture.container_exists",
+      "category": "fixture-precondition",
+      "requirement": "Absence follows a successful exact Docker list, never empty stdout from an unsuccessful inspect or version-specific error text."
+    },
+    {
+      "function": "Fixture.owned/close/retire_backing/quiesce_pods",
+      "category": "safety-invariant",
+      "requirement": "Exact owned identities and no remaining CRI/mount consumers before disposal. Unknown associations and cleanup errors block slot reuse; no marker/source-hold clearing."
+    },
+    {
+      "function": "Fixture.preflight/account/create_node",
+      "category": "fixture-precondition",
+      "requirement": "Admit the aggregate recipe before provisioning; observe actual cgroup limits/pressure, demand allocation and emergency floor. Hard node limits apply during bootstrap; no arbitrary endpoint or resource waiver."
+    },
+    {
+      "function": "load_bundle/run_plan/make_plan/validate_results",
+      "category": "safety-invariant",
+      "requirement": "Canonical frozen subject, exact unchanged bundle/source/runtime/registry, all31+2 completed, no failures/retention/leaks/missing or mismatched attempts. Diagnostic or partial scope is never full fresh qualification."
+    }
+  ],
+  "reviewed_dispositions": [
+    "Removed instant adoption, instant Job Complete and live-Pod-after-durable-proof assumptions (existing repaired oracles preserved).",
+    "Removed redundant permissive log-wording assertion in reject and cleaning-log substring assertion in replacement; actual nonzero recovery/guard reason and independent no-mutation snapshots remain.",
+    "Removed exact operation active-state assertion during retry pause: owned holders and eventual exact completion are requirements, projection spelling at that instant is not.",
+    "Retained exact SQL, WAL bytes/hashes/native range/endpoints, PID1 same-process adoption/reaping, source holder identity and all-three-target marker oracles.",
+    "Namespace finalization waits300s against explicitly configured CNPG smart/stop30/60s, not default1800s. No force/finalizer clearing.",
+    "Native record uniqueness/16MiB segment size/one writer/one Job retry parallelism and wrapper placement are explicit fixture preconditions, not universal product contracts.",
+    "Unexpected assertion errors retain causal expression identity; fixture precondition failure is not labeled a product failure."
+  ],
+  "assertions": [
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "switch_witness",
+      "expression": "len(matches) == 1",
+      "id": "c4ac3ec110438fe3",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: real independently decoded SWITCH lies after unchanged native EndLSN in same final segment",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "switch_witness",
+      "expression": "end % size and end <= start and (start // size == segment)",
+      "id": "932f7acc9bf01c39",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: real independently decoded SWITCH lies after unchanged native EndLSN in same final segment",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "history_fork",
+      "expression": "len(text.encode()) <= 65536",
+      "id": "804e336cc71fe88a",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: PostgreSQL-generated promotion endpoint follows exact admitted source ancestry",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "history_fork",
+      "expression": "len(fields) >= 2 and re.fullmatch('[0-9A-F]+/[0-9A-F]+', fields[1])",
+      "id": "c7c823760928d34a",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a75: PostgreSQL-generated promotion endpoint follows exact admitted source ancestry",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "history_fork",
+      "expression": "entries and [e[0] for e in entries] == [p['id'] for p in source_path]",
+      "id": "da2df9a0d20bdc8b",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: PostgreSQL-generated promotion endpoint follows exact admitted source ancestry",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "history_fork",
+      "expression": "new_timeline > entries[-1][0] and len({e[0] for e in entries}) == len(entries)",
+      "id": "dffc2b507339ef88",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: PostgreSQL-generated promotion endpoint follows exact admitted source ancestry",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "history_fork",
+      "expression": "entries[i][1] == lsn(source_path[i + 1]['fork_lsn'])",
+      "id": "b3da95e0c16d36b9",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: PostgreSQL-generated promotion endpoint follows exact admitted source ancestry",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "setup",
+      "expression": "json.loads(h.kube('version', '-o', 'json'))['serverVersion']['gitVersion'] == 'v1.35.8'",
+      "id": "16fb08a7230d27ea",
+      "category": "fixture-precondition",
+      "requirement": "fixture: pinned compatibility and exact subject identity",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "setup",
+      "expression": "'revision=' + self.args.subject_sha + ' ' in version",
+      "id": "d753f0db35677747",
+      "category": "fixture-precondition",
+      "requirement": "fixture: pinned compatibility and exact subject identity",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "setup",
+      "expression": "h.wait(lambda: h.admission_ready(h.kube('apply', '--server-side', '--dry-run=server', '-f', '-', input=json.dumps(self.cluster), check=False)), 'actual mTLS discovery')",
+      "id": "3bded66ffe0b44f1",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario setup",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "acknowledge",
+      "expression": "re.fullmatch('[0-9]+', xid)",
+      "id": "192e5151d9ffb02f",
+      "category": "fixture-precondition",
+      "requirement": "testing workload oracle: only actual observed top-level committed transactions become expected SQL facts",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "acknowledge",
+      "expression": "self.sql(SOURCE, pod, f'SELECT value FROM g_oracle WHERE id={key}') == value",
+      "id": "253d6e7af7dd9156",
+      "category": "fixture-precondition",
+      "requirement": "testing workload oracle: only actual observed top-level committed transactions become expected SQL facts",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "archive",
+      "expression": "h.wait(lambda: self.sql(SOURCE, pod, \"SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='\" + segment + \".done'\") == '1', 'known durable archive boundary', 120)",
+      "id": "119f62a017734aad",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario archive",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "fetch_archive",
+      "expression": "len(raw) == 16 << 20",
+      "id": "96b9083c41e17060",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "done",
+      "expression": "state != 'failed'",
+      "id": "2e4bd87a80d1f1c5",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "temporal_semantics": "Observe terminal capture outcome within full() 600s budget; terminal failed is immediately reported, never retried to green.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "full",
+      "expression": "h.wait(done, 'actual CNPG committed full', 600)",
+      "id": "1071a40c1d03289f",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a73/4: actual CNPG full capture commits under original Backup UID; failed capture blocks dependent restores",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "full",
+      "expression": "uid == b['metadata']['uid']",
+      "id": "014b1a39ce5b2656",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/4: actual CNPG full capture commits under original Backup UID; failed capture blocks dependent restores",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_workload",
+      "expression": "lsn(self.point) > lsn(self.base['bundled_wal_end_lsn'])",
+      "id": "7e74d1d9fa83d2f1",
+      "category": "fixture-precondition",
+      "requirement": "testing remote-WAL oracle: target is beyond backup bundle; native commit LSN and too-new base are observed, not assumed",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_workload",
+      "expression": "int(self.remote[8:16], 16) * 256 + int(self.remote[16:], 16) > last_bundle",
+      "id": "5095dce2b0071c9f",
+      "category": "fixture-precondition",
+      "requirement": "testing remote-WAL oracle: target is beyond backup bundle; native commit LSN and too-new base are observed, not assumed",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_workload",
+      "expression": "len(matches) == 1",
+      "id": "54ec78961cfbc372",
+      "category": "fixture-precondition",
+      "requirement": "testing remote-WAL oracle: target is beyond backup bundle; native commit LSN and too-new base are observed, not assumed",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "make_workload",
+      "expression": "lsn(self.newest['stop_lsn']) > lsn(self.target['commit_lsn'])",
+      "id": "dcd67af0983dead8",
+      "category": "fixture-precondition",
+      "requirement": "testing remote-WAL oracle: target is beyond backup bundle; native commit LSN and too-new base are observed, not assumed",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "capture_same_segment",
+      "expression": "self.sql(SOURCE, self.primary(), 'SHOW wal_segment_size') == '16MB'",
+      "id": "38bad58ba80fbda3",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: actual product full and native following SWITCH; no scheduler race or synthetic EndLSN",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "capture_same_segment",
+      "expression": "h.wait(lambda: self.sql(SOURCE, self.primary(), \"SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='\" + name + \".done'\") == '1', 'actual product same-final-file archive durable', 120)",
+      "id": "36e7edbc1f38a2ad",
+      "category": "eventual-outcome",
+      "requirement": "S1 fixture: actual product full and native following SWITCH; no scheduler race or synthetic EndLSN",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "barrier",
+      "expression": "h.wait(observed, 'observed test boundary: ' + name, seconds)",
+      "id": "39ec1001a01b29ba",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario barrier",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "start",
+      "expression": "self.count <= MAX_TARGETS",
+      "id": "11e579c5ee5d12bc",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73: guard before original CNPG command, private PID namespace, exact subject, all-fresh target PVC identities",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "start",
+      "expression": "h.wait(started, 'fresh CNPG guarded recovery Pod', 300)",
+      "id": "007d2205f44aabaa",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a73: guard before original CNPG command, private PID namespace, exact subject, all-fresh target PVC identities",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "start",
+      "expression": "self.barrier(pod, 'before-rpc')",
+      "id": "84b9823e9c8ffcf8",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a73: guard before original CNPG command, private PID namespace, exact subject, all-fresh target PVC identities",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "start",
+      "expression": "main['command'][:6] == ['/cnpg-backup/bin/cnpg-backup', 'recovery-guard', '--', '/controller/manager', 'instance', 'restore']",
+      "id": "fe561c2ed6d57cdc",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73: guard before original CNPG command, private PID namespace, exact subject, all-fresh target PVC identities",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "start",
+      "expression": "not p['spec'].get('hostPID') and (not p['spec'].get('shareProcessNamespace'))",
+      "id": "443650013cd7638a",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73: guard before original CNPG command, private PID namespace, exact subject, all-fresh target PVC identities",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "start",
+      "expression": "next((c for c in p['spec']['initContainers'] if c['name'] == 'cnpg-backup'))['image'] == self.args.data_image",
+      "id": "ea45d077882c72d1",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73: guard before original CNPG command, private PID namespace, exact subject, all-fresh target PVC identities",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "start",
+      "expression": "not target_uids.intersection(previous['pvc_uids'])",
+      "id": "1dad671d77a081bf",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73: guard before original CNPG command, private PID namespace, exact subject, all-fresh target PVC identities",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "plan",
+      "expression": "plan['materialized'] and plan['bundled']",
+      "id": "ab6abb000bf561de",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: exact source/destination identity and durable verified materialization/plan projection agree",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "plan",
+      "expression": "selection['source']['repository_id'] == SOURCE_ID",
+      "id": "64b2cce8b66c122a",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: exact source/destination identity and durable verified materialization/plan projection agree",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "plan",
+      "expression": "selection['destination_repository_id'] == state['repository_id'] != SOURCE_ID",
+      "id": "791a23135b6ea7e1",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: exact source/destination identity and durable verified materialization/plan projection agree",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "plan",
+      "expression": "durable == plan",
+      "id": "f28da2b73a156e6d",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: exact source/destination identity and durable verified materialization/plan projection agree",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "holds",
+      "expression": "gate['owner'] is None",
+      "id": "071288deb89e99e6",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: admitted original lifetime/reader holders exclude destructive owner and match exact operation/target",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "holds",
+      "expression": "holder['operation_id'] == plan['operation_id'] and holder['target_cluster_uid'] == plan['target_cluster_uid']",
+      "id": "77423ad8d645a6f6",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: admitted original lifetime/reader holders exclude destructive owner and match exact operation/target",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "materialize",
+      "expression": "self.barrier(state['pod'], 'restore-response', 600)",
+      "id": "05d7c9572867a61b",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario materialize",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.barrier(pod, 'cnpg-exited', 600)",
+      "id": "eb10a0bb4b956083",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "any((x.get('event') == 'actual-cnpg-exit' and x['exit'] == 0 for x in events))",
+      "id": "c9070ac21c2b7cc9",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.markers(state) == ['present'] * 3",
+      "id": "e1a8cd6dcb59ecf5",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "not stable_retained",
+      "id": "4212992ca41b5dce",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.markers(state) == ['absent'] * 3",
+      "id": "d852fd65615baecc",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.sql(TARGET, primary, 'SELECT pg_is_in_recovery()') == 'f'",
+      "id": "49166f78f694a05d",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.sql(TARGET, primary, \"SELECT to_regclass('public.g_drop') IS NOT NULL\") == ('t' if drop_present else 'f')",
+      "id": "971d937346508516",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.sql(TARGET, primary, 'SELECT id FROM g_drop') == '71'",
+      "id": "91a5fd69f4054466",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.sql(TARGET, primary, \"SELECT pg_tablespace_location(oid) FROM pg_tablespace WHERE spcname='fast_space'\") == '/var/lib/postgresql/tablespaces/fast_space/data'",
+      "id": "9060fb13d0b52404",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "wal_path == '/var/lib/postgresql/wal/pg_wal'",
+      "id": "9c1562b2aa5a22fc",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "timeline > state['plan']['plan']['target']['timeline']",
+      "id": "dcf8eafd7b5e4737",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "h.wait(lambda: key in self.inventory('smoke/v1/' + state['repository_id'] + '/wal/'), 'new lineage archive', 120)",
+      "id": "fe7c1c4da14f0206",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == before",
+      "id": "6aac20e51b709ece",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5: observed CNPG recovery success, independent exact SQL inclusion/exclusion, supported layouts, promotion and separate destination archive",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "plan['target']['kind'] == 'immediate' and (not plan['required_archive'])",
+      "id": "54ba2fa0abe66f0f",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "end % size",
+      "id": "11441a2b1c197c99",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "expected['Size'] == size",
+      "id": "d15815aebb9a240a",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "re.fullmatch('[0-9A-F]{24}', full) and int(full[:8], 16) > selected['timeline']",
+      "id": "2118c1ef45cb5613",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "state['repository_id'] != SOURCE_ID",
+      "id": "ba4b153ebbaffae4",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "prefix + old[:8] + '/' + old not in names",
+      "id": "bc3070c46e1f9078",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "prefix + partial[:8] + '/' + partial in names",
+      "id": "369be9a6e3cd29ad",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "metadata['x-amz-meta-cnpg-format'] == 'wal-v1'",
+      "id": "edefc7de389640a7",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "metadata['x-amz-meta-cnpg-system-id'] == plan['source']['system_identifier']",
+      "id": "ccaad4f9458f869c",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "metadata['x-amz-meta-cnpg-stored-sha256'] == hashlib.sha256(stored).hexdigest()",
+      "id": "5979b06922ccb129",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "compression in ('none', 'gzip')",
+      "id": "a9ebf14f1a861d09",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "len(raw) == size == int(metadata['x-amz-meta-cnpg-raw-bytes'])",
+      "id": "358b77f4a32237cf",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "checksum == metadata['x-amz-meta-cnpg-raw-sha256']",
+      "id": "a7370cc06a2d377c",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "checksum == expected['SHA256']",
+      "id": "056a47b03ff4da25",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "verify_promotion_archive",
+      "expression": "checksum == local",
+      "id": "e79e8e9482537c37",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: auxiliary promotion bytes retain independent native identity/metadata; no manufactured old complete WAL or false full frontier",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "completed",
+      "expression": "op['state'] != 'uncertain'",
+      "id": "d75da2f47d486740",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: ordinary unpaused completion must produce durable exact original Job/Pod proof and release only owned source holds; missing live objects are allowed",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "ordinary_completion",
+      "expression": "h.wait(completed, 'uninterrupted ordinary automatic stable release', 120)",
+      "id": "26c341410e0d2edf",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a75: ordinary unpaused completion must produce durable exact original Job/Pod proof and release only owned source holds; missing live objects are allowed",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "ordinary_completion",
+      "expression": "op['completedJobUID'] == state['job_uid']",
+      "id": "ed6c29165646cbb1",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: ordinary unpaused completion must produce durable exact original Job/Pod proof and release only owned source holds; missing live objects are allowed",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "ordinary_completion",
+      "expression": "op['terminatedPodUIDs'] == [state['pod_uid']]",
+      "id": "8031b2094fe0233d",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: ordinary unpaused completion must produce durable exact original Job/Pod proof and release only owned source holds; missing live objects are allowed",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "ordinary_completion",
+      "expression": "not {plan['reader_hold_id'], plan['lifetime_hold_id']}.intersection((x['id'] for x in self.gate()['holders']))",
+      "id": "231d5af2ce2df660",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: ordinary unpaused completion must produce durable exact original Job/Pod proof and release only owned source holds; missing live objects are allowed",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "ordinary_completion",
+      "expression": "self.markers(state) == ['absent'] * 3",
+      "id": "12c8df9c2251934e",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: ordinary unpaused completion must produce durable exact original Job/Pod proof and release only owned source holds; missing live objects are allowed",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "terminated",
+      "expression": "h.wait(all_done, 'all actual recovery/retry Pod containers terminated', 120)",
+      "id": "5023d90c4c7bacdd",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a75: eventual actual all-container/retry termination AND subsequent Job Complete; only stable lifetime may be released by original observer",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "terminated",
+      "expression": "h.wait(job_complete, 'actual Job Complete after all terminal Pod statuses', 120)",
+      "id": "fe2b8dff1bb15968",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a75: eventual actual all-container/retry termination AND subsequent Job Complete; only stable lifetime may be released by original observer",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "terminated",
+      "expression": "h.wait(lambda: plan['reader_hold_id'] not in {x['id'] for x in self.gate()['holders']}, 'original sidecar conclusively drains only its own reader', 120)",
+      "id": "34b697f64f573905",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a75: eventual actual all-container/retry termination AND subsequent Job Complete; only stable lifetime may be released by original observer",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "terminated",
+      "expression": "plan['lifetime_hold_id'] in {x['id'] for x in self.gate()['holders']}",
+      "id": "d238ea921c564ac4",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: eventual actual all-container/retry termination AND subsequent Job Complete; only stable lifetime may be released by original observer",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "terminated",
+      "expression": "op['state'] == 'uncertain' and (not op['lifetimeReleased'])",
+      "id": "7adf65b8874c19b5",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: eventual actual all-container/retry termination AND subsequent Job Complete; only stable lifetime may be released by original observer",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "terminated",
+      "expression": "h.wait(lambda: plan['lifetime_hold_id'] not in {x['id'] for x in self.gate()['holders']}, 'uninterrupted original observer releases stable lifetime after all terminations', 120)",
+      "id": "e40df018fef5214c",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a75: eventual actual all-container/retry termination AND subsequent Job Complete; only stable lifetime may be released by original observer",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retire_target",
+      "expression": "h.wait(lambda: not self.pods(state['name']), 'owned target Pods stopped before next scenario', 120)",
+      "id": "e9d57be978c8632a",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a74/5: fixture disposal cannot clear source protection; original operation closure must precede Cluster deletion",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retire_target",
+      "expression": "h.wait(lambda: self.operation_state(state)['state'] in ('uncertain', 'completed'), 'original observer durably closed before test Cluster cleanup', 120)",
+      "id": "c272235ceedc8429",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a74/5: fixture disposal cannot clear source protection; original operation closure must precede Cluster deletion",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retire_target",
+      "expression": "self.gate()['holders'] == holders",
+      "id": "2018c76dd30284d7",
+      "category": "safety-invariant",
+      "requirement": "design \u00a74/5: fixture disposal cannot clear source protection; original operation closure must precede Cluster deletion",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "inventory",
+      "expression": "tree.findtext('s:IsTruncated', namespaces=ns) == 'false'",
+      "id": "b9920dd412ee7186",
+      "category": "fixture-precondition",
+      "requirement": "testing independent storage oracle: complete bounded list; truncated input is not coverage",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "reject",
+      "expression": "self.barrier(state['pod'], 'cnpg-exited', 600)",
+      "id": "bae7e28f9514ba74",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a75: too-new/unreached target must fail actual PostgreSQL recovery, not merely a mocked selector",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "reject",
+      "expression": "any((x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in records))",
+      "id": "c4b00be644a47733",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: too-new/unreached target must fail actual PostgreSQL recovery, not merely a mocked selector",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "reject",
+      "expression": "'recovery ended before configured recovery target was reached' in logs",
+      "id": "337929aa0e1d863d",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: too-new/unreached target must fail actual PostgreSQL recovery, not merely a mocked selector",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "helper",
+      "expression": "match and int(match[1]) == expected",
+      "id": "859b546e88585df4",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75 S1: actual Unix-RPC helper exit0/1/255 classification, not stock CNPG exit1",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "archive_absent",
+      "expression": "re.fullmatch('[A-Za-z0-9-]+: [A-Za-z0-9_./: -]+', line)",
+      "id": "9082da14bc496eec",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: exact original archived payload/integrity metadata withheld and restored; absence actually established",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "archive_absent",
+      "expression": "metadata",
+      "id": "70e0c75c069474bc",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: exact original archived payload/integrity metadata withheld and restored; absence actually established",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "archive_absent",
+      "expression": "self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == []",
+      "id": "565d92c3f337b68e",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: exact original archived payload/integrity metadata withheld and restored; absence actually established",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "archive_absent",
+      "expression": "self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == keys",
+      "id": "d6c20261568c3f60",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: exact original archived payload/integrity metadata withheld and restored; absence actually established",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "padded_same_bundle",
+      "expression": "target_offset > 0 and lsn(self.same_witness['switch_start']) >= end",
+      "id": "8ee2d13038768299",
+      "category": "fixture-precondition",
+      "requirement": "S1 negative fixture: change only bytes outside original verified native WAL range, not archive/manifest/SQL facts",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "padded_same_bundle",
+      "expression": "member.isfile() or member.isdir()",
+      "id": "1c2ae060461cd729",
+      "category": "fixture-precondition",
+      "requirement": "S1 negative fixture: change only bytes outside original verified native WAL range, not archive/manifest/SQL facts",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "padded_same_bundle",
+      "expression": "len(content) == 16 << 20",
+      "id": "ef5d762309a776f1",
+      "category": "fixture-precondition",
+      "requirement": "S1 negative fixture: change only bytes outside original verified native WAL range, not archive/manifest/SQL facts",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "padded_same_bundle",
+      "expression": "found",
+      "id": "e7e76cf82e41d483",
+      "category": "fixture-precondition",
+      "requirement": "S1 negative fixture: change only bytes outside original verified native WAL range, not archive/manifest/SQL facts",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "same_segment_plan",
+      "expression": "plan['target']['kind'] == 'latest' and plan['target']['timeline'] == witness['timeline']",
+      "id": "f624d90db567d559",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75 S1: admitted same-file post-EndLSN interval is remote-required despite local bundled filename",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "same_segment_plan",
+      "expression": "plan['chain'][-1]['backup_uid'] == witness['backup_uid']",
+      "id": "864642274a84de16",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75 S1: admitted same-file post-EndLSN interval is remote-required despite local bundled filename",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "same_segment_plan",
+      "expression": "witness['filename'] in state['plan']['bundled']",
+      "id": "a3849f12482af7a0",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75 S1: admitted same-file post-EndLSN interval is remote-required despite local bundled filename",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "same_segment_plan",
+      "expression": "any((w['timeline'] == witness['timeline'] and lsn(w['start_lsn']) <= lsn(witness['end_lsn']) and (lsn(w['end_lsn']) >= lsn(witness['replay_end_lsn'])) for w in required))",
+      "id": "57ed54fa7213370a",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75 S1: admitted same-file post-EndLSN interval is remote-required despite local bundled filename",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "fatal_replay",
+      "expression": "self.wal.control()['blocked'] > 0",
+      "id": "5bcaf46d858ac108",
+      "category": "fixture-precondition",
+      "requirement": "S1 fixture: requested fault actually fired during actual PG replay; a missed fault does not count",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_failure",
+      "expression": "self.barrier(state['pod'], 'cnpg-exited', 240)",
+      "id": "fe38b11a3c8d7bbb",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_failure",
+      "expression": "'255' in logs and ('FATAL' in logs or 'fatal' in logs)",
+      "id": "bef39bc6301a9e81",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_failure",
+      "expression": "'database system is ready to accept connections' not in logs",
+      "id": "88c7642a256b6e5e",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_failure",
+      "expression": "any((x.get('event') == 'wal-request' and x['name'] == requested for x in events))",
+      "id": "324a8a5423292865",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_failure",
+      "expression": "any((x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events))",
+      "id": "e1024a31848bf05f",
+      "category": "safety-invariant",
+      "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "no_retries",
+      "expression": "jobs",
+      "id": "9b7b689ad6a8893c",
+      "category": "fixture-precondition",
+      "requirement": "fixture: prevent unintended retry progress while negative ownership evidence is collected",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "node_pid",
+      "expression": "pid > 1",
+      "id": "87e6a8d5a4f42038",
+      "category": "fixture-precondition",
+      "requirement": "fixture: ancestor namespace resolves actual intended container PID before controlled process death",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "markers",
+      "expression": "re.fullmatch('/var/local/cnpg-backup-work-[0-9]+', path)",
+      "id": "9d4db46b4081c792",
+      "category": "fixture-precondition",
+      "requirement": "fixture: resolve exactly all three owned finite backing paths before Pod deletion; observe without changing marker authority",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "markers",
+      "expression": "len(paths) == 3",
+      "id": "bf86628fe66ff675",
+      "category": "fixture-precondition",
+      "requirement": "fixture: resolve exactly all three owned finite backing paths before Pod deletion; observe without changing marker authority",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replacement",
+      "expression": "h.wait(stopped, 'same-PVC replacement refused before preflight', 240)",
+      "id": "c6b7e61d577fb1da",
+      "category": "eventual-outcome",
+      "requirement": "design \u00a73 K1/S2: actual same-PVC replacement rejected by guard before target rename/delete/reconstruction",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replacement",
+      "expression": "'TargetOwnershipUncertain' in logs or 'TargetOwnershipBusy' in logs",
+      "id": "22eb27d388134d94",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73 K1/S2: actual same-PVC replacement rejected by guard before target rename/delete/reconstruction",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replacement",
+      "expression": "self.target_snapshot(original) == before",
+      "id": "9fcffe7078837a6c",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73 K1/S2: actual same-PVC replacement rejected by guard before target rename/delete/reconstruction",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "target_snapshot",
+      "expression": "re.fullmatch('/var/local/cnpg-backup-work-[0-9]+', path)",
+      "id": "a379a52cb2794735",
+      "category": "fixture-precondition",
+      "requirement": "K1/S2 independent oracle: exact owned three-filesystem names/inodes/content snapshot, not pod-readiness inference",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "target_snapshot",
+      "expression": "len(result) == 3",
+      "id": "1ee827de82658539",
+      "category": "fixture-precondition",
+      "requirement": "K1/S2 independent oracle: exact owned three-filesystem names/inodes/content snapshot, not pod-readiness inference",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "prepare_recovery",
+      "expression": "not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']",
+      "id": "514b2f52518ae625",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_full_latest_remote_SQL",
+      "expression": "selected['plan']['plan']['chain'][0]['backup_uid'] == newest['backup_uid']",
+      "id": "dfea7a037e25693d",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: full-latest-remote-SQL",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_newest_base_too_new",
+      "expression": "state['plan']['plan']['chain'][0]['backup_uid'] == self.base['backup_uid']",
+      "id": "d18d44b382c17943",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: newest-base-too-new",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_shell_free_original_verification",
+      "expression": "not paths.intersection({'bin/sh', 'bin/bash', 'usr/bin/sh', 'usr/bin/bash', 'usr/bin/python3'})",
+      "id": "59c6c66360de83f6",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: shell-free-original-verification",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_shell_free_original_verification",
+      "expression": "hashlib.sha256(raw).hexdigest() == artifact['raw_sha256']",
+      "id": "3ebe7c7124117f81",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: shell-free-original-verification",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_shell_free_original_verification",
+      "expression": "member.isdir() or member.isfile()",
+      "id": "5d248266e49cf9c7",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: shell-free-original-verification",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_shell_free_original_verification",
+      "expression": "not member.name.startswith('/') and '..' not in Path(member.name).parts",
+      "id": "73de36474f2ffdd0",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: shell-free-original-verification",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_bundle_duplicate_absent_local_fallback",
+      "expression": "not state['plan']['plan']['required_archive']",
+      "id": "62cdec38bc3eac3e",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: bundle-duplicate-absent-local-fallback",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_bundle_duplicate_absent_local_fallback",
+      "expression": "self.barrier(negative['pod'], 'cnpg-exited', 300)",
+      "id": "6eacdd7082f97351",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_bundle_duplicate_absent_local_fallback",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_bundle_duplicate_absent_local_fallback",
+      "expression": "any((x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in trace))",
+      "id": "384d6645387498d9",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: bundle-duplicate-absent-local-fallback",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_same_bundled_segment_post_EndLSN_archive_preferred",
+      "expression": "any((x.get('event') == 'actual-upstream-WAL' and x['name'] == name and (x['sha256'] == self.same_witness['archive_sha256']) for x in trace))",
+      "id": "a07527164aeb561e",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: same-bundled-segment-post-EndLSN-archive-preferred",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_same_bundled_segment_post_EndLSN_archive_preferred",
+      "expression": "any((x.get('event') == 'deliberately-incorrect-bundle-as-archive-success' and x['name'] == name for x in trace))",
+      "id": "ed0678a5d42e7c89",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: same-bundled-segment-post-EndLSN-archive-preferred",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_same_bundled_segment_post_EndLSN_archive_preferred",
+      "expression": "not reached",
+      "id": "36d4721d4a56b7ae",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: same-bundled-segment-post-EndLSN-archive-preferred",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_same_bundled_segment_post_EndLSN_archive_preferred",
+      "expression": "reached",
+      "id": "ba874834c5779256",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: same-bundled-segment-post-EndLSN-archive-preferred",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_negative_controls_EOF_and_bundle_as_success",
+      "expression": "self.barrier(state['pod'], 'cnpg-exited', 300)",
+      "id": "c5a238476f33b03f",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_negative_controls_EOF_and_bundle_as_success",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_negative_controls_EOF_and_bundle_as_success",
+      "expression": "self.wal.control()['blocked'] > 0",
+      "id": "78b009d3176941b5",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: negative-controls-EOF-and-bundle-as-success",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_negative_controls_EOF_and_bundle_as_success",
+      "expression": "any((x.get('event') == 'actual-cnpg-exit' and x['exit'] == 0 for x in trace))",
+      "id": "06e4806f76ee13e8",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: negative-controls-EOF-and-bundle-as-success",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_detached_PG_descendants",
+      "expression": "self.barrier(state['pod'], 'replay-held')",
+      "id": "89ce5701f227d111",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_detached_PG_descendants",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_detached_PG_descendants",
+      "expression": "self.barrier(state['pod'], 'cnpg-exited')",
+      "id": "81309a1263cbe8e5",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_detached_PG_descendants",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_detached_PG_descendants",
+      "expression": "h.wait(adopted, 'actual PostgreSQL orphan adoption', 30)",
+      "id": "46b60007bc46357d",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_detached_PG_descendants",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_detached_PG_descendants",
+      "expression": "any((p['group'] != cnpg['group'] or p['session'] != cnpg['session'] for p in orphans))",
+      "id": "8614fa872ef36348",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: detached-PG-descendants",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_detached_PG_descendants",
+      "expression": "self.markers(state) == ['present'] * 3",
+      "id": "92a340db9fc2828a",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: detached-PG-descendants",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_detached_PG_descendants",
+      "expression": "h.wait(lambda: self.main_terminated(state), 'guard reaps every main-namespace descendant', 60)",
+      "id": "416d398c0d6ac32f",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_detached_PG_descendants",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_detached_PG_descendants",
+      "expression": "self.markers(state) == ['absent'] * 3",
+      "id": "266e55fe2d802b04",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: detached-PG-descendants",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "self.markers(state) == ['present'] * 3",
+      "id": "1fa73ba48c9aff8b",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: pending-sidecar-task-same-incarnation-drain",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "h.wait(lambda: self.wal.control()['blocked'] > 0, 'actual source WAL task response held', 60)",
+      "id": "494b0cd8a05f9dd4",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_pending_sidecar_task_same_incarnation_drain",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "self.barrier(state['pod'], 'cnpg-exited')",
+      "id": "0c903da1b8779737",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_pending_sidecar_task_same_incarnation_drain",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "self.markers(state) == ['present'] * 3",
+      "id": "1fa73ba48c9aff8b",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: pending-sidecar-task-same-incarnation-drain",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "h.wait(lambda: self.main_terminated(state), 'same incarnation drains real pending work', 60)",
+      "id": "0029cb167b1c2768",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_pending_sidecar_task_same_incarnation_drain",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "self.markers(state) == ['absent'] * 3",
+      "id": "fb1f92434a643e2f",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: pending-sidecar-task-same-incarnation-drain",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "reader not in {x['id'] for x in self.gate()['holders']}",
+      "id": "5b6f8c58c6bc929a",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: pending-sidecar-task-same-incarnation-drain",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "request.wait(timeout=30) != 0",
+      "id": "bc262d1ca56982cd",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: pending-sidecar-task-same-incarnation-drain",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "request.wait(timeout=30)",
+      "id": "db5558c3f9774b9a",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_pending_sidecar_task_same_incarnation_drain",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_pending_sidecar_task_same_incarnation_drain",
+      "expression": "request.wait(timeout=15)",
+      "id": "7f1ae1b170f65859",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_pending_sidecar_task_same_incarnation_drain",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_stale_tuple_rejected",
+      "expression": "'stale tuple rejected: FailedPrecondition' in text",
+      "id": "2f2c9553e6145721",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: stale-tuple-rejected",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_stale_tuple_rejected",
+      "expression": "self.target_snapshot(p) == before",
+      "id": "698ee1c00f152f7d",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: stale-tuple-rejected",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "h.wait(lambda: self.wal.control()['blocked'] > 0, 'source input read before materialization response', 180)",
+      "id": "bfeaf46da7ba0be9",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_source_lifetime_and_reader_through_replay",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "{x['kind'] for x in readers} == {'restore-lifetime', 'restore-reader'}",
+      "id": "cd5d5ab3d477e55c",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: source-lifetime-and-reader-through-replay",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "len(readers) == 2",
+      "id": "db2627a58a5ad8d1",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: source-lifetime-and-reader-through-replay",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "{x['id'] for x in readers} == {state['plan']['plan']['lifetime_hold_id'], state['plan']['plan']['reader_hold_id']}",
+      "id": "a3ef5a2c86c498e5",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: source-lifetime-and-reader-through-replay",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "self.barrier(state['pod'], 'replay-held')",
+      "id": "84b2cb11a7b4423e",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_source_lifetime_and_reader_through_replay",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "old_holders <= {x['id'] for x in self.gate()['holders']}",
+      "id": "8ba2db9ea702c251",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: source-lifetime-and-reader-through-replay",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "h.wait(lambda: self.operation_state(state)['state'] == 'uncertain', 'durable observer loss after manager restart', 180)",
+      "id": "a02fab75ee4a44e7",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_source_lifetime_and_reader_through_replay",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_source_lifetime_and_reader_through_replay",
+      "expression": "old_holders - ours <= {x['id'] for x in self.gate()['holders']}",
+      "id": "2c9d182f5208e5c4",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: source-lifetime-and-reader-through-replay",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "job['spec']['completions'] == job['spec']['parallelism'] == 1",
+      "id": "c158436dff58957a",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: controller-all-Job-retry-Pods-terminated",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "h.wait(failed_first, 'actual failed first attempt with all containers terminated', 180)",
+      "id": "559b0c4b5feb3ef3",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_controller_all_Job_retry_Pods_terminated",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "main['state']['terminated']['exitCode'] == 42",
+      "id": "774758e3fb4807d9",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: controller-all-Job-retry-Pods-terminated",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "h.wait(retry_started, 'actual Job-controller replacement after failed attempt', 180)",
+      "id": "2019e6daed6ceab6",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_controller_all_Job_retry_Pods_terminated",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "any((o.get('uid') == job['metadata']['uid'] for o in retry['metadata'].get('ownerReferences', [])))",
+      "id": "de139a2aebaaffe4",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: controller-all-Job-retry-Pods-terminated",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "self.barrier(state['pod'], 'before-rpc')",
+      "id": "f5f9a702e829a946",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_controller_all_Job_retry_Pods_terminated",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "self.barrier(state['pod'], 'cnpg-exited', 600)",
+      "id": "71040a1df3680f62",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario case_controller_all_Job_retry_Pods_terminated",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_controller_all_Job_retry_Pods_terminated",
+      "expression": "len(recovery_pods) > 1",
+      "id": "71e4e308223fd173",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: controller-all-Job-retry-Pods-terminated",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "ownership_stage",
+      "expression": "self.barrier(state['pod'], 'replay-held' if stage == 'replay' else 'cnpg-exited', 600)",
+      "id": "239232325843e494",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario ownership_stage",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "crash_case",
+      "expression": "self.barrier(state['pod'], 'replay-held')",
+      "id": "56ba52028ab2a43a",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario crash_case",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "crash_case",
+      "expression": "pid > 1",
+      "id": "b9c06558b7949b27",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family supplied by exact scenario registry: crash_case",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "crash_case",
+      "expression": "h.wait(killed, 'actual ancestor namespace SIGKILL exit137', 120)",
+      "id": "dd17bc00c75e6072",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario crash_case",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retirement_20",
+      "expression": "previous <= {holder['id'] for holder in self.gate()['holders']}",
+      "id": "b3d4794bc7013891",
+      "category": "safety-invariant",
+      "requirement": "design \u00a73/5 and testing named family: retirement-20",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retirement_20",
+      "expression": "len(live) <= 8",
+      "id": "e99c97e8ae7179b4",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/5 and testing named family: retirement-20",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_campaign.py",
+      "function": "check_rows",
+      "expression": "actual == wanted",
+      "id": "74ca9fa7681ca982",
+      "category": "safety-invariant",
+      "requirement": "testing SQL oracle: exact independently journaled rows, no missing pre-target or leaked post-target transaction",
+      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "setup",
+      "expression": "hashlib.sha256(binary.read_bytes()).hexdigest() == lock['minio']['sha256']",
+      "id": "95d7938d3454eae3",
+      "category": "fixture-precondition",
+      "requirement": "fixture: pinned compatibility and exact subject identity",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "ready",
+      "expression": "self.forward.poll() is None",
+      "id": "9ab259b39ab6b5c4",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "setup",
+      "expression": "h.wait(ready, 'MinIO TLS port forward')",
+      "id": "ebbd8f267ce5420e",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario setup",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "bucket_ready",
+      "expression": "'<Error>' not in result and 'curl:' not in result",
+      "id": "971b11f0f4ccf860",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "setup",
+      "expression": "h.wait(bucket_ready, 'MinIO object layer initialized and fresh bucket created', 60)",
+      "id": "2cc63542e4d95935",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario setup",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "control",
+      "expression": "re.fullmatch('[0-9A-F]{24}', name)",
+      "id": "ae9ca59a1ae91c5f",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "close",
+      "expression": "process.wait(timeout=5)",
+      "id": "2f5b0e2e29221b55",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario close",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/wal_smoke.py",
+      "function": "close",
+      "expression": "process.wait(timeout=5)",
+      "id": "2f5b0e2e29221b55",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario close",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/campaign_fixture.py",
+      "function": "wait",
+      "expression": "self.commands.wait(observe, description, seconds)",
+      "id": "f530a1ac6228d322",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario wait",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/campaign_fixture.py",
+      "function": "create_node",
+      "expression": "self.commands.wait(exists, 'owned kind container allocated for resource cap', 180)",
+      "id": "439f40ab783bc8ff",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario create_node",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    },
+    {
+      "file": "hack/campaign_fixture.py",
+      "function": "retire_backing",
+      "expression": "self.commands.wait(consumers_gone, 'no remaining consumer mounts for ' + path, 60)",
+      "id": "6fea356680e72b66",
+      "category": "eventual-outcome",
+      "requirement": "testing named scenario retire_backing",
+      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
+      "failure_layer": "unresolved-timeout"
+    }
+  ]
+}

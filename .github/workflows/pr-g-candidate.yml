@@ -59,95 +59,15 @@ jobs:
             build/out/*-inspect.json
           retention-days: 14
           if-no-files-found: error
-  smoke:
-    needs: publish
-    runs-on: ubuntu-24.04
-    timeout-minutes: 150
-    permissions:
-      contents: read
-      packages: read
-    env:
-      DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth
-      MANAGER_IMAGE: ${{ needs.publish.outputs.manager }}
-      DATA_IMAGE: ${{ needs.publish.outputs.pg18 }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - run: python3 hack/premerge_candidate.py trust
-      - name: Private ephemeral package read authentication
-        env:
-          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p "$DOCKER_CONFIG"
-          chmod 700 "$DOCKER_CONFIG"
-          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Same local entry, smoke first, unchanged published digests
-        run: |
-          ./hack/test recovery-campaign --subject-sha "$GITHUB_SHA" \
-            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
-            --profile smoke --seed 1806 --duration-minutes 120
-      - name: Always collect first-failure evidence
-        if: always()
-        run: |
-          python3 hack/recovery_campaign.py --collect --subject-sha "$GITHUB_SHA" \
-            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
-            --profile smoke --seed 1806 --duration-minutes 120
-          if test -f artifacts/recovery-campaign/summary.md; then
-            python3 -c 'import os,pathlib; open(os.environ["GITHUB_STEP_SUMMARY"],"a").write(pathlib.Path("artifacts/recovery-campaign/summary.md").read_text())'
-          fi
-          rm -rf -- "$DOCKER_CONFIG"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: g-smoke-${{ github.sha }}-${{ github.run_attempt }}
-          path: artifacts/recovery-campaign/
-          retention-days: 14
-          if-no-files-found: error
   recovery:
-    needs: [publish, smoke]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    needs: publish
     permissions:
       contents: read
       packages: read
-    env:
-      DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth
-      MANAGER_IMAGE: ${{ needs.publish.outputs.manager }}
-      DATA_IMAGE: ${{ needs.publish.outputs.pg18 }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - run: python3 hack/premerge_candidate.py trust
-      - name: Private ephemeral package read authentication
-        env:
-          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p "$DOCKER_CONFIG"
-          chmod 700 "$DOCKER_CONFIG"
-          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Same digest-only local entry, all31 and seeded supplementary
-        run: |
-          ./hack/test recovery-campaign --subject-sha "$GITHUB_SHA" \
-            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
-            --profile recovery --seed 1806 --duration-minutes 120
-      - name: Always collect first-failure evidence
-        if: always()
-        run: |
-          python3 hack/recovery_campaign.py --collect --subject-sha "$GITHUB_SHA" \
-            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
-            --profile recovery --seed 1806 --duration-minutes 120
-          if test -f artifacts/recovery-campaign/summary.md; then
-            python3 -c 'import os,pathlib; open(os.environ["GITHUB_STEP_SUMMARY"],"a").write(pathlib.Path("artifacts/recovery-campaign/summary.md").read_text())'
-          fi
-          rm -rf -- "$DOCKER_CONFIG"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: g-recovery-${{ github.sha }}-${{ github.run_attempt }}
-          path: artifacts/recovery-campaign/
-          retention-days: 14
-          if-no-files-found: error
+    uses: ./.github/workflows/recovery-campaign.yml
+    with:
+      subject_sha: ${{ github.sha }}
+      manager_image: ${{ needs.publish.outputs.manager }}
+      data_image: ${{ needs.publish.outputs.pg18 }}
+      trusted_ref: implementation/pr-g
+      seeds: '[1806]'

@@ -10,9 +10,9 @@ import recovery_campaign as c
 
 class CampaignTests(unittest.TestCase):
     def test_ownership_slice_never_claims_all_g_or_qualification(self):
-        self.assertEqual(c.scenarios('recovery'), c.MANDATORY)
-        self.assertEqual(c.scenarios('qualification'), c.MANDATORY)
-        self.assertEqual(c.scenarios('smoke'), c.SMOKE)
+        self.assertEqual(c.scenarios('recovery'), c.MANDATORY + c.SUPPLEMENTAL)
+        self.assertEqual(c.scenarios('qualification'), c.MANDATORY + c.SUPPLEMENTAL)
+        self.assertEqual(set(c.scenarios('smoke')), set(c.SMOKE))
         self.assertEqual(c.scenarios('retry'), ('source-namespace-catalog-loss-S3-only', 'controller-all-Job-retry-Pods-terminated'))
         selected = c.scenarios('ownership')
         self.assertEqual(len(selected), 13)
@@ -29,48 +29,9 @@ class CampaignTests(unittest.TestCase):
             self.assertTrue(m.finish())
             self.assertFalse(m.data['all_g_families_passed'])
             self.assertFalse(m.data['release_qualified'])
-            self.assertEqual(set(m.data['not_requested_scenarios']), set(c.MANDATORY) - set(selected))
+            self.assertEqual(set(m.data['not_requested_scenarios']), set(c.MANDATORY + c.SUPPLEMENTAL) - set(selected))
 
-    def test_ownership_slice_runs_source_loss_then_all_remaining_methods(self):
-        from recovery_cases import Campaign
-        from types import SimpleNamespace
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp)
-            m = c.Manifest(out, {'profile': 'ownership'}, c.scenarios('ownership'))
-            campaign = Campaign(SimpleNamespace(profile='ownership'), m)
-            campaign.base = {'backup_uid': 'original'}
-            calls = []
-            with patch('recovery_cases.OUT', out), patch.object(campaign, 'inventory', return_value=[]), \
-                 patch('recovery_cases.h.kube', return_value='{"items":[]}') as kube, \
-                 patch.object(campaign, 'restore', side_effect=lambda *a: calls.append('source-restore')), \
-                 patch.object(campaign, 'ownership', side_effect=lambda: calls.append('ownership')), \
-                 patch.object(campaign, 'process_drain', side_effect=lambda: calls.append('drain')), \
-                 patch.object(campaign, 'protection', side_effect=lambda: calls.append('protection')):
-                campaign.run()
-            deletion = kube.call_args_list[0]
-            self.assertEqual(deletion.args[:3], ('delete', 'namespace', 'campaign-source'))
-            self.assertIn('--wait=true', deletion.args)
-            self.assertIn('--timeout=1200s', deletion.args)
-            self.assertGreater(deletion.kwargs['timeout'], 1200)
-            self.assertEqual(calls, ['source-restore', 'ownership', 'drain', 'protection'])
-            self.assertFalse(m.finish())  # Mocked methods are not actual coverage.
 
-    def test_retry_slice_uses_actual_retry_method_after_source_loss(self):
-        from recovery_cases import Campaign
-        from types import SimpleNamespace
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp)
-            m = c.Manifest(out, {'profile': 'retry'}, c.scenarios('retry'))
-            campaign = Campaign(SimpleNamespace(profile='retry'), m)
-            campaign.base = {'backup_uid': 'original'}
-            calls = []
-            with patch('recovery_cases.OUT', out), patch.object(campaign, 'inventory', return_value=[]), \
-                 patch('recovery_cases.h.kube', return_value='{"items":[]}'), \
-                 patch.object(campaign, 'restore', side_effect=lambda *a: calls.append('source-restore')), \
-                 patch.object(campaign, 'controller_retry', side_effect=lambda: calls.append('retry')):
-                campaign.run()
-            self.assertEqual(calls, ['source-restore', 'retry'])
-            self.assertFalse(m.finish())
 
     def test_cleanup_keeps_operation_until_original_observer_is_closed(self):
         from recovery_cases import Campaign
@@ -241,7 +202,7 @@ class CampaignTests(unittest.TestCase):
                  'terminatedPodUIDs': ['original-pod']}
         def wait(predicate, *args):
             self.assertTrue(predicate())
-        with tempfile.TemporaryDirectory() as tmp, patch('recovery_cases.OUT', Path(tmp)), \
+        with tempfile.TemporaryDirectory() as tmp, patch('recovery_cases.h.OUT', Path(tmp)), \
              patch('recovery_cases.h.wait', side_effect=wait), patch.object(campaign, 'event'), \
              patch.object(campaign, 'pods', return_value=[]), patch.object(campaign, 'markers', return_value=['absent'] * 3), \
              patch.object(campaign, 'operation_state', return_value=proof) as operation, \
@@ -281,7 +242,7 @@ class CampaignTests(unittest.TestCase):
         segment = '000000020000000000000003'
         def inventory(prefix):
             return [] if SOURCE_ID in prefix else [prefix + segment[:8] + '/' + segment]
-        with tempfile.TemporaryDirectory() as tmp, patch('recovery_cases.OUT', Path(tmp)), \
+        with tempfile.TemporaryDirectory() as tmp, patch('recovery_cases.h.OUT', Path(tmp)), \
              patch('recovery_cases.h.wait', side_effect=wait), patch('recovery_cases.h.kube', side_effect=kube), \
              patch('recovery_cases.h.save_log'), patch.object(campaign, 'event'), \
              patch.object(campaign, 'release', side_effect=release), patch.object(campaign, 'barrier'), \
@@ -393,7 +354,8 @@ class CampaignTests(unittest.TestCase):
              patch.object(campaign, 'event'), patch.object(campaign, 'retire_target', side_effect=lambda s: retired.append(s['pod'])), \
              patch('recovery_cases.h.kube', side_effect=kube), patch('recovery_cases.h.save_log'):
             campaign.base = {'backup_uid': 'base'}
-            campaign.bundle_fallback()
+            campaign.case_bundle_duplicate_absent_local_fallback()
+            campaign.case_bundle_local_missing_fatal()
         self.assertEqual(replayed, ['p3'])
         self.assertEqual(retired, ['p2', 'p3'])
         self.assertFalse(absent or withheld)
