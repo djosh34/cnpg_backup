@@ -1,0 +1,6 @@
+{
+  "purpose": "CI REPAIR; G delivery paused",
+  "series": 1,
+  "seeds": [1806, 1806, 1807],
+  "reason": "Validate repaired stream parsing and certified owned disposal; preserve all prior failures. No product builds or G delivery."
+}
