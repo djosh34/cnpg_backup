@@ -146,6 +146,8 @@ class Manifest:
         records = getattr(error, 'campaign_records', {})
         identity = self.data.get('execution_id', str(id(self)))
         if identity in records:
+            # An allocated record may have outlived a failed evidence write.
+            self.save_failures()
             return records[identity]
         phase = getattr(error, 'campaign_phase', phase)
         if isinstance(error, BaseExceptionGroup):
@@ -175,12 +177,15 @@ class Manifest:
                   'assertion': assertion_record(error) if isinstance(error, AssertionError) or getattr(error, 'campaign_oracle', None) else None}
         error.campaign_records = {**records, identity: record}
         self.data['failures'].append(record)
+        self.save_failures()
+        return record
+
+    def save_failures(self):
         first = self.directory / 'first-failure.json'
         if not first.exists():
-            atomic_json(first, record)
+            atomic_json(first, self.data['failures'][0])
         atomic_json(self.directory / 'failures.json', self.data['failures'])
         self.save()
-        return record
 
     def budget(self):
         if time.monotonic() >= self.deadline:

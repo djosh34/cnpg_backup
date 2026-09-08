@@ -97,6 +97,7 @@ def aggregate():
     inputs = Path('.work/inputs/artifacts/repair-inputs')
     series = json.loads((inputs / 'series.json').read_text())
     report = {'attempts': [], 'passed': False, 'release_qualified': False}
+    executions = set()
     for attempt in series['attempts']:
         number = attempt['attempt']
         plan = json.loads((inputs / f'plan-{number}.json').read_text())
@@ -107,6 +108,12 @@ def aggregate():
                 raise ValueError('missing or duplicate attempt artifact')
             result = json.loads(paths[0].read_text())
             record['failures'] = result.get('failures', [])
+            identity = result.get('execution_id')
+            if isinstance(identity, str):
+                if identity in executions:
+                    raise ValueError('duplicate execution identity across attempt artifacts')
+                # Failed attempts own their identity too, across seeds/layouts.
+                executions.add(identity)
             record.update(validate_results(plan, [result]), passed=True)
         except Exception as error:
             record.update(passed=False, diagnostic=str(error))

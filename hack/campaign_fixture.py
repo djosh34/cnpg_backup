@@ -636,14 +636,14 @@ rmdir "$path"
         if self.container_exists(self.NAME + '-control-plane'):
             self.run('docker', 'exec', self.NAME + '-control-plane', 'systemctl', 'stop', 'kubelet', timeout=30)
             ids = self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=30).split()
-            for identity in ids:
-                self.stop_sandbox(identity)
+            with cleanup([('teardown', lambda identity=identity: self.stop_sandbox(identity)) for identity in ids]):
+                pass
             if self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=30).strip():
                 raise CommandFailure('cleanup: CRI sandboxes remain; no backing may be unmounted')
             self.quiesced = True
-            for allocation in self.allocations:
-                if allocation['state'] in ('mounted', 'allocating'):
-                    self.retire_backing(allocation)
+            with cleanup([('teardown', lambda allocation=allocation: self.retire_backing(allocation))
+                          for allocation in self.allocations if allocation['state'] in ('mounted', 'allocating')]):
+                pass
             self.run(self.WORK / 'kind-linux-amd64', 'delete', 'cluster', '--name', self.NAME, timeout=60)
             if self.container_exists(self.NAME + '-control-plane'):
                 raise CommandFailure('cleanup: owned kind container remains')
