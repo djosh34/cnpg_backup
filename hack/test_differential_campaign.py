@@ -1,5 +1,6 @@
 """Cheap H oracle/registry checks before provisioning real immutable subjects."""
 import contextlib
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -35,6 +36,29 @@ class DifferentialCampaignTests(unittest.TestCase):
             campaign.case_differential_native()
             expected = ('restore', branch == 'remote-PITR-source-loss') if branch in ('reconstruction', 'remote-PITR-source-loss') else ('fault', branch)
             self.assertEqual(calls, [expected])
+
+    def test_checksum_helper_requests_fit_shared_node_without_changing_limits(self):
+        pods = []
+        def kube(*args, **kwargs):
+            if args[:3] == ('get', 'pod', 'source-pod'):
+                return json.dumps({'spec': {'volumes': [{'name': 'pgdata', 'persistentVolumeClaim': {'claimName': 'source-data'}}]}})
+            if args[:3] == ('get', 'pod', 'h-checksums'):
+                return json.dumps({'status': {'phase': 'Succeeded'}})
+            if args[:2] == ('get', 'pods'):
+                return json.dumps({'items': []})
+            return ''
+        fixture = SimpleNamespace(kube=kube, quiesce_pods=lambda namespace: None,
+                                  apply=pods.append, LOCK={'database': 'pinned-PG18'},
+                                  wait=lambda predicate, *args: self.assertTrue(predicate()))
+        campaign = Campaign(SimpleNamespace(), SimpleNamespace(event=lambda *args, **kwargs: None), fixture=fixture)
+        campaign.primary = lambda: 'source-pod'
+        campaign.image_pull_secrets = []
+        campaign.differential_checksum_change()
+        resources = pods[0]['spec']['containers'][0]['resources']
+        self.assertEqual(resources['limits'], {'memory': '128Mi', 'cpu': '1'})
+        # Missing requests default to the1-CPU limit and the actual4-CPU fixture
+        # rejected this Pod as Insufficient cpu before pg_checksums ever ran.
+        self.assertEqual(resources.get('requests'), {'memory': '32Mi', 'cpu': '100m'})
 
     def test_H_live_source_is_not_deleted_before_capture_faults(self):
         campaign = Campaign(SimpleNamespace(fixtures=['source', 'differential']), None, fixture=object())

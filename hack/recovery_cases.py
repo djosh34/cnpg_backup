@@ -530,7 +530,7 @@ class Campaign:
                           'imagePullSecrets': self.image_pull_secrets,
                           'containers': [{'name': 'checksums', 'image': h.LOCK['database'],
                                           'command': ['/usr/lib/postgresql/18/bin/pg_checksums', '--disable', '-D', '/var/lib/postgresql/data/pgdata'],
-                                          'resources': {'limits': {'memory': '128Mi', 'cpu': '1'}},
+                                          'resources': {'requests': {'memory': '32Mi', 'cpu': '100m'}, 'limits': {'memory': '128Mi', 'cpu': '1'}},
                                           'volumeMounts': [{'name': 'pgdata', 'mountPath': '/var/lib/postgresql/data'}]}], 'volumes': [volume]}})
         h.wait(lambda: json.loads(h.kube('get', 'pod', name, '-n', SOURCE, '-o', 'json')).get('status', {}).get('phase') in ('Succeeded', 'Failed'), 'actual offline checksum change', 120)
         changed = json.loads(h.kube('get', 'pod', name, '-n', SOURCE, '-o', 'json'))
