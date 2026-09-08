@@ -18,10 +18,10 @@ import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 
 
-def bounded_capture_workspaces(h):
+def bounded_capture_workspaces(h, count=20):
     h.apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'cnpg-backup-capture'},
              'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
-    for i in range(20):
+    for i in range(count):
         path = f'/var/local/cnpg-backup-capture-{i}'
         h.save_log(f'capture-finite-fs-{i}.log', h.provision_filesystem(path, '8G'))
         h.apply({'apiVersion': 'v1', 'kind': 'PersistentVolume', 'metadata': {'name': f'cnpg-backup-capture-{i}'},
@@ -184,6 +184,13 @@ def _run(h, wal, report, data_image, metrics):
     assert not report['full_remaining'], 'mandatory F native/fault/observability cases incomplete'
 
 
+def verify_persisted_actor(h, pod, control, actor):
+    # A configuration rollout replaces Pods, not their data PVCs. Validate the
+    # original fixture bytes instead of repeating a large stdin exec transfer.
+    observed = h.kube('exec', '-n', h.NS, pod, '-c', 'postgres', '--', 'sha256sum', actor).split()
+    assert observed and observed[0] == hashlib.sha256(control.read_bytes()).hexdigest(), 'persisted test actor differs'
+
+
 def capture_faults(h, wal, report, metrics, control):
     pod = wal.primary()
     actor = '/var/lib/postgresql/data/full-fixture-control'
@@ -327,7 +334,7 @@ def capture_faults(h, wal, report, metrics, control):
     h.wait(lambda: len(h.pod_uids()) == 2 and old_pods.isdisjoint(h.pod_uids()), 'CNPG native operation-deadline rollout', 420)
     h.kube('wait', '-n', h.NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
     pod = wal.primary()
-    install_actor()
+    verify_persisted_actor(h, pod, control, actor)
     # Lose the actual callback after MinIO has durably accepted commit.json.
     # This is a failed CNPG invocation AND successful historical publication.
     before = metrics.snapshot('full')

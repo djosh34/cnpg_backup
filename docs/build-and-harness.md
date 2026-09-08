@@ -1,9 +1,11 @@
 # Foundation build and native recovery harness (PR A)
 
-This is a build/test foundation, **not a functional CNPG plugin or a qualified
-release**. Only `cnpg-backup version` succeeds. All five service modes fail closed;
-`wal-fetch` exits **255**, never PostgreSQL's allowed-missing exit 1. No backup,
-storage, retention or CNPG implementation is included.
+This page describes the historical PR A build/test foundation, **not release
+qualification**. Runtime features were added in subsequent PRs; its original
+unsupported-mode state is not a description of current runtime capabilities.
+For PR G's actual full/PITR acceptance, see [recovery-campaign.md](recovery-campaign.md).
+That entry point consumes exact existing subject images and deliberately bypasses
+the source-build pipeline documented below.
 
 ## Run
 
@@ -11,8 +13,13 @@ Start with the [local-first feedback ladder](testing.md#local-first-feedback). `
 curl, Python >=3.12 with dpkg-deb (Ubuntu hosted runner), or Python >=3.14 for
 rootless zstd package extraction. Host PostgreSQL test execution also requires
 ordinary distro libraries (recorded by ldd); these host dependencies are not
-runtime-image inputs. Docker is needed only for actual image checks. No daemon
-installation or production credentials/endpoints are accepted.
+runtime-image inputs. Docker is needed for actual image/guard checks and the kind/CNPG profiles.
+Production credentials/endpoints are never accepted. The harness itself does not
+provision the host. Separately, the explicitly owner-authorized `local-runtime-4`
+setup may install/configure supported runtime/native/compiler prerequisites;
+this is not general permission to change unrelated services or bypass platform
+security. Check sudo, namespaces/cgroups, netlink and shared resources first;
+retain the first failure and stop at genuine privilege/kernel boundaries.
 
 ```sh
 ./hack/test harness
@@ -24,6 +31,11 @@ installation or production credentials/endpoints are accepted.
 # Diagnostic only when local MinIO cannot execute; NOT MinIO acceptance:
 # After ./hack/test fast has prepared tools/roots:
 python3 hack/recovery.py --seed 1806 --native-only
+# Exact-artifact CNPG full/PITR (requires integrated G images, no subject build):
+./hack/test recovery-campaign --subject-sha <sha> \
+  --manager-image ghcr.io/djosh34/cnpg-backup-manager@sha256:<digest> \
+  --data-image ghcr.io/djosh34/cnpg-backup-pg18@sha256:<digest> \
+  --profile recovery --seed 1806 --duration-minutes 120
 ```
 
 `harness` also runs first inside every full profile/CI job, before tool downloads and builds, so fixture failures stop cheaply. Targeted `harness` arguments select unittest names; an unfiltered run includes metrics self-tests and CRD generation checks. `unit` runs the same Go tests/vet as `fast`; it does not claim native/image coverage. Every profile failure remains a failure.
@@ -34,9 +46,59 @@ default `.work/tools`. Fixtures and Go temporary files stay under `.work`, **not
 sockets have a length limit. Downloads are checksum-checked even on cache hits;
 a mismatch fails, never silently replaces the pin. Do not share a writable cache
 between untrusted users. `build/out` is replaced by each build. No system package
-installation/maintainer scripts are executed. The only Docker builds use scratch
-and already prepared roots, with build networking disabled: no floating builder
+installation/maintainer scripts are executed by the harness. Authorized host
+prerequisite installation is separate and must record versions, origins,
+checksums/signature verification, services/resources and actual test results.
+The only Docker builds use scratch and already prepared roots, with build networking disabled: no floating builder
 image, apt resolver or Dockerfile frontend download.
+
+## Authorized local host setup
+
+On a disposable Fedora host with explicit provisioning authorization:
+
+```sh
+sudo -n id
+sudo -n dnf install -y moby-engine gcc glibc-devel
+sudo -n systemctl start docker
+sudo -n docker info
+```
+
+Keep the harness non-root (PostgreSQL refuses root). If the current user lacks
+Docker socket access, a private CLI wrapper uses existing passwordless sudo
+without making the root-equivalent socket world-writable or requiring a login:
+
+```sh
+mkdir -p .work/runtime/bin
+printf '#!/bin/sh\nexec sudo -n /usr/sbin/runuser -u %s -g %s -G docker -- /usr/bin/docker "$@"\n' "$(id -un)" "$(id -gn)" > .work/runtime/bin/docker
+chmod 700 .work/runtime/bin/docker
+export PATH="$PWD/.work/runtime/bin:$PATH"
+export DOCKER_HOST=unix:///var/run/docker.sock
+export GOMAXPROCS=2 GOFLAGS=-p=2
+./hack/test integration --seed 1806 --images
+# With the shared host's kind slot assigned to this run:
+./hack/test cnpg-smoke
+```
+
+Use a short **physical** checkout path (for example `$HOME/cb`), not merely a
+symlink; Python resolves checkout paths before creating PostgreSQL sockets.
+Keep Git metadata: image/guard harnesses require the tested commit. The existing
+CNPG harness downloads and verifies kind/kubectl from the lock file itself.
+`CNPG_BUILD_CACHE` may reuse trusted verified inputs; do not delete caches used
+by active runs. Installed GCC enables `CGO_ENABLED=1 CC=/usr/bin/gcc go test
+-race ./...` with the pinned Go toolchain; production remains CGO-free.
+
+Before a campaign, prove current daemon/network and MinIO readiness rather than
+reuse an old privilege failure. Bound shared workloads and assign exclusive kind
+ownership. Clean only owned resources; preserve failure artifacts before removing
+a merged, inactive worktree. Do not disable seccomp, SELinux or other protections,
+reset unrelated services, or prune a shared daemon indiscriminately.
+
+The wrapper keeps CLI-created build/save files owned by the non-root user while
+using the existing Docker socket group. Running the CLI itself as root can leave
+kind unable to read its mode-0600 image archive. Preserve the user's primary
+group as well as Docker access; buildx may restore ordinary directory ownership.
+Earlier restricted-context sudo/netlink failures remain historical evidence,
+not a reason to bypass protections or disregard current successful checks.
 
 ## Pins and dependency policy
 

@@ -14,8 +14,11 @@ import (
 type Kind string
 
 const (
-	Invalid      Kind = "InvalidStorageInput"
-	NotFound     Kind = "NoSuchKey"
+	Invalid  Kind = "InvalidStorageInput"
+	NotFound Kind = "NoSuchKey"
+	// HEAD404 lacks an authenticated error body. Only this result may trigger
+	// a confirming GET; it is never itself an allowed archive absence.
+	HeadMissing  Kind = "UnconfirmedHeadMissing"
 	Precondition Kind = "PreconditionFailed"
 	Conflict     Kind = "Conflict"
 	Auth         Kind = "StorageAuthenticationFailed"

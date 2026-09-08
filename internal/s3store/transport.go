@@ -132,6 +132,11 @@ func (t *transport) once(r *http.Request, dataGet bool) (*http.Response, error) 
 		parsed := validXML && xml.Unmarshal(b, &wire) == nil && wire.XMLName.Local == "Error"
 		code := wire.Code
 		// HEAD has no XML body and cannot distinguish missing bucket from key.
+		// Retain the exact 404 category without manufacturing authenticated
+		// absence or allowing a failed TLS/auth/transport HEAD to be hidden by GET.
+		if r.Method == "HEAD" && resp.StatusCode == 404 {
+			return nil, failure(HeadMissing)
+		}
 		if r.Method == "HEAD" && resp.StatusCode == 403 {
 			return nil, failure(Auth)
 		}

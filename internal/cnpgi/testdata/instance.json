@@ -44,7 +44,7 @@
       {
         "name": "cnpg-backup-state",
         "emptyDir": {
-          "sizeLimit": "16Mi"
+          "sizeLimit": "64Mi"
         }
       },
       {
@@ -366,7 +366,8 @@
     "securityContext": {
       "runAsUser": 26,
       "runAsGroup": 26,
-      "fsGroup": 26
+      "fsGroup": 26,
+      "fsGroupChangePolicy": "OnRootMismatch"
     }
   },
   "status": {}

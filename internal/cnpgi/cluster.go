@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
+	"github.com/djosh34/cnpg_backup/internal/repository"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -125,8 +126,7 @@ func (c Cluster) Repositories() (destination, source string, err error) {
 		if source == "" || source == destination {
 			return fail()
 		}
-		// Selection is reserved for PR G; validate only frozen target syntax here.
-		if tli, ok := recovery.RecoveryTarget["targetTLI"]; ok && (tli == "current" || tli == "latest") {
+		if _, e := recoveryTarget(recovery.RecoveryTarget); e != nil {
 			return fail()
 		}
 	}
@@ -147,12 +147,14 @@ func tablespaceVolume(name string) string {
 	return "tbs-" + strings.ToLower(strings.NewReplacer("_", "-", "$", "-").Replace(name))
 }
 
-func (c Cluster) OperationUID() string {
+func (c Cluster) BootstrapFingerprint() string {
 	bootstrap, _ := json.Marshal(c.Spec.Bootstrap)
-	hash := sha256.Sum256(append([]byte(string(c.Metadata.UID)+"\x00"), bootstrap...))
-	hash[6] = hash[6]&0x0f | 0x50
-	hash[8] = hash[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", hash[:4], hash[4:6], hash[6:8], hash[8:10], hash[10:16])
+	hash := sha256.Sum256(bootstrap)
+	return fmt.Sprintf("%x", hash)
+}
+func (c Cluster) OperationUID() string {
+	id, _ := repository.RestoreOperationID(string(c.Metadata.UID), c.BootstrapFingerprint())
+	return id
 }
 func ValidateBackup(target string, parameters map[string]string) error {
 	if target != "primary" || len(parameters) != 1 || !slices.Contains([]string{"full", "differential"}, parameters["backupType"]) {

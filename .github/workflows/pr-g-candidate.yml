@@ -1,0 +1,80 @@
+name: pr-g-exact-candidate
+on:
+  push:
+    branches: [implementation/pr-g]
+permissions:
+  contents: read
+concurrency:
+  group: pr-g-candidate-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  subject:
+    if: github.repository == 'djosh34/cnpg_backup' && github.event_name == 'push' && github.ref == 'refs/heads/implementation/pr-g'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth
+      GOMAXPROCS: '2'
+    outputs:
+      sha: ${{ steps.subject.outputs.sha }}
+      manager: ${{ steps.subject.outputs.manager || steps.publish.outputs.manager }}
+      pg18: ${{ steps.subject.outputs.pg18 || steps.publish.outputs.pg18 }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify trusted push and unchanged product; reuse exact published G digests
+        id: subject
+        run: python3 hack/premerge_candidate.py reuse
+      - name: Private ephemeral package authentication for changed product only
+        if: steps.subject.outputs.reuse == 'false'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$DOCKER_CONFIG"
+          chmod 700 "$DOCKER_CONFIG"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Refuse existing or ambiguous immutable candidate tags
+        if: steps.subject.outputs.reuse == 'false'
+        run: python3 hack/premerge_candidate.py preflight
+      - name: Build exact changed source and audit actual images once
+        if: steps.subject.outputs.reuse == 'false'
+        run: |
+          ./hack/test fast
+          python3 hack/images.py
+      - name: Publish audited image IDs and record canonical manifest digests
+        if: steps.subject.outputs.reuse == 'false'
+        id: publish
+        run: python3 hack/premerge_candidate.py publish
+      - name: Remove ephemeral registry login
+        if: always()
+        run: rm -rf -- "$DOCKER_CONFIG"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/candidate/
+            artifacts/fast/
+            build/out/images.json
+            build/out/*-export.json
+            build/out/*-inspect.json
+          retention-days: 14
+          if-no-files-found: error
+  recovery:
+    needs: subject
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/recovery-campaign.yml
+    with:
+      subject_sha: ${{ needs.subject.outputs.sha }}
+      manager_image: ${{ needs.subject.outputs.manager }}
+      data_image: ${{ needs.subject.outputs.pg18 }}
+      trusted_ref: implementation/pr-g
+      seeds: '[1806]'

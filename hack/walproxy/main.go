@@ -6,11 +6,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ import (
 type faults struct {
 	sync.Mutex
 	mode    string
+	match   string
 	blocked int
 	release chan struct{}
 }
@@ -43,7 +46,14 @@ func main() {
 	proxy.ModifyResponse = func(response *http.Response) error {
 		state.Lock()
 		mode, release := state.mode, state.release
-		if mode == "hold-commit-response" && response.Request.Method == "PUT" && strings.HasSuffix(response.Request.URL.Path, "/commit.json") && response.StatusCode == 200 {
+		if mode == "corrupt-wal-get" && response.Request.Method == "GET" && response.StatusCode == 200 && strings.Contains(response.Request.URL.Path, "/wal/") && (state.match == "" || strings.HasSuffix(response.Request.URL.Path, "/"+state.match)) {
+			state.blocked++
+			response.Body = &corruptBody{ReadCloser: response.Body}
+		}
+		holdCommit := mode == "hold-commit-response" && response.Request.Method == "PUT" && strings.HasSuffix(response.Request.URL.Path, "/commit.json")
+		holdWAL := mode == "hold-wal-get-response" && response.Request.Method == "GET" && strings.Contains(response.Request.URL.Path, "/wal/") && (state.match == "" || strings.HasSuffix(response.Request.URL.Path, "/"+state.match))
+		holdInput := mode == "hold-artifact-get-response" && response.Request.Method == "GET" && strings.Contains(response.Request.URL.Path, "/attempts/")
+		if (holdCommit || holdWAL || holdInput) && response.StatusCode == 200 {
 			state.blocked++
 			state.Unlock()
 			select {
@@ -62,22 +72,26 @@ func main() {
 			defer state.Unlock()
 			if r.Method == "POST" {
 				mode := r.URL.Query().Get("mode")
-				if mode != "" && mode != "hold-wal-put" && mode != "fail-wal-get" && mode != "hold-artifact-put" && mode != "hold-commit-response" {
+				if !validMode(mode) || (r.URL.Query().Get("name") != "" && !regexp.MustCompile(`^[0-9A-F]{24}$`).MatchString(r.URL.Query().Get("name"))) {
 					w.WriteHeader(400)
 					return
 				}
 				close(state.release)
 				state.release = make(chan struct{})
 				state.mode = mode
+				state.match = r.URL.Query().Get("name")
 				state.blocked = 0
 			}
-			json.NewEncoder(w).Encode(map[string]any{"mode": state.mode, "blocked": state.blocked})
+			json.NewEncoder(w).Encode(map[string]any{"mode": state.mode, "name": state.match, "blocked": state.blocked})
 			return
 		}
 		state.Lock()
-		mode, release := state.mode, state.release
+		mode, release, match := state.mode, state.release, state.match
 		state.Unlock()
-		if strings.Contains(r.URL.Path, "/wal/") {
+		if strings.Contains(r.URL.Path, "/wal/") && (match == "" || strings.HasSuffix(r.URL.Path, "/"+match)) {
+			if (r.Method == "GET" || r.Method == "HEAD") && injectWAL(w, r, mode, state) {
+				return
+			}
 			if mode == "fail-wal-get" && (r.Method == "GET" || r.Method == "HEAD") {
 				w.Header().Set("Content-Type", "application/xml")
 				w.WriteHeader(503)
@@ -96,9 +110,81 @@ func main() {
 		proxy.ServeHTTP(w, r)
 	})
 	server := http.Server{Addr: ":9000", Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 120 * time.Second, WriteTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}
+	// Disposable source TLS fault, not an HTTP status mislabeled as TLS. Control
+	// uses localhost SNI; actual sidecars use the in-cluster MinIO Service name.
+	server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		state.Lock()
+		defer state.Unlock()
+		if state.mode == "tls-wal-get" && hello.ServerName != "localhost" {
+			state.blocked++
+			return nil, errors.New("test-only TLS handshake rejection")
+		}
+		return nil, nil
+	}}
+	server.SetKeepAlivesEnabled(false)
 	if server.ListenAndServeTLS("/certs/public.crt", "/certs/private.key") != nil {
 		os.Exit(2)
 	}
+}
+
+func validMode(mode string) bool {
+	switch mode {
+	case "", "hold-wal-put", "fail-wal-get", "hold-artifact-put", "hold-commit-response",
+		"missing-wal-get", "auth-wal-get", "corrupt-wal-get", "reset-wal-get", "tls-wal-get", "hold-wal-get-response", "hold-artifact-get-response":
+		return true
+	}
+	return false
+}
+
+// These faults affect only selected synthetic archive reads, never gate/list
+// requests. A counter establishes an effective injection, not just a requested
+// mode. The underlying intact object remains available to distinguishing runs.
+func injectWAL(w http.ResponseWriter, r *http.Request, mode string, state *faults) bool {
+	switch mode {
+	case "missing-wal-get", "auth-wal-get", "reset-wal-get":
+	default:
+		return false
+	}
+	state.Lock()
+	state.blocked++
+	state.Unlock()
+	switch mode {
+	case "missing-wal-get":
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, "<Error><Code>NoSuchKey</Code></Error>")
+	case "auth-wal-get":
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusForbidden)
+		io.WriteString(w, "<Error><Code>AccessDenied</Code></Error>")
+	case "reset-wal-get":
+		if hijacker, ok := w.(http.Hijacker); ok {
+			conn, _, e := hijacker.Hijack()
+			if e == nil {
+				conn.Close()
+				return true
+			}
+		}
+		panic(http.ErrAbortHandler)
+	}
+	return true
+}
+
+// Keep the actual authenticated metadata and exact response length; only the
+// streamed payload is damaged. This distinguishes checksum failure from HEAD
+// metadata rejection, without buffering a whole segment or changing MinIO data.
+type corruptBody struct {
+	io.ReadCloser
+	flipped bool
+}
+
+func (b *corruptBody) Read(p []byte) (int, error) {
+	n, e := b.ReadCloser.Read(p)
+	if n > 0 && !b.flipped {
+		p[0] ^= 0xff
+		b.flipped = true
+	}
+	return n, e
 }
 
 type partialBody struct {

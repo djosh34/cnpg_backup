@@ -42,9 +42,9 @@ Run the cheapest distinguishing check **locally before pushing an expensive matr
 
 For a Go regression, run the relevant package/test directly with the pinned toolchain after bootstrap, then `unit`/`fast`. For a campaign oracle, run its `test_*.py` module through `harness` before provisioning; new harness tests are automatically discovered locally and in CI. Keep negative controls that catch wrong SQL, missing faults or unsafe cleanup. Python fixtures do not establish real Kubernetes/recovery coverage. `unit` and `harness` are feedback profiles, not qualification or substitutes for required CI.
 
-See [build-and-harness.md](build-and-harness.md#run) for prerequisites and native-only diagnostics. Check actual capabilities (Docker socket/daemon access, rootless namespaces/cgroups, kernel restrictions, CPU/RAM/disk) before choosing local real-system profiles. A missing Docker CLI or a blocked kernel feature is a **current-host limitation**, not proof local integration is permanently impossible; do not install/reset a daemon or provision the system as a workaround. Run the existing harness unchanged on a suitable disposable local host when available.
+See [build-and-harness.md](build-and-harness.md#run) for prerequisites and native-only diagnostics, and [authorized host setup](build-and-harness.md#authorized-local-host-setup) when provisioning is explicitly permitted. Check actual capabilities (Docker socket/daemon access, namespaces/cgroups, kernel restrictions, CPU/RAM/disk) before choosing local real-system profiles. A missing CLI or historical process restriction is not a permanent host limitation. With owner authorization, install supported distro packages/services; never reset unrelated runtimes or disable security protections. Run the same harness, not a substitute local test framework.
 
-On the assessed Fedora worker host, unprivileged user namespaces work, but Docker/Podman/kind and Docker sockets are absent; the pinned MinIO binary fails even `--version` because route netlink is unavailable. Native PG tools can use the harness's private extracted libraries. Thus Python/Go/native diagnostics are feasible here, but real MinIO, Docker PID1/shell-free-image and kind/CNPG acceptance still need a capable host (currently hosted Linux CI). Preserve failed-attempt evidence; a native-only run never counts as MinIO/CNPG coverage. Recheck resources: this host's free disk is shared with active work and `/tmp` is tmpfs.
+Recheck capabilities in the current execution context. After authorized Fedora package/service setup and repaired execution permissions, rootful Docker bridge/DNS/HTTP networking, pinned MinIO readiness, pinned kind/Kubernetes readiness and `integration --seed 1806 --images` all passed locally. Earlier NoNewPrivs/netlink failures remain historical evidence, not current blockers. This does not establish the current G campaign or release qualification. Preserve failed-attempt evidence; a native-only run never counts as MinIO/CNPG coverage. Keep checkout/socket paths short and temporary files disk-backed. On a shared 8GiB host, assign one kind campaign slot and reclaim only authorized obsolete caches/merged inactive worktrees, preserving source and test evidence.
 
 The mandatory hosted checks still run; avoid using them to discover simple fixture/assertion bugs. Release/security/resource gates remain: exact candidate image recovery/fault/layout/version matrices, race tooling where a C toolchain is available, vulnerability scans, measured cgroup/workspace behavior and trusted Actions OIDC/publication. Most tests can also run locally with the same prerequisites; trusted release authority/provenance is not replaced by a local green run. Long agent/CI observations use [1800-second waits](agents/paseo.md#wait-for-events-not-short-polling); local assertions and scenario readiness keep short, meaningful deadlines.
 
@@ -131,6 +131,28 @@ Capture evidence on success and failure, with bounded artifact size and configur
 Release-qualified means the exact candidate artifact passed every applicable mandatory scenario, required unit/integration/DST corpus, required fuzz duration, upgrade fixtures and current independent review gates. Record completed workload and scenario counts; elapsed two hours alone is not evidence. A deliberate corrupt-input test passes only when the expected failure is detected safely. Unexpected timeout/flake is triaged; retain the first failure and replay evidence instead of hiding it behind an eventual green rerun. Stable regressions become mandatory corpus cases.
 
 The initial campaign duration fits under GitHub-hosted runners' documented six-hour job limit; recheck current platform execution limits when implementing. No claim that CI chaos simulates physical power failure or every network interleaving.
+
+## PR G campaign implementation notes
+
+The actual full/PITR entry point is `./hack/test recovery-campaign`; interface,
+31 fixed families, test-only observation/injection arrangements, evidence limits
+and trusted manual/reusable workflow are documented in
+[recovery-campaign.md](recovery-campaign.md). It consumes existing subject image
+digests without entering the source-build pipeline. The G-only profiles never
+claim H–K or release qualification; incomplete mandatory coverage fails.
+
+The disjoint harness author's local evidence is compilation/unit tests only,
+not integrated CNPG execution. The existing D/E/F smoke gates remain separate;
+their fresh-preflight negative now expects protected native-materialization
+rejection, retained poison on all targets and same-PVC replacement refusal with
+unchanged bytes/directories. The first integrated D run34144591683 observed
+`phase=native-materialization`, FailedPrecondition and guard TargetOwnershipUncertain:
+source admission had succeeded, but generic native failure deliberately closes
+admission and cannot acknowledge a clean Drain. Historical D logs remain unchanged;
+their G failure projection is explicitly unit-only. Actual clean Drain/new-owner
+positives remain mandatory in the guard namespace profile and G successful
+full/PITR and failed-before-preflight/clean-drain/retry cases; poison expectations
+do not replace those gates.
 
 ## Primary references
 

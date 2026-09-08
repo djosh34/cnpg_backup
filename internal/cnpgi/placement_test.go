@@ -80,7 +80,19 @@ func fixture(t *testing.T, recovery bool) (*API, Cluster, core.Pod) {
 		uid := []string{"44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"}[index]
 		objects = append(objects, unstruct(&core.PersistentVolumeClaim{TypeMeta: meta.TypeMeta{APIVersion: "v1", Kind: "PersistentVolumeClaim"}, ObjectMeta: meta.ObjectMeta{Name: target.name, Namespace: "test", UID: types.UID(uid), OwnerReferences: []meta.OwnerReference{{APIVersion: c.APIVersion, Kind: c.Kind, Name: c.Metadata.Name, UID: c.Metadata.UID, Controller: ptr(true)}}}, Spec: core.PersistentVolumeClaimSpec{VolumeMode: ptr(core.PersistentVolumeFilesystem)}}))
 	}
-	api := &API{Client: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...), Namespaces: []string{"test"}, SecretNames: map[string][]string{"test": {"auth", "database-replication", "database-ca"}}}
+	scheme := runtime.NewScheme()
+	if e := core.AddToScheme(scheme); e != nil {
+		t.Fatal(e)
+	}
+	if e := batch.AddToScheme(scheme); e != nil {
+		t.Fatal(e)
+	}
+	monitorCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	api := &API{Client: dynamicfake.NewSimpleDynamicClient(scheme, objects...), Namespaces: []string{"test"}, SecretNames: map[string][]string{"test": {"auth", "database-replication", "database-ca"}}, recoveryContext: monitorCtx}
+	// Placement tests replace only remote gate I/O. Actual LIST/WATCH, owned CM
+	// bootstrap binding and terminal-state validation still execute.
+	api.recoveryLifetime = func(context.Context, Cluster, configuration.Spec, bool) error { return nil }
 	return api, c, pod
 }
 func apply(t *testing.T, object, patch []byte) []byte {
@@ -95,6 +107,28 @@ func apply(t *testing.T, object, patch []byte) []byte {
 	}
 	return result
 }
+func TestPlacementPreservesPrivateFencesOnExplicitAlwaysRemount(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		api, c, pod := fixture(t, recovery)
+		pod.Spec.SecurityContext.FSGroupChangePolicy = ptr(core.FSGroupChangeAlways)
+		original := raw(pod)
+		patch, err := Place(context.Background(), api, c, original, "test-only-image")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actual core.Pod
+		if err := json.Unmarshal(apply(t, original, patch), &actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Spec.SecurityContext.FSGroupChangePolicy == nil || *actual.Spec.SecurityContext.FSGroupChangePolicy != core.FSGroupChangeOnRootMismatch {
+			t.Fatal("explicit Always permits recursive chmod of private target fences")
+		}
+		if *actual.Spec.SecurityContext.FSGroup != *pod.Spec.SecurityContext.FSGroup || *actual.Spec.SecurityContext.RunAsUser != *pod.Spec.SecurityContext.RunAsUser {
+			t.Fatal("changed workload identity instead of remount policy")
+		}
+	}
+}
+
 func TestPlacementGoldenIdempotencyAndRecoveryFence(t *testing.T) {
 	for _, recovery := range []bool{false, true} {
 		t.Run(map[bool]string{false: "instance", true: "recovery"}[recovery], func(t *testing.T) {
@@ -109,6 +143,9 @@ func TestPlacementGoldenIdempotencyAndRecoveryFence(t *testing.T) {
 			var actual core.Pod
 			if err := json.Unmarshal(changed, &actual); err != nil {
 				t.Fatal(err)
+			}
+			if actual.Spec.SecurityContext.FSGroupChangePolicy == nil || *actual.Spec.SecurityContext.FSGroupChangePolicy != core.FSGroupChangeOnRootMismatch {
+				t.Fatal("kubelet remount would recursively widen private target fences")
 			}
 			if !reflect.DeepEqual(actual.Spec.InitContainers[0], pod.Spec.InitContainers[0]) {
 				t.Fatal("bootstrap container modified")

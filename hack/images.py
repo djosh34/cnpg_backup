@@ -20,6 +20,9 @@ def main():
     for flavor in ('manager', 'pg18'):
         tag = 'cnpg-backup-foundation-' + flavor + ':test'
         subprocess.run(['docker', 'build', '--network=none', '--target', flavor,
+                        '--label', 'org.opencontainers.image.source=https://github.com/djosh34/cnpg_backup',
+                        '--label', 'org.opencontainers.image.revision=' + subprocess.check_output(
+                            ['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
                         '-f', 'build/Dockerfile', '-t', tag, '.'], cwd=REPO, check=True)
         image = docker('image', 'inspect', tag).stdout
         info = json.loads(image)[0]

@@ -196,7 +196,11 @@ func RunManager(ctx context.Context, revision string) error {
 	if err != nil {
 		return err
 	}
-	api := &API{Client: client, Namespaces: config.Namespaces, SecretNames: config.SecretNames, OperatorNamespace: config.OperatorNamespace}
+	watchClient, err := newRecoveryWatchClient(kube)
+	if err != nil {
+		return err
+	}
+	api := &API{Client: client, recoveryWatch: watchClient, Namespaces: config.Namespaces, SecretNames: config.SecretNames, OperatorNamespace: config.OperatorNamespace, recoveryContext: ctx}
 	if err := api.VerifyOperator(ctx); err != nil {
 		return err
 	}
@@ -224,6 +228,7 @@ func RunManager(ctx context.Context, revision string) error {
 	statusCtx, stopStatus := context.WithCancel(ctx)
 	defer stopStatus()
 	go api.RunRepositoryStatus(statusCtx)
+	go api.runRecoveryOperations(statusCtx)
 	go api.runBackupHistory(statusCtx, metrics)
 	go newBackupObserver(api, metrics).run(statusCtx)
 	defer server.Stop()

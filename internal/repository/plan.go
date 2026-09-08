@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 )
 
-var walRE = regexp.MustCompile(`^([0-9A-F]{24}|[0-9A-F]{8}\.history|[0-9A-F]{24}\.[0-9A-F]{8}\.backup)$`)
+var walRE = regexp.MustCompile(`^([0-9A-F]{24}(\.partial)?|[0-9A-F]{8}\.history|[0-9A-F]{24}\.[0-9A-F]{8}\.backup)$`)
 
 // ValidWALFilename checks grammar before any filesystem/native/storage I/O.
 // ValidateWALName adds arithmetic once actual physical segment size is known.
@@ -101,6 +101,10 @@ func timeTarget(s string) (time.Time, error) {
 	}
 	return t, nil
 }
+
+// ValidateTarget checks the frozen CNPG target contract. Timeline must already
+// be numeric; callers may substitute a temporary numeric value for syntax checks.
+func ValidateTarget(t Target) error { return t.validate() }
 func (t Target) validate() error {
 	if t.Timeline == 0 || (t.BackupUID != nil && !validID(*t.BackupUID)) {
 		return ErrInvalid

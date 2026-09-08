@@ -1,0 +1,14 @@
+{
+  "revision": "49a9f3149afed736cbfd3538489155e10dd2cc37",
+  "images": {
+    "manager": "ghcr.io/djosh34/cnpg-backup-manager@sha256:368a35329f6ff5090a38d28b55b9822b9a17cb499191128b61935e827dbf3c7d",
+    "pg18": "ghcr.io/djosh34/cnpg-backup-pg18@sha256:b6c87bd55c62ae5fb62b84cfc7627f623db72099a191f1980bf62abfaa943dc4"
+  },
+  "publication": {
+    "run": "https://github.com/djosh34/cnpg_backup/actions/runs/34187538048",
+    "config_digests": {
+      "manager": "sha256:7465fec2ffbeeb186852dbd682896f23d4b0d54f027111b11e8835cd4f6f1e51",
+      "pg18": "sha256:ff41e3e7ec2784ce802ed682a106f0b693a23aae79a073a6743f7aae54c90c34"
+    }
+  }
+}

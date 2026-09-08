@@ -52,7 +52,7 @@ func TestWALCrashChild(t *testing.T) {
 	w, _ := simulatedWAL(t)
 	w.Compression = "none"
 	w.Workspace = os.Getenv("WAL_CRASH_WORK")
-	name := "000000010000000000000001"
+	name := os.Getenv("WAL_CRASH_NAME")
 	src := source(t, bytes.Repeat([]byte{37}, 1<<20))
 	if stage == "restore" {
 		if err := w.Archive(context.Background(), name, src); err != nil {
@@ -100,6 +100,12 @@ func scratchUsage(t *testing.T, dir, prefix string) (int, int64) {
 }
 
 func TestRepeatedProcessDeathsDoNotAccumulateWALScratch(t *testing.T) {
+	for _, name := range []string{"000000010000000000000001", "000000010000000000000001.partial"} {
+		t.Run(name, func(t *testing.T) { testWALProcessDeaths(t, name) })
+	}
+}
+
+func testWALProcessDeaths(t *testing.T, name string) {
 	for _, stage := range []string{"upload", "verify", "download", "restore"} {
 		t.Run(stage, func(t *testing.T) {
 			work, target := t.TempDir(), t.TempDir()
@@ -110,7 +116,7 @@ func TestRepeatedProcessDeathsDoNotAccumulateWALScratch(t *testing.T) {
 			for death := 0; death < 3; death++ {
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestWALCrashChild$")
-				cmd.Env = append(os.Environ(), "WAL_CRASH_STAGE="+stage, "WAL_CRASH_WORK="+work, "WAL_CRASH_TARGET="+target, "TMPDIR="+t.TempDir())
+				cmd.Env = append(os.Environ(), "WAL_CRASH_STAGE="+stage, "WAL_CRASH_NAME="+name, "WAL_CRASH_WORK="+work, "WAL_CRASH_TARGET="+target, "TMPDIR="+t.TempDir())
 				stdout, err := cmd.StdoutPipe()
 				if err != nil {
 					cancel()
@@ -155,7 +161,6 @@ func TestRepeatedProcessDeathsDoNotAccumulateWALScratch(t *testing.T) {
 			w, _ := simulatedWAL(t)
 			w.Workspace = work
 			raw := bytes.Repeat([]byte{37}, 1<<20)
-			name := "000000010000000000000001"
 			if err := w.Archive(context.Background(), name, source(t, raw)); err != nil {
 				t.Fatal(err)
 			}

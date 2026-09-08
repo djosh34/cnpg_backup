@@ -61,8 +61,10 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
                 'readinessProbe': {'tcpSocket': {'port': 9090}, 'periodSeconds': 2, 'timeoutSeconds': 1},
                 'securityContext': security, 'resources': {'requests': {'cpu': '50m', 'memory': '64Mi'}, 'limits': {'cpu': '500m', 'memory': '256Mi'}},
                 'volumeMounts': [{'name': 'config', 'mountPath': '/cnpg-backup/manager', 'readOnly': True},
-                                 {'name': 'tls', 'mountPath': '/cnpg-backup/tls', 'readOnly': True}]}],
-            'volumes': [{'name': 'config', 'configMap': {'name': 'cnpg-backup-manager', 'defaultMode': 0o440}},
+                                 {'name': 'tls', 'mountPath': '/cnpg-backup/tls', 'readOnly': True},
+                                 {'name': 'control', 'mountPath': '/cnpg-backup/control'}]}],
+            'volumes': [{'name': 'control', 'emptyDir': {'sizeLimit': '16Mi'}},
+                        {'name': 'config', 'configMap': {'name': 'cnpg-backup-manager', 'defaultMode': 0o440}},
                         {'name': 'tls', 'projected': {'defaultMode': 0o440, 'sources': [
                             {'secret': {'name': 'cnpg-backup-server-tls', 'items': [{'key': 'tls.crt', 'path': 'tls.crt'}, {'key': 'tls.key', 'path': 'tls.key'}]}},
                             {'secret': {'name': 'cnpg-backup-ca', 'items': [{'key': 'tls.crt', 'path': 'client-ca.crt'}]}}]}}]}}}))
@@ -77,8 +79,10 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
         {'apiGroups': [''], 'resources': ['events'], 'verbs': ['create']},
         {'apiGroups': ['postgresql.cnpg.io'], 'resources': ['clusters'], 'verbs': ['get', 'list']},
         {'apiGroups': ['postgresql.cnpg.io'], 'resources': ['backups'], 'verbs': ['list', 'watch']},
-        {'apiGroups': [''], 'resources': ['persistentvolumeclaims', 'pods'], 'verbs': ['get']},
-        {'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['get', 'create']},
+        {'apiGroups': [''], 'resources': ['persistentvolumeclaims'], 'verbs': ['get']},
+        {'apiGroups': [''], 'resources': ['pods'], 'verbs': ['get', 'list', 'watch']},
+        {'apiGroups': ['batch'], 'resources': ['jobs'], 'verbs': ['get', 'list']},
+        {'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['get', 'create', 'update']},
         {'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': sorted(set(secret_names)), 'verbs': ['get']},
     ]
     objects.append(resource('rbac.authorization.k8s.io/v1', 'Role', 'cnpg-backup', managed_namespace, rules=rules))

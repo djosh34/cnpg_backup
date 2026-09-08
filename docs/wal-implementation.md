@@ -37,7 +37,8 @@ This is WAL delivery, **not full backup/materialization, PITR or release qualifi
   primary flushing is allowed without relaxing primary-only native capture.
   Ordinary rewind reads mounted control identity even with PostgreSQL stopped.
   Source credentials and arbitrary SQL are never used.
-- Restore reads exactly one requested filename (segment, history, backup-history),
+- Restore reads exactly one requested filename (segment, promotion partial,
+  history, backup-history),
   including nondefault power-of-two1MiB–1GiB segments. It verifies stored and raw
   hashes/exact lengths, accepts one gzip member only, fsyncs a private file,
   renames through an already-open confined WAL root, and fsyncs that directory.
@@ -59,6 +60,18 @@ This is WAL delivery, **not full backup/materialization, PITR or release qualifi
   errors to exit1; **do not use that command for primary latest/PITR recovery**.
   The product `wal-fetch` remains fatal255/unadvertised pending G's admitted plan,
   required-interval/bundled-local rules and target ownership integration.
+
+## Native promotion compatibility (PR G)
+
+A legitimate PG18 promotion `.partial` callback is durably stored byte-for-byte
+in the restored Cluster's **new repository**, under its distinct original name.
+Its physical size must equal the repository's WAL segment size; the suffix does
+not imply a short file. Existing conditional publication, verification and
+identical-retry rules apply. This auxiliary never supplies full-segment coverage,
+frontier or latest-timeline evidence, and never substitutes for a missing full
+filename. V1 retains it conservatively without GC pruning or new admission holds.
+This is an implementation compatibility correction, not a change to the frozen
+research grammar or evidence of executed CNPG qualification.
 
 ## Capacity and observability
 

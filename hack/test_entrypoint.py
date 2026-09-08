@@ -62,10 +62,25 @@ if [[ ${0##*/} = python3 && $1 = hack/test_tools.py ]]; then printf '%s\\n' "$PR
         self.assertNotIn('hack/build.py', calls)
         self.assertNotIn('recovery.py', calls)
 
-    def test_harness_failure_stops_fast_before_downloads(self):
-        code, calls = self.invoke('fast', fail_harness=True)
-        self.assertEqual(code, 7)
-        self.assertNotIn('bootstrap.py', calls)
+    def test_campaign_runs_fixtures_then_forwards_exact_artifacts_without_build(self):
+        args = ('--plan', 'immutable-plan.json', '--bundle', 'immutable-harness',
+                '--run-dir', 'fresh-run', '--duration-minutes', '120')
+        code, calls = self.invoke('recovery-campaign', *args)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls.splitlines(), [
+            "python3 -m unittest discover -s hack -p test_*.py",
+            'python3 hack/backup_metrics_smoke.py --self-test',
+            'python3 hack/repository_crd.py --check',
+            'python3 hack/recovery_campaign.py run ' + ' '.join(args),
+        ])
+
+    def test_harness_failure_stops_full_profiles_before_downloads_or_campaign(self):
+        for profile in ('fast', 'recovery-campaign'):
+            with self.subTest(profile=profile):
+                code, calls = self.invoke(profile, fail_harness=True)
+                self.assertEqual(code, 7)
+                self.assertNotIn('bootstrap.py', calls)
+                self.assertNotIn('recovery_campaign.py', calls)
 
     def test_unknown_profile_fails_before_work(self):
         code, calls = self.invoke('unknown')

@@ -83,6 +83,14 @@ func LoadSnapshot(directory, role string) (*Snapshot, error) {
 	return loadRepositorySnapshot(root, role)
 }
 
+// LoadSnapshotFromRoot reads all repository members from the caller's single
+// pinned projection generation (also used for immutable recovery placement).
+func LoadSnapshotFromRoot(root *os.Root, role string) (*Snapshot, error) {
+	if role != "source" && role != "destination" {
+		return nil, errors.New("invalid repository role")
+	}
+	return loadRepositorySnapshot(root, role)
+}
 func loadRepositorySnapshot(root *os.Root, role string) (*Snapshot, error) {
 	data, err := Read(root, role+"/repository.json", 256<<10)
 	if err != nil {
