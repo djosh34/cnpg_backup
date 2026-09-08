@@ -58,8 +58,8 @@ func ScanManifest(r io.Reader) (NativeManifest, error) {
 	return scanManifest(r, false)
 }
 
-// pg_combinebackup includes copied WAL in its synthetic file list without a
-// file checksum. Accept only that native output exception; direct WAL parsing
+// pg_combinebackup lists copied WAL and empty .done markers without file
+// checksums. Accept only those native output exceptions; direct WAL parsing
 // and selected bundle hashes remain mandatory. Original inputs stay stricter.
 func scanManifest(r io.Reader, synthetic bool) (NativeManifest, error) {
 	m := NativeManifest{Files: map[string]int64{}}
@@ -116,7 +116,9 @@ func scanManifest(r io.Reader, synthetic bool) (NativeManifest, error) {
 				if !nativePath(p) {
 					return m, ErrInput
 				}
-				unchecksummedWAL := synthetic && strings.HasPrefix(p, "pg_wal/") && len(strings.TrimPrefix(p, "pg_wal/")) == 24 && repository.ValidWALFilename(strings.TrimPrefix(p, "pg_wal/")) && f.ChecksumAlgorithm == "" && f.Checksum == ""
+				walFile := strings.HasPrefix(p, "pg_wal/") && repository.ValidWALFilename(strings.TrimPrefix(p, "pg_wal/"))
+				done := strings.HasPrefix(p, "pg_wal/archive_status/") && strings.HasSuffix(p, ".done") && f.Size == 0 && repository.ValidWALFilename(strings.TrimSuffix(strings.TrimPrefix(p, "pg_wal/archive_status/"), ".done"))
+				unchecksummedWAL := synthetic && (walFile || done) && f.ChecksumAlgorithm == "" && f.Checksum == ""
 				if !unchecksummedWAL && (f.ChecksumAlgorithm != "SHA256" || !hashText(f.Checksum)) {
 					return m, ErrInput
 				}

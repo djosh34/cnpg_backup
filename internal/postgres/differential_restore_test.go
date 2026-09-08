@@ -73,17 +73,29 @@ func TestSyntheticManifestWALExceptionIsOutputOnly(t *testing.T) {
 	if e = json.Unmarshal(b, &m); e != nil {
 		t.Fatal(e)
 	}
-	for _, p := range []string{"pg_wal/000000010000000000000001", "base/123", "pg_wal/evil"} {
+	for _, test := range []struct {
+		path string
+		size int
+		want bool
+	}{
+		{"pg_wal/000000010000000000000001", 1 << 20, true},
+		{"pg_wal/archive_status/000000010000000000000001.done", 0, true},
+		{"pg_wal/archive_status/000000010000000000000001.done", 1, false},
+		{"pg_wal/archive_status/000000010000000000000001.ready", 0, false},
+		{"pg_wal/archive_status/evil.done", 0, false},
+		{"base/123", 1 << 20, false},
+		{"pg_wal/evil", 1 << 20, false},
+	} {
 		original := m["Files"]
-		m["Files"] = append(original.([]any), map[string]any{"Path": p, "Size": 1 << 20, "Last-Modified": "2026-09-08 00:00:00 GMT"})
+		m["Files"] = append(original.([]any), map[string]any{"Path": test.path, "Size": test.size, "Last-Modified": "2026-09-08 00:00:00 GMT"})
 		b, _ := json.Marshal(m)
 		m["Files"] = original
 		if _, e = ScanManifest(bytes.NewReader(b)); e == nil {
 			t.Fatal("original allowed missing checksum")
 		}
 		_, e = scanManifest(bytes.NewReader(b), true)
-		if (e == nil) != (p == "pg_wal/000000010000000000000001") {
-			t.Fatal(p, e)
+		if (e == nil) != test.want {
+			t.Fatal(test, e)
 		}
 	}
 }
