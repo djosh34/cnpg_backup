@@ -13,6 +13,13 @@ import (
 )
 
 func (in *fullInput) materialize(ctx context.Context, c repository.Commit, l RestoreLayout, run restoreRunner) (map[string]s3store.Integrity, error) {
+	if e := in.extractOriginal(ctx, c, l, run); e != nil {
+		return nil, e
+	}
+	return in.finish(ctx, c, l)
+}
+
+func (in *fullInput) extractOriginal(ctx context.Context, c repository.Commit, l RestoreLayout, run restoreRunner) error {
 	targets := []string{l.PGDATA}
 	if l.WALDirectory != l.PGDATA+"/pg_wal" {
 		targets = append(targets, l.WALDirectory)
@@ -21,53 +28,59 @@ func (in *fullInput) materialize(ctx context.Context, c repository.Commit, l Res
 	sort.Strings(targets)
 	for _, p := range targets {
 		if e := emptyRestoreRoot(p); e != nil {
-			return nil, e
+			return e
 		}
 	}
 	if e := in.extractArchive(ctx, c, "base.tar", l.PGDATA); e != nil {
-		return nil, e
+		return e
 	}
 	root, e := os.OpenRoot(l.PGDATA)
 	if e != nil {
-		return nil, e
+		return e
 	}
 	defer root.Close()
 	if e = root.MkdirAll("pg_wal", 0700); e != nil {
-		return nil, e
+		return e
 	}
 	if e = root.MkdirAll("pg_tblspc", 0700); e != nil {
-		return nil, e
+		return e
 	}
 	if e = in.extractArchive(ctx, c, "pg_wal.tar", l.PGDATA+"/pg_wal"); e != nil {
-		return nil, e
+		return e
 	}
 	for _, ts := range c.Tablespaces {
 		oid := strconv.FormatUint(uint64(ts.OID), 10)
 		target := l.Tablespaces[ts.Name]
 		if e = in.extractArchive(ctx, c, oid+".tar", target); e != nil {
-			return nil, e
+			return e
 		}
-		// These links are exclusively from validated manager destinations, never tar
-		// headers or the historical tablespace_map. The original map remains intact.
+		// Only trusted destination links; preserve the original map for verification.
 		if e = root.Symlink(target, "pg_tblspc/"+oid); e != nil {
-			return nil, e
+			return e
 		}
 	}
 	manifest, e := os.Open(filepath.Join(in.directory, "backup_manifest"))
 	if e != nil {
-		return nil, e
+		return e
 	}
 	e = copyMember(root, "backup_manifest", c.ManifestBytes, contextInput{ctx, manifest})
 	manifest.Close()
 	if e != nil {
-		return nil, e
+		return e
 	}
 	if _, e = run(ctx, "pg_verifybackup", "--exit-on-error", "--no-parse-wal", l.PGDATA); e != nil {
+		return e
+	}
+	return verifyRestoreWAL(ctx, l.PGDATA+"/pg_wal", in.manifest.Ranges, run)
+}
+
+func (in *fullInput) finish(ctx context.Context, c repository.Commit, l RestoreLayout) (map[string]s3store.Integrity, error) {
+	root, e := os.OpenRoot(l.PGDATA)
+	if e != nil {
 		return nil, e
 	}
-	if e = verifyRestoreWAL(ctx, l.PGDATA+"/pg_wal", in.manifest.Ranges, run); e != nil {
-		return nil, e
-	}
+	defer root.Close()
+	targets := append([]string{l.PGDATA, l.WALDirectory}, mapValues(l.Tablespaces)...)
 	// Only now are sanctioned bootstrap transforms permitted. Never rewrite the
 	// original manifest to make a damaged input pass native verification.
 	if e = root.Remove("tablespace_map"); e != nil && (len(c.Tablespaces) > 0 || !os.IsNotExist(e)) {

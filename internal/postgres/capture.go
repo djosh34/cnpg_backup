@@ -131,6 +131,7 @@ func OpenCapture(ctx context.Context, root *os.Root) (*Capture, error) {
 	if e = configuration.CheckCapacity(c.budgets); e != nil {
 		return nil, e
 	}
+	slog.Info("native capture capacity reserved", "workspace_bytes", c.peak)
 	if actual, e := filepath.EvalSymlinks(liveData + "/pg_wal"); e != nil || actual != wal {
 		return nil, ErrInput
 	}
@@ -258,11 +259,15 @@ func (r *Captured) Close() {
 	}
 }
 
-func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, err error) {
+func (c *Capture) Full(ctx context.Context, podUID string) (*Captured, error) {
+	return c.capture(ctx, podUID, nil, "")
+}
+
+func (c *Capture) capture(ctx context.Context, podUID string, reference *repository.Commit, manifestPath string) (result *Captured, err error) {
 	phase := "basebackup"
 	defer func() {
 		if err != nil {
-			slog.Warn("native full failed", "phase", phase)
+			slog.Warn("native capture failed", "phase", phase)
 		}
 	}()
 	duration, _ := time.ParseDuration(c.Snapshot.Repository.Spec.Native.CaptureTimeout)
@@ -289,7 +294,14 @@ func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, er
 		return nil, err
 	}
 	dir := filepath.Join(c.Directory, "tar")
-	if _, err = runTool(ctx, c.env, "pg_basebackup", "--no-password", "--pgdata="+dir, "--format=tar", "--wal-method=stream", "--checkpoint=spread", "--manifest-checksums=SHA256"); err != nil {
+	args := []string{"--no-password", "--pgdata=" + dir, "--format=tar", "--wal-method=stream", "--checkpoint=spread", "--manifest-checksums=SHA256"}
+	if reference != nil {
+		if err = c.eligibleFullAt(*reference, podUID, began); err != nil {
+			return nil, err
+		}
+		args = append(args, "--incremental="+manifestPath)
+	}
+	if _, err = runTool(ctx, c.env, "pg_basebackup", args...); err != nil {
 		return nil, err
 	}
 	phase = "postflight"
@@ -318,6 +330,12 @@ func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, er
 	}
 	range0 := manifest.Ranges[0]
 	cm := repository.Commit{Schema: 1, Kind: "full", SystemIdentifier: c.control.System, PostgresMajor: 18, ToolVersion: "18.6", Timeline: c.control.Timeline, ChecksumVersion: c.control.Checksum, CaptureInstanceUID: podUID, PostmasterStartedAt: c.before.Postmaster, StoppedAt: stopped, StartLSN: range0.StartLSN, StopLSN: range0.EndLSN, RedoLSN: range0.StartLSN, BundledWALStartLSN: range0.StartLSN, BundledWALEndLSN: range0.EndLSN, WALRanges: manifest.Ranges, Tablespaces: []repository.Tablespace{}, Artifacts: []repository.Artifact{}, ManifestBytes: st.Size()}
+	if reference != nil {
+		cm.Kind = "differential"
+		cm.ParentBackupUID = &reference.BackupUID
+		cm.RootBackupUID = reference.BackupUID
+		cm.RootManifestSHA256 = &reference.ManifestSHA256
+	}
 	cm.ManifestSHA256, err = fileHash(ctx, r.Manifest)
 	if err != nil {
 		return nil, err
@@ -521,6 +539,7 @@ func (c *Capture) Full(ctx context.Context, podUID string) (result *Captured, er
 		return nil, err
 	}
 	r.Commit = cm
+	slog.Info("native capture verified", "backup_type", cm.Kind, "raw_bytes", total, "stored_bytes", compressed+cm.ManifestBytes)
 	return r, nil
 }
 

@@ -33,6 +33,10 @@ type Attempt struct {
 func (h *Hold) Begin(ctx context.Context, req Request) (*Attempt, *Result, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.begin(ctx, req)
+}
+
+func (h *Hold) begin(ctx context.Context, req Request) (*Attempt, *Result, error) {
 	if e := h.check(ctx); e != nil {
 		return nil, nil, e
 	}

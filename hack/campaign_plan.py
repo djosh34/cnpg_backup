@@ -45,11 +45,13 @@ REGISTRY = (
     {'id': 'stale-tuple-rejected', 'method': 'case_stale_tuple_rejected', 'group': 'ownership', 'fixtures': ['source'], 'requires': [], 'seconds': 900, 'max_targets': 4, 'requirement': 'design §3/5; testing mandatory G stale-tuple-rejected'},
     {'id': 'source-lifetime-and-reader-through-replay', 'method': 'case_source_lifetime_and_reader_through_replay', 'group': 'ownership', 'fixtures': ['source'], 'requires': [], 'seconds': 900, 'max_targets': 4, 'requirement': 'design §3/5; testing mandatory G source-lifetime-and-reader-through-replay'},
     {'id': 'controller-all-Job-retry-Pods-terminated', 'method': 'case_controller_all_Job_retry_Pods_terminated', 'group': 'ownership', 'fixtures': ['source'], 'requires': [], 'seconds': 900, 'max_targets': 4, 'requirement': 'design §3/5; testing mandatory G controller-all-Job-retry-Pods-terminated'},
+    {'id': 'differential-native', 'method': 'case_differential_native', 'group': 'differential', 'fixtures': ['source', 'differential'], 'requires': [], 'seconds': 1200, 'max_targets': 1, 'requirement': 'design §3/5/6; PR H direct-F reconstruction, source-loss remote PITR and fail-closed prerequisite/cancellation metrics'},
     {'id': 'seeded-XID-1', 'method': 'case_seeded_XID_1', 'group': 'ownership', 'fixtures': ['source'], 'requires': [], 'seconds': 900, 'max_targets': 1, 'requirement': 'design §5 inclusive/exclusive XID; testing seeded supplement'},
     {'id': 'seeded-XID-2', 'method': 'case_seeded_XID_2', 'group': 'ownership', 'fixtures': ['source'], 'requires': [], 'seconds': 900, 'max_targets': 1, 'requirement': 'design §5 inclusive/exclusive XID; testing seeded supplement'},
 )
 
 BRANCHES = {
+    'differential-native': ('reconstruction', 'remote-PITR-source-loss', 'missing-full', 'missing-summary', 'checksum', 'promotion', 'cancellation'),
     'full-latest-remote-SQL': ('newest', 'explicit-base'),
     'full-time-inclusive-exclusive': ('inclusive', 'exclusive'),
     'full-LSN-inclusive-exclusive': ('inclusive', 'exclusive'),
