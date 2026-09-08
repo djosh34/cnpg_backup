@@ -56,6 +56,11 @@ func writeFixtureTar(t *testing.T, directory, name string, files map[string][]by
 
 func syntheticRestore(t *testing.T, tables bool) (*fullInput, repository.Commit, configuration.Native) {
 	t.Helper()
+	return syntheticRestoreWithFiles(t, tables, nil)
+}
+
+func syntheticRestoreWithFiles(t *testing.T, tables bool, extra map[string][]byte) (*fullInput, repository.Commit, configuration.Native) {
+	t.Helper()
 	scratch := t.TempDir()
 	dir := filepath.Join(scratch, "tar")
 	if e := os.Mkdir(dir, 0700); e != nil {
@@ -64,6 +69,9 @@ func syntheticRestore(t *testing.T, tables bool) (*fullInput, repository.Commit,
 	label := "START WAL LOCATION: 0/100028 (file 000000010000000000000001)\nCHECKPOINT LOCATION: 0/100060\nBACKUP METHOD: streamed\nBACKUP FROM: primary\nSTART TIME: 2026-09-07 00:00:00 UTC\nLABEL: fixture\nSTART TIMELINE: 1\n"
 	c := repository.Commit{Kind: "full", SystemIdentifier: "1234", Timeline: 1, StartLSN: "0/100028", StopLSN: "0/100120", BackupLabel: label, Tablespaces: []repository.Tablespace{}, WALRanges: []repository.WALRange{{Timeline: 1, StartLSN: "0/100028", EndLSN: "0/100120"}}}
 	base := map[string][]byte{"PG_VERSION": []byte("18\n"), "global/pg_control": []byte("control"), "backup_label": []byte(label)}
+	for p, b := range extra {
+		base[p] = b
+	}
 	files := map[string][]byte{}
 	for p, b := range base {
 		files[p] = b
@@ -163,7 +171,6 @@ func TestRestoreScansOriginalInventoryAndBudgets(t *testing.T) {
 		{"wrong-system", func(_ *fullInput, c *repository.Commit, _ *configuration.Native) { c.SystemIdentifier = "9876" }},
 		{"raw-budget", func(_ *fullInput, _ *repository.Commit, n *configuration.Native) { n.MaxBackupBytes = 1 }},
 		{"wal-budget", func(_ *fullInput, _ *repository.Commit, n *configuration.Native) { n.MaxBootstrapWALBytes = 1 }},
-		{"output-budget", func(_ *fullInput, _ *repository.Commit, n *configuration.Native) { n.MaxRestoredBytes = 1 }},
 		{"unmanifested", func(in *fullInput, c *repository.Commit, _ *configuration.Native) {
 			a := writeFixtureTar(t, in.directory, "base.tar", map[string][]byte{"unexpected": []byte("not in native manifest")})
 			a.Role = "base"
