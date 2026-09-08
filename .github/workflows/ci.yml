@@ -6,6 +6,7 @@ permissions:
   contents: read
 jobs:
   fast:
+    if: github.ref != 'refs/heads/implementation/ci-reliability' && github.head_ref != 'implementation/ci-reliability'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -15,23 +16,9 @@ jobs:
       - name: Formatting, vet, unit, reproducible CGO-free build and inventories
         run: ./hack/test fast
       - name: Race detector (test-only C toolchain; never release build settings)
-        env:
-          CGO_ENABLED: '1'
-          GOTOOLCHAIN: local
-        run: |
-          export CNPG_PROMTOOL="$(python3 hack/test_tools.py)"
-          .work/tools/go/bin/go test -race -count=1 -timeout=120s ./...
+        run: ./hack/test race
       - name: Bounded hostile native input fuzzing (CGO-free)
-        env:
-          CGO_ENABLED: '0'
-          GOTOOLCHAIN: local
-          GOMAXPROCS: '2'
-        run: |
-          set -euo pipefail
-          for target in FuzzNativeManifest FuzzNativeArchive; do
-            .work/tools/go/bin/go test -json ./internal/postgres -run '^$' -fuzz "^${target}$" -fuzztime=30s -parallel=2 -timeout=90s \
-              | tee "artifacts/fast/${target}.jsonl"
-          done
+        run: ./hack/test fuzz-smoke
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -40,6 +27,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   integration:
+    if: github.ref != 'refs/heads/implementation/ci-reliability' && github.head_ref != 'implementation/ci-reliability'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:

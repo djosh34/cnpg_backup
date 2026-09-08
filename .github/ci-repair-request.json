@@ -1,0 +1,6 @@
+{
+  "purpose": "CI REPAIR; G delivery paused",
+  "series": 3,
+  "seeds": [1806, 1806, 1807],
+  "reason": "Final independently cleared 6822b950 harness: 33 families/47 required branches, cross-host unique execution accounting, primary failure persistence and independent owned disposal. Preserve prior series; frozen49a product, no product builds/publication or G delivery."
+}

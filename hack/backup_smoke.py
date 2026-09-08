@@ -184,6 +184,13 @@ def _run(h, wal, report, data_image, metrics):
     assert not report['full_remaining'], 'mandatory F native/fault/observability cases incomplete'
 
 
+def verify_persisted_actor(h, pod, control, actor):
+    # A configuration rollout replaces Pods, not their data PVCs. Validate the
+    # original fixture bytes instead of repeating a large stdin exec transfer.
+    observed = h.kube('exec', '-n', h.NS, pod, '-c', 'postgres', '--', 'sha256sum', actor).split()
+    assert observed and observed[0] == hashlib.sha256(control.read_bytes()).hexdigest(), 'persisted test actor differs'
+
+
 def capture_faults(h, wal, report, metrics, control):
     pod = wal.primary()
     actor = '/var/lib/postgresql/data/full-fixture-control'
@@ -327,7 +334,7 @@ def capture_faults(h, wal, report, metrics, control):
     h.wait(lambda: len(h.pod_uids()) == 2 and old_pods.isdisjoint(h.pod_uids()), 'CNPG native operation-deadline rollout', 420)
     h.kube('wait', '-n', h.NS, '--for=condition=Ready', 'cluster/database', '--timeout=180s')
     pod = wal.primary()
-    install_actor()
+    verify_persisted_actor(h, pod, control, actor)
     # Lose the actual callback after MinIO has durably accepted commit.json.
     # This is a failed CNPG invocation AND successful historical publication.
     before = metrics.snapshot('full')

@@ -34,6 +34,27 @@ class CandidateTests(unittest.TestCase):
         c.require_absent(SimpleNamespace(returncode=1, stderr='manifest unknown'))
         self.assertTrue(all(':sha-' in v and ':v0.' not in v for v in c.references('a' * 40).values()))
 
+    def test_reuse_only_known_harness_changes_otherwise_build(self):
+        subject = {'revision': 'a' * 40, 'images': {
+            f: 'ghcr.io/djosh34/cnpg-backup-' + f + '@sha256:' + 'b' * 64
+            for f in ('manager', 'pg18')}}
+        def command(*args):
+            return SimpleNamespace(stdout=changed)
+        with patch.object(Path, 'read_text', return_value=json.dumps(subject)), patch.object(c, 'run', side_effect=command) as run:
+            changed = 'docs/recovery-campaign.md\nhack/recovery_cases.py\nhack/test_new.py\n.github/workflows/pr-g-candidate.yml\n'
+            self.assertEqual(c.reuse_subject('c' * 40), subject)
+            self.assertIn(unittest.mock.call('git', 'merge-base', '--is-ancestor', 'a' * 40, 'c' * 40), run.call_args_list)
+            for path in ('cmd/new.go', 'internal/cnpgi/restore.go', 'pkg/new.go',
+                         'build/inputs.lock.json', 'build/Dockerfile', 'go.mod', 'go.sum',
+                         'config/render.py', 'hack/build.py', 'hack/bootstrap.py',
+                         'hack/godeps.py', 'hack/images.py', 'hack/new-build-input.py', '.dockerignore'):
+                with self.subTest(path=path):
+                    changed = path + '\n'
+                    self.assertIsNone(c.reuse_subject('c' * 40))
+            run.side_effect = RuntimeError('git ancestry/diff failed')
+            with self.assertRaises(RuntimeError):
+                c.reuse_subject('c' * 40)
+
     def test_private_auth_is_scoped_and_removed_even_on_failure(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -46,11 +67,11 @@ class CandidateTests(unittest.TestCase):
                 self.assertEqual((root / 'registry-auth.json').stat().st_mode & 0o777, 0o600)
                 self.assertNotIn('test-token', ' '.join(args))
                 seen.append(args)
-            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases, 'WORK', root), patch.object(cases.h, 'kube', side_effect=kube):
+            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases.h, 'WORK', root), patch.object(cases.h, 'kube', side_effect=kube):
                 self.assertEqual(cases.registry_pull_secrets(), [{'name': 'campaign-ghcr'}])
                 self.assertEqual(len(seen), 3)
                 self.assertFalse((root / 'registry-auth.json').exists())
-            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases, 'WORK', root), patch.object(cases.h, 'kube', side_effect=RuntimeError):
+            with patch.dict(os.environ, DOCKER_CONFIG=d), patch.object(cases.h, 'WORK', root), patch.object(cases.h, 'kube', side_effect=RuntimeError):
                 with self.assertRaises(RuntimeError):
                     cases.registry_pull_secrets()
                 self.assertFalse((root / 'registry-auth.json').exists())

@@ -68,10 +68,10 @@ class PromotionArchiveTests(unittest.TestCase):
             return ''
         with tempfile.TemporaryDirectory() as tmp:
             campaign = Campaign(SimpleNamespace(), Mock())
-            campaign.wal = SimpleNamespace(directory=Path(tmp))
+            campaign.wal = SimpleNamespace(endpoint='https://localhost:19000', directory=Path(tmp))
             campaign.inventory = Mock(return_value=keys)
             campaign.event = Mock()
-            with patch('recovery_cases.WORK', Path(tmp)), patch('recovery_cases.h.run', side_effect=download), \
+            with patch('recovery_cases.h.WORK', Path(tmp)), patch('recovery_cases.h.run', side_effect=download), \
                  patch('recovery_cases.h.kube', side_effect=kube):
                 campaign.verify_promotion_archive(state, 'primary', full)
             self.assertEqual(state['plan'], original_plan, 'byte oracle changed selected source plan')

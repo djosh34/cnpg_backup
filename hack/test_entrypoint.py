@@ -63,17 +63,15 @@ if [[ ${0##*/} = python3 && $1 = hack/test_tools.py ]]; then printf '%s\\n' "$PR
         self.assertNotIn('recovery.py', calls)
 
     def test_campaign_runs_fixtures_then_forwards_exact_artifacts_without_build(self):
-        args = ('--subject-sha', 'a' * 40,
-                '--manager-image', 'ghcr.io/djosh34/cnpg-backup-manager@sha256:' + 'b' * 64,
-                '--data-image', 'ghcr.io/djosh34/cnpg-backup-pg18@sha256:' + 'c' * 64,
-                '--profile', 'recovery', '--seed', '1806', '--duration-minutes', '120')
+        args = ('--plan', 'immutable-plan.json', '--bundle', 'immutable-harness',
+                '--run-dir', 'fresh-run', '--duration-minutes', '120')
         code, calls = self.invoke('recovery-campaign', *args)
         self.assertEqual(code, 0)
         self.assertEqual(calls.splitlines(), [
             "python3 -m unittest discover -s hack -p test_*.py",
             'python3 hack/backup_metrics_smoke.py --self-test',
             'python3 hack/repository_crd.py --check',
-            'python3 hack/recovery_campaign.py ' + ' '.join(args),
+            'python3 hack/recovery_campaign.py run ' + ' '.join(args),
         ])
 
     def test_harness_failure_stops_full_profiles_before_downloads_or_campaign(self):

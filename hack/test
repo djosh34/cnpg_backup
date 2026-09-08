@@ -4,9 +4,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 profile=${1:-fast}
 shift || true
-case "$profile" in harness|unit|fast|integration|guard|cnpg-smoke|recovery-campaign) ;; *) echo 'usage: hack/test harness [unittest names] | unit | fast | integration [--seed N] [--images] | guard | cnpg-smoke | recovery-campaign [options]' >&2; exit 2;; esac
+case "$profile" in harness|unit|fast|integration|guard|cnpg-smoke|race|fuzz-smoke|campaign-focused|recovery-campaign|campaign-bundle|campaign-plan|campaign-preflight|campaign-collect|campaign-clean|campaign-compare|campaign-aggregate) ;; *) echo 'usage: hack/test harness|unit|fast|integration|guard|cnpg-smoke|race|fuzz-smoke|campaign-focused|recovery-campaign|campaign-{bundle,plan,compare,aggregate} [options]' >&2; exit 2;; esac
 mkdir -p .work/tmp artifacts/fast
-export GOTMPDIR="$PWD/.work/tmp" TMPDIR="$PWD/.work/tmp"
+# Keep an explicitly supplied short disk-backed runtime path. AF_UNIX names
+# have a kernel length limit; worktree nesting is not a product failure.
+export TMPDIR="${CNPG_TEST_TMP:-${TMPDIR:-$PWD/.work/tmp}}"
+mkdir -p "$TMPDIR"
+export GOTMPDIR="$TMPDIR"
 # Exercise the same fixture/oracle tests before downloads, Go builds or Docker.
 if [[ $profile = harness && $# -gt 0 ]]; then
   PYTHONPATH="$PWD/hack${PYTHONPATH:+:$PYTHONPATH}" python3 -m unittest "$@" 2>&1 | tee artifacts/fast/harness-unit.log
@@ -17,11 +21,15 @@ python3 hack/backup_metrics_smoke.py --self-test 2>&1 | tee artifacts/fast/metri
 python3 hack/repository_crd.py --check
 [[ $profile != harness ]] || exit 0
 # Exact-artifact campaigns run the fixtures, never the subject build/image pipeline.
-if [[ $profile = recovery-campaign ]]; then
-  exec python3 hack/recovery_campaign.py "$@"
-fi
+case "$profile" in
+  recovery-campaign) exec python3 hack/recovery_campaign.py run "$@" ;;
+  campaign-*)
+    if [[ $profile != campaign-focused ]]; then
+      exec python3 hack/recovery_campaign.py "${profile#campaign-}" "$@"
+    fi ;;
+esac
 export CNPG_BUILD_CACHE=${CNPG_BUILD_CACHE:-"$PWD/.work/tools"}
-if [[ $profile = unit ]]; then
+if [[ $profile = unit || $profile = race || $profile = fuzz-smoke || $profile = campaign-focused ]]; then
   python3 hack/bootstrap.py --go-only
 else
   python3 hack/bootstrap.py
@@ -32,6 +40,26 @@ export CNPG_PROMTOOL
 CNPG_PROMTOOL=$(python3 hack/test_tools.py)
 "$CNPG_PROMTOOL" --version > artifacts/fast/promtool-version.txt 2>&1
 cp build/test-tools.lock.json artifacts/fast/
+if [[ $profile = race ]]; then
+  CGO_ENABLED=1 go test -race -count=1 -timeout=180s ./... 2>&1 | tee artifacts/fast/race.log
+  exit 0
+fi
+if [[ $profile = fuzz-smoke ]]; then
+  for target in FuzzNativeManifest FuzzNativeArchive; do
+    go test -json ./internal/postgres -run '^$' -fuzz "^${target}$" -fuzztime=30s -parallel=2 -timeout=90s \
+      | tee "artifacts/fast/${target}.jsonl"
+  done
+  exit 0
+fi
+if [[ $profile = campaign-focused ]]; then
+  go test -count=100 -shuffle=1806 -timeout=1800s -run 'Test(TerminalPodEventChecksCompletionBeforeCleanup|CompletionConsumesEveryPodPage|CompletionRequiresAllOriginalRetryPodsAndContainers|OriginalReaderReleaseIsAfterTaskDrainBeforeAcknowledgment)' ./internal/cnpgi ./internal/recoveryguard \
+    | tee artifacts/fast/campaign-focused-go.log
+  go test -count=100 -shuffle=1806 -timeout=1800s ./hack/recoveryactor | tee artifacts/fast/campaign-focused-actor.log
+  for iteration in $(seq 1 100); do
+    PYTHONPATH=hack python3 -m unittest test_recovery_drain test_recovery_replacement test_campaign_process test_campaign_plan
+  done 2>&1 | tee artifacts/fast/campaign-focused-python.log
+  exit 0
+fi
 [[ -z $(gofmt -l cmd internal hack/*/*.go) ]] || { echo 'gofmt required' >&2; exit 1; }
 go vet ./... 2>&1 | tee artifacts/fast/vet.log
 go test -count=1 -timeout=120s ./... 2>&1 | tee artifacts/fast/unit.log

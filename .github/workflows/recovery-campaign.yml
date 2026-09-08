@@ -1,122 +1,165 @@
-name: recovery-campaign
+name: digest-only recovery recipe
 on:
   workflow_dispatch:
     inputs:
       subject_sha:
-        description: Exact trusted subject commit (40 lowercase hex)
+        description: Exact published subject commit
         required: true
         type: string
-      trusted_ref:
-        description: Repository-owned subject branch (SHA must be reachable)
-        type: choice
-        options: [main, implementation/pr-g]
-        default: main
       manager_image:
-        description: ghcr.io/djosh34/cnpg-backup-manager@sha256 digest
+        description: Canonical immutable manager digest
         required: true
         type: string
       data_image:
-        description: ghcr.io/djosh34/cnpg-backup-pg18@sha256 digest
+        description: Canonical immutable data digest
         required: true
         type: string
+      trusted_ref:
+        type: choice
+        options: [main, implementation/pr-g, implementation/ci-reliability]
+        default: main
+      seeds:
+        type: string
+        default: '[1806]'
       profile:
         type: choice
-        options: [smoke, recovery, qualification]
+        options: [recovery]
         default: recovery
-      seed:
-        type: string
-        default: '1806'
-      duration_minutes:
-        type: string
-        default: '120'
   workflow_call:
     inputs:
       subject_sha:
         required: true
         type: string
-      trusted_ref:
-        type: string
-        default: main
       manager_image:
         required: true
         type: string
       data_image:
         required: true
         type: string
+      trusted_ref:
+        type: string
+        default: implementation/pr-g
+      seeds:
+        type: string
+        default: '[1806]'
       profile:
         type: string
         default: recovery
-      seed:
-        type: string
-        default: '1806'
-      duration_minutes:
-        type: string
-        default: '120'
 permissions:
   contents: read
   packages: read
-# Independent candidates/seeds never cancel required evidence.
-concurrency:
-  group: recovery-${{ github.run_id }}-${{ github.run_attempt }}
-  cancel-in-progress: false
 jobs:
-  recovery:
+  bundle:
+    if: github.repository == 'djosh34/cnpg_backup' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14.3'
+      - name: Verify repository-owned subject and freeze exact repeat recipes
+        id: plan
+        env:
+          SUBJECT_SHA: ${{ inputs.subject_sha }}
+          MANAGER_IMAGE: ${{ inputs.manager_image }}
+          DATA_IMAGE: ${{ inputs.data_image }}
+          TRUSTED_REF: ${{ inputs.trusted_ref }}
+          SEEDS: ${{ inputs.seeds }}
+          PROFILE: ${{ inputs.profile }}
+        run: |
+          python3 hack/campaign_ci.py prepare
+          ./hack/test harness
+          ./hack/test race
+          ./hack/test fuzz-smoke
+          ./hack/test campaign-focused
+          ./hack/test campaign-bundle --out .work/repair-bundle
+          python3 hack/campaign_ci.py plans
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: immutable-harness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .work/repair-bundle/
+            artifacts/repair-inputs/
+            artifacts/fast/
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: error
+  run:
+    needs: bundle
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.bundle.outputs.matrix) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
       DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth
-      SUBJECT_SHA: ${{ inputs.subject_sha }}
-      TRUSTED_REF: ${{ inputs.trusted_ref }}
-      MANAGER_IMAGE: ${{ inputs.manager_image }}
-      DATA_IMAGE: ${{ inputs.data_image }}
-      PROFILE: ${{ inputs.profile }}
-      SEED: ${{ inputs.seed }}
-      DURATION: ${{ inputs.duration_minutes }}
-      CGO_ENABLED: '0'
-      GOTOOLCHAIN: local
-      GOMAXPROCS: '2'
-      GOFLAGS: -p=2
+      ATTEMPT: ${{ matrix.attempt }}
     steps:
-      # Harness is the immutable workflow revision, NEVER the subject input.
-      # This workflow must be published on main before manual dispatch is usable.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.workflow_sha }}
           persist-credentials: false
           fetch-depth: 0
-      - name: Validate trusted source and bounded inputs without executing subject code
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: |
-          python3 hack/campaign_trust.py
-      - name: Private ephemeral registry read authentication after trusted-main preflight
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.14.3'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: immutable-harness-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Restore only executable permissions lost by artifact transport
+        run: chmod 555 .work/repair-bundle/{actor,minio,wal-proxy,wal-client,verify}
+      - name: Ephemeral read-only package authentication
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p "$DOCKER_CONFIG"
           chmod 700 "$DOCKER_CONFIG"
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Same local harness, exact existing images, bounded actual recovery
+      - name: SAME local digest-only recipe; fresh fixtures; no subject build or publish
         run: |
-          ./hack/test recovery-campaign --subject-sha "$SUBJECT_SHA" \
-            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
-            --profile "$PROFILE" --seed "$SEED" --duration-minutes "$DURATION"
-      - name: Always collect bounded redacted diagnostics
+          ./hack/test recovery-campaign --plan "artifacts/repair-inputs/plan-$ATTEMPT.json" \
+            --bundle .work/repair-bundle --run-dir ".work/repair-run-$ATTEMPT" --duration-minutes 120
+      - name: Publish only bounded evidence, never private runtime inputs
         if: always()
         run: |
-          python3 hack/recovery_campaign.py --collect --subject-sha "$SUBJECT_SHA" \
-            --manager-image "$MANAGER_IMAGE" --data-image "$DATA_IMAGE" \
-            --profile "$PROFILE" --seed "$SEED" --duration-minutes "$DURATION"
-          if test -f artifacts/recovery-campaign/summary.md; then
-            python3 -c 'import os,pathlib; p=pathlib.Path("artifacts/recovery-campaign/summary.md"); open(os.environ["GITHUB_STEP_SUMMARY"],"a").write(p.read_text())'
-          fi
-      - name: Remove ephemeral registry login
-        if: always()
-        run: rm -rf -- "$DOCKER_CONFIG"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          python3 hack/campaign_ci.py collect
+          rm -rf -- "$DOCKER_CONFIG"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: recovery-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/recovery-campaign/
-          if-no-files-found: error
+          name: repair-attempt-${{ matrix.attempt }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/repair-results/
           retention-days: 14
+          if-no-files-found: error
+  aggregate:
+    if: always()
+    needs: [bundle, run]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: repair-attempt-*
+          path: .work/results
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: immutable-harness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .work/inputs
+      - name: Exact attempts, all failures, no partial or retained acceptance
+        run: python3 hack/campaign_ci.py aggregate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: repair-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/repair-aggregate.json
+          retention-days: 14
+          if-no-files-found: error
