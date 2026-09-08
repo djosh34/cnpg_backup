@@ -1326,14 +1326,12 @@ class Campaign:
         replacement = copy.deepcopy(original)
         name = state['name'] + '-replacement'
         # Same immutable volume projections/PVCs, fresh Pod UID, actual guarded
-        # command. Remove only controller ownership and test install (already
-        # installed on shared /controller); use original scratch volume snapshot
-        # is NOT shared, so the install must run on the replacement too.
+        # command. Keep all init containers: /controller is a fresh emptyDir,
+        # so the observer installer must run on the replacement too.
         replacement.pop('status', None)
         replacement['metadata'] = {'name': name, 'namespace': TARGET}
         replacement['spec'].pop('nodeName', None)
         replacement['spec']['restartPolicy'] = 'Never'
-        replacement['spec']['initContainers'] = [c for c in replacement['spec']['initContainers'] if c['name'] != 'campaign-observer-install']
         # No cluster label: CNPG does not adopt or act on this negative control.
         # The admission observer still recognizes its actual full-recovery main.
         before = self.target_snapshot(original)

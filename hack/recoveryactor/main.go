@@ -428,7 +428,12 @@ func webhook() {
 	if !strings.Contains(image, "@sha256:") {
 		panic("immutable actor image required")
 	}
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := http.Server{Addr: ":9443", Handler: observerHandler(image), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 32 << 10}
+	must(server.ListenAndServeTLS("/tls/tls.crt", "/tls/tls.key"))
+}
+
+func observerHandler(image string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 		var review admission.AdmissionReview
 		if json.NewDecoder(io.LimitReader(r.Body, 2<<20)).Decode(&review) != nil || review.Request == nil {
@@ -465,9 +470,25 @@ func webhook() {
 				yes := true
 				installer := core.Container{Name: "campaign-observer-install", Image: image, Command: []string{"/actor", "install"}, VolumeMounts: mounts,
 					SecurityContext: &core.SecurityContext{RunAsUser: &user, RunAsGroup: &user, RunAsNonRoot: &yes, ReadOnlyRootFilesystem: &yes, AllowPrivilegeEscalation: &no, Capabilities: &core.Capabilities{Drop: []core.Capability{"ALL"}}}}
-				patch := []map[string]any{
-					{"op": "add", "path": "/spec/initContainers/-", "value": installer},
-					{"op": "add", "path": fmt.Sprintf("/spec/containers/%d/volumeMounts/-", index), "value": sockets},
+				// Replacements copy an already observed Pod, including its init
+				// containers and mounts. Admission must not append either twice.
+				installed := false
+				for _, init := range pod.Spec.InitContainers {
+					installed = installed || init.Name == installer.Name
+				}
+				mounted := false
+				for _, mount := range c.VolumeMounts {
+					mounted = mounted || mount.MountPath == socketRoot
+				}
+				var patch []map[string]any
+				if !installed {
+					patch = append(patch, map[string]any{"op": "add", "path": "/spec/initContainers/-", "value": installer})
+				}
+				if !mounted {
+					patch = append(patch, map[string]any{"op": "add", "path": fmt.Sprintf("/spec/containers/%d/volumeMounts/-", index), "value": sockets})
+				}
+				if len(patch) == 0 {
+					continue
 				}
 				b, e := json.Marshal(patch)
 				must(e)
@@ -481,6 +502,4 @@ func webhook() {
 		w.Header().Set("Content-Type", "application/json")
 		must(json.NewEncoder(w).Encode(review))
 	})
-	server := http.Server{Addr: ":9443", Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 32 << 10}
-	must(server.ListenAndServeTLS("/tls/tls.crt", "/tls/tls.key"))
 }
