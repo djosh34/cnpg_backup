@@ -13,8 +13,13 @@ Start with the [local-first feedback ladder](testing.md#local-first-feedback). `
 curl, Python >=3.12 with dpkg-deb (Ubuntu hosted runner), or Python >=3.14 for
 rootless zstd package extraction. Host PostgreSQL test execution also requires
 ordinary distro libraries (recorded by ldd); these host dependencies are not
-runtime-image inputs. Docker is needed only for actual image checks. No daemon
-installation or production credentials/endpoints are accepted.
+runtime-image inputs. Docker is needed for actual image/guard checks and the kind/CNPG profiles.
+Production credentials/endpoints are never accepted. The harness itself does not
+provision the host. Separately, the explicitly owner-authorized `local-runtime-4`
+setup may install/configure supported runtime/native/compiler prerequisites;
+this is not general permission to change unrelated services or bypass platform
+security. Check sudo, namespaces/cgroups, netlink and shared resources first;
+retain the first failure and stop at genuine privilege/kernel boundaries.
 
 ```sh
 ./hack/test harness
@@ -41,9 +46,33 @@ default `.work/tools`. Fixtures and Go temporary files stay under `.work`, **not
 sockets have a length limit. Downloads are checksum-checked even on cache hits;
 a mismatch fails, never silently replaces the pin. Do not share a writable cache
 between untrusted users. `build/out` is replaced by each build. No system package
-installation/maintainer scripts are executed. The only Docker builds use scratch
-and already prepared roots, with build networking disabled: no floating builder
+installation/maintainer scripts are executed by the harness. Authorized host
+prerequisite installation is separate and must record versions, origins,
+checksums/signature verification, services/resources and actual test results.
+The only Docker builds use scratch and already prepared roots, with build networking disabled: no floating builder
 image, apt resolver or Dockerfile frontend download.
+
+### Authorized local setup observation (2026-09-08)
+
+The Fedora setup task installed official Docker 29.8.0/rootless extras, kind
+v0.33.0 and kubectl v1.35.8 under its private `.work/local-runtime/bin`.
+The latter two match `build/kubernetes-inputs.lock.json`; Docker's versioned
+HTTPS archive hashes are recorded as observed, not independently authenticated
+upstream checksums. No global PATH or service configuration was changed.
+
+`sudo -n` is blocked by inherited no-new-privileges. Rootless Docker also fails
+UID mapping; container-run/kind therefore fail before creating resources.
+MinIO's route-netlink failure persists after setup. Do not unset protections or
+launch through another service to escape this boundary. A suitable execution
+context is still needed for the real MinIO/Docker/kind gates.
+
+A private test-only compiler sysroot extracted from signature-verified Fedora
+RPMs (GCC 15.3.1, binutils 2.45.1, glibc-devel 2.42) enabled
+`CGO_ENABLED=1 CC=<private-gcc> go test -race -count=1 -timeout=300s ./...`.
+All packages passed; production builds still used `CGO_ENABLED=0` and passed their
+static/runtime-closure checks. The existing PG18.6 native-only and S1 probes
+also passed, without claiming real MinIO/image/CNPG acceptance. Keep compiler
+and native test-library paths scoped to their commands, not shipped roots.
 
 ## Pins and dependency policy
 
