@@ -52,27 +52,53 @@ checksums/signature verification, services/resources and actual test results.
 The only Docker builds use scratch and already prepared roots, with build networking disabled: no floating builder
 image, apt resolver or Dockerfile frontend download.
 
-### Authorized local setup observation (2026-09-08)
+## Authorized local host setup
 
-The Fedora setup task installed official Docker 29.8.0/rootless extras, kind
-v0.33.0 and kubectl v1.35.8 under its private `.work/local-runtime/bin`.
-The latter two match `build/kubernetes-inputs.lock.json`; Docker's versioned
-HTTPS archive hashes are recorded as observed, not independently authenticated
-upstream checksums. No global PATH or service configuration was changed.
+On a disposable Fedora host with explicit provisioning authorization:
 
-`sudo -n` is blocked by inherited no-new-privileges. Rootless Docker also fails
-UID mapping; container-run/kind therefore fail before creating resources.
-MinIO's route-netlink failure persists after setup. Do not unset protections or
-launch through another service to escape this boundary. A suitable execution
-context is still needed for the real MinIO/Docker/kind gates.
+```sh
+sudo -n id
+sudo -n dnf install -y moby-engine gcc glibc-devel
+sudo -n systemctl start docker
+sudo -n docker info
+```
 
-A private test-only compiler sysroot extracted from signature-verified Fedora
-RPMs (GCC 15.3.1, binutils 2.45.1, glibc-devel 2.42) enabled
-`CGO_ENABLED=1 CC=<private-gcc> go test -race -count=1 -timeout=300s ./...`.
-All packages passed; production builds still used `CGO_ENABLED=0` and passed their
-static/runtime-closure checks. The existing PG18.6 native-only and S1 probes
-also passed, without claiming real MinIO/image/CNPG acceptance. Keep compiler
-and native test-library paths scoped to their commands, not shipped roots.
+Keep the harness non-root (PostgreSQL refuses root). If the current user lacks
+Docker socket access, a private CLI wrapper uses existing passwordless sudo
+without making the root-equivalent socket world-writable or requiring a login:
+
+```sh
+mkdir -p .work/runtime/bin
+printf '#!/bin/sh\nexec sudo -n /usr/sbin/runuser -u %s -g %s -G docker -- /usr/bin/docker "$@"\n' "$(id -un)" "$(id -gn)" > .work/runtime/bin/docker
+chmod 700 .work/runtime/bin/docker
+export PATH="$PWD/.work/runtime/bin:$PATH"
+export DOCKER_HOST=unix:///var/run/docker.sock
+export GOMAXPROCS=2 GOFLAGS=-p=2
+./hack/test integration --seed 1806 --images
+# With the shared host's kind slot assigned to this run:
+./hack/test cnpg-smoke
+```
+
+Use a short **physical** checkout path (for example `$HOME/cb`), not merely a
+symlink; Python resolves checkout paths before creating PostgreSQL sockets.
+Keep Git metadata: image/guard harnesses require the tested commit. The existing
+CNPG harness downloads and verifies kind/kubectl from the lock file itself.
+`CNPG_BUILD_CACHE` may reuse trusted verified inputs; do not delete caches used
+by active runs. Installed GCC enables `CGO_ENABLED=1 CC=/usr/bin/gcc go test
+-race ./...` with the pinned Go toolchain; production remains CGO-free.
+
+Before a campaign, prove current daemon/network and MinIO readiness rather than
+reuse an old privilege failure. Bound shared workloads and assign exclusive kind
+ownership. Clean only owned resources; preserve failure artifacts before removing
+a merged, inactive worktree. Do not disable seccomp, SELinux or other protections,
+reset unrelated services, or prune a shared daemon indiscriminately.
+
+The wrapper keeps CLI-created build/save files owned by the non-root user while
+using the existing Docker socket group. Running the CLI itself as root can leave
+kind unable to read its mode-0600 image archive. Preserve the user's primary
+group as well as Docker access; buildx may restore ordinary directory ownership.
+Earlier restricted-context sudo/netlink failures remain historical evidence,
+not a reason to bypass protections or disregard current successful checks.
 
 ## Pins and dependency policy
 
