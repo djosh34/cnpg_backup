@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"strconv"
 	"time"
 
 	wire "github.com/cloudnative-pg/cnpg-i/pkg/backup"
@@ -78,7 +79,12 @@ func backupResult(r *repository.Result, segment int64) *wire.BackupResult {
 	stop, _ := time.Parse(time.RFC3339Nano, c.StoppedAt)
 	a, _ := repository.ParseLSN(c.StartLSN)
 	b, _ := repository.ParseLSN(c.StopLSN)
-	return &wire.BackupResult{BackupId: c.BackupUID, StartedAt: start.Unix(), StoppedAt: stop.Unix(), BeginWal: postgres.WALFilename(c.Timeline, a, segment), EndWal: postgres.WALFilename(c.Timeline, b-1, segment), BeginLsn: c.StartLSN, EndLsn: c.StopLSN, BackupLabelFile: []byte(c.BackupLabel), TablespaceMapFile: []byte(c.TablespaceMap), InstanceId: c.CaptureInstanceUID, Online: true, Metadata: map[string]string{"backupType": c.Kind, "repositoryID": c.RepositoryID, "rootBackupID": c.RootBackupUID, "formatVersion": "1", "publishedAt": r.PublishedAt.UTC().Format(time.RFC3339Nano), "bootstrapWAL": "bundled-verified; no post-backup coverage claim"}}
+	raw, stored := c.ManifestBytes, c.ManifestBytes
+	for _, a := range c.Artifacts {
+		raw += a.RawBytes
+		stored += a.StoredBytes
+	}
+	return &wire.BackupResult{BackupId: c.BackupUID, StartedAt: start.Unix(), StoppedAt: stop.Unix(), BeginWal: postgres.WALFilename(c.Timeline, a, segment), EndWal: postgres.WALFilename(c.Timeline, b-1, segment), BeginLsn: c.StartLSN, EndLsn: c.StopLSN, BackupLabelFile: []byte(c.BackupLabel), TablespaceMapFile: []byte(c.TablespaceMap), InstanceId: c.CaptureInstanceUID, Online: true, Metadata: map[string]string{"backupType": c.Kind, "repositoryID": c.RepositoryID, "rootBackupID": c.RootBackupUID, "rawBytes": strconv.FormatInt(raw, 10), "storedBytes": strconv.FormatInt(stored, 10), "formatVersion": "1", "publishedAt": r.PublishedAt.UTC().Format(time.RFC3339Nano), "bootstrapWAL": "bundled-verified; no post-backup coverage claim"}}
 }
 func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result *wire.BackupResult, err error) {
 	start := time.Now()
@@ -89,9 +95,7 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 	if e != nil {
 		return nil, status.Error(codes.InvalidArgument, "backup requires matching UID, primary and explicit requested type")
 	}
-	if r.Parameters["backupType"] != "full" {
-		return nil, status.Error(codes.Unimplemented, "differential capture is not implemented; no full fallback")
-	}
+	kind := r.Parameters["backupType"]
 	ctx, cancel := context.WithTimeout(ctx, 7*24*time.Hour)
 	defer cancel()
 	select {
@@ -218,10 +222,43 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 		Compression string
 		Connection  postgres.Connection
 		Tool        string
-	}{id, spec.Compression, connection, "18.6/full"})
+	}{id, spec.Compression, connection, "18.6/" + kind})
 	digest := sha256.Sum256(semantic)
-	req := repository.Request{Schema: 1, RepositoryID: spec.RepositoryID, BackupUID: string(b.Metadata.UID), WriterClusterUID: placement.ClusterUID, RequestedKind: "full", ConfigSHA256: hex.EncodeToString(digest[:])}
-	attempt, winner, e := hold.Begin(ctx, req)
+	req := repository.Request{Schema: 1, RepositoryID: spec.RepositoryID, BackupUID: string(b.Metadata.UID), WriterClusterUID: placement.ClusterUID, RequestedKind: kind, ConfigSHA256: hex.EncodeToString(digest[:])}
+	var capture *postgres.Capture
+	defer func() {
+		if capture != nil {
+			capture.Close()
+		}
+	}()
+	openCapture := func() error {
+		if capture != nil {
+			return nil
+		}
+		var err error
+		capture, err = postgres.OpenCapture(ctx, root)
+		return err
+	}
+	var attempt *repository.Attempt
+	var winner *repository.Result
+	var reference repository.Commit
+	if kind == "differential" {
+		var preflightErr error
+		attempt, winner, reference, e = hold.BeginDifferential(ctx, req, func(full repository.Commit) error {
+			if preflightErr == nil {
+				preflightErr = openCapture()
+			}
+			if preflightErr != nil {
+				return preflightErr
+			}
+			return capture.EligibleFull(full, os.Getenv("POD_UID"))
+		})
+		if preflightErr != nil {
+			return nil, backupError(preflightErr)
+		}
+	} else {
+		attempt, winner, e = hold.Begin(ctx, req)
+	}
 	if e != nil {
 		return nil, backupError(e)
 	}
@@ -231,15 +268,18 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 		}
 		return backupResult(winner, repo.Identity().WALSegmentBytes), nil
 	}
-	capture, e := postgres.OpenCapture(ctx, root)
-	if e != nil {
+	if e = openCapture(); e != nil {
 		return nil, backupError(e)
 	}
-	defer capture.Close()
 	if capture.Identity(spec.RepositoryID, placement.ClusterUID) != id {
 		return nil, backupError(repository.ErrIdentity)
 	}
-	captured, e := capture.Full(ctx, os.Getenv("POD_UID"))
+	var captured *postgres.Captured
+	if kind == "differential" {
+		captured, e = capture.Differential(ctx, os.Getenv("POD_UID"), hold, reference)
+	} else {
+		captured, e = capture.Full(ctx, os.Getenv("POD_UID"))
+	}
 	if e != nil {
 		return nil, backupError(e)
 	}
@@ -247,7 +287,9 @@ func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result
 	commit := captured.Commit
 	commit.RepositoryID = spec.RepositoryID
 	commit.BackupUID = req.BackupUID
-	commit.RootBackupUID = req.BackupUID
+	if kind == "full" {
+		commit.RootBackupUID = req.BackupUID
+	}
 	commit.AttemptID = attempt.ID()
 	commit.RequestSHA256 = attempt.RequestSHA256()
 	winner, e = attempt.PublishChecked(ctx, commit, captured.Manifest, captured.Files, func(ctx context.Context) error { _, e := capture.Postflight(ctx); return e })
@@ -264,5 +306,5 @@ func backupError(e error) error {
 		return nil
 	}
 	code := status.Code(walError(e))
-	return status.Error(code, "full backup failed; no incomplete backup is published")
+	return status.Error(code, "requested backup failed; no full fallback or incomplete publication")
 }

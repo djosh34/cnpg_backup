@@ -108,22 +108,17 @@ func (s *RecoveryService) Restore(ctx context.Context, r *job.RestoreRequest) (*
 	if e = s.bootstrap(ctx, c, tuple); e != nil {
 		// No subsequent RPC rewrites partial targets or selects a newer base.
 		// Original guard may cleanly drain; uncertainty still poisons its markers.
-		if errors.Is(e, errDifferentialRestore) {
-			return nil, status.Error(codes.Unimplemented, "differential restore is not implemented")
-		}
-		return nil, status.Error(codes.FailedPrecondition, "protected full restore failed")
+		return nil, status.Error(codes.FailedPrecondition, "protected restore failed")
 	}
 	s.ready = true
 	return &job.RestoreResponse{RestoreConfig: restoreConfig(s.plan.Plan.Target.Timeline)}, nil
 }
 
-var errDifferentialRestore = errors.New("differential restore is not implemented")
-
 func (s *RecoveryService) bootstrap(ctx context.Context, c Cluster, tuple recoveryguard.Tuple) (err error) {
 	phase := "configuration"
 	defer func() {
 		if err != nil {
-			slog.Warn("protected full restore failed", "phase", phase)
+			slog.Warn("protected restore failed", "phase", phase)
 		}
 	}()
 	root, e := configuration.Projection(projectionPath)
@@ -246,9 +241,6 @@ func (s *RecoveryService) bootstrap(ctx context.Context, c Cluster, tuple recove
 			return closeErr
 		}
 	}
-	if len(plan.Chain) != 1 || plan.Chain[0].Kind != "full" {
-		return errDifferentialRestore
-	}
 	phase = "destination-identity"
 	// Reject source/destination ownership overlap before publishing a usable
 	// restore response; initialize destination with source physical identity.
@@ -337,8 +329,8 @@ func (s *RecoveryService) bootstrap(ctx context.Context, c Cluster, tuple recove
 	return nil
 }
 func checkRestoreInput(c repository.Commit, n configuration.Native) error {
-	if c.Kind != "full" {
-		return errDifferentialRestore
+	if c.Kind != "full" && c.Kind != "differential" {
+		return repository.ErrInvalid
 	}
 	raw, stored := c.ManifestBytes, c.ManifestBytes
 	for _, a := range c.Artifacts {

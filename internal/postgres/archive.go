@@ -55,6 +55,13 @@ func hashText(s string) bool { b, e := hex.DecodeString(s); return e == nil && l
 // Initial primary capture supports exactly one WAL range: multiple ranges fail,
 // never succeed after checking only the first.
 func ScanManifest(r io.Reader) (NativeManifest, error) {
+	return scanManifest(r, false)
+}
+
+// pg_combinebackup includes copied WAL in its synthetic file list without a
+// file checksum. Accept only that native output exception; direct WAL parsing
+// and selected bundle hashes remain mandatory. Original inputs stay stricter.
+func scanManifest(r io.Reader, synthetic bool) (NativeManifest, error) {
 	m := NativeManifest{Files: map[string]int64{}}
 	d := json.NewDecoder(io.LimitReader(r, repository.MaxManifestBytes+1))
 	tok, e := d.Token()
@@ -95,7 +102,7 @@ func ScanManifest(r io.Reader) (NativeManifest, error) {
 					return m, ErrInput
 				}
 				var f manifestFile
-				if configuration.StrictJSON(raw, &f) != nil || (f.Path == "") == (f.EncodedPath == "") || f.Size < 0 || f.Size > maxFileBytes || f.ChecksumAlgorithm != "SHA256" || !hashText(f.Checksum) || f.LastModified == "" {
+				if configuration.StrictJSON(raw, &f) != nil || (f.Path == "") == (f.EncodedPath == "") || f.Size < 0 || f.Size > maxFileBytes || f.LastModified == "" {
 					return m, ErrInput
 				}
 				p := f.Path
@@ -107,6 +114,10 @@ func ScanManifest(r io.Reader) (NativeManifest, error) {
 					p = string(b)
 				}
 				if !nativePath(p) {
+					return m, ErrInput
+				}
+				unchecksummedWAL := synthetic && strings.HasPrefix(p, "pg_wal/") && len(strings.TrimPrefix(p, "pg_wal/")) == 24 && repository.ValidWALFilename(strings.TrimPrefix(p, "pg_wal/")) && f.ChecksumAlgorithm == "" && f.Checksum == ""
+				if !unchecksummedWAL && (f.ChecksumAlgorithm != "SHA256" || !hashText(f.Checksum)) {
 					return m, ErrInput
 				}
 				if _, ok := m.Files[p]; ok {

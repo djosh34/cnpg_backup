@@ -205,6 +205,17 @@ func (h *Hold) Resolve(ctx context.Context, catalog *Catalog, template Plan, nam
 	if e := checkInput(*selected); e != nil {
 		return Plan{}, e
 	}
+	if selected.Kind == "differential" {
+		if e := h.ReadSource(ctx, func(ctx context.Context) error {
+			parent, e := h.r.readParent(ctx, *selected)
+			if e != nil {
+				return e
+			}
+			return checkInput(parent)
+		}); e != nil {
+			return Plan{}, e
+		}
+	}
 	template.RequiredArchive = []WALRange{}
 	if template.Target.Kind != "immediate" {
 		pos, _ := ParseLSN(selected.BundledWALEndLSN)

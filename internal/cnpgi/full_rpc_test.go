@@ -38,10 +38,10 @@ func TestFullRPCValidationAndNoDifferentialFallback(t *testing.T) {
 		_, e := service.Backup(context.Background(), fullRequest(t, kind))
 		want := codes.InvalidArgument
 		if kind == "differential" {
-			want = codes.Unimplemented
+			want = codes.FailedPrecondition
 		}
 		if status.Code(e) != want {
-			t.Fatal("request reached absent projection or launched fallback", kind, e)
+			t.Fatal("invalid request admitted or missing projection did not fail requested differential", kind, e)
 		}
 	}
 	for _, mutate := range []func(*backupDefinition){func(b *backupDefinition) { b.Spec.Target = "prefer-standby" }, func(b *backupDefinition) { b.Status.Phase = "failed" }, func(b *backupDefinition) { b.Status.Phase = "completed" }, func(b *backupDefinition) { b.Metadata.Namespace = "foreign" }, func(b *backupDefinition) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,15 +26,12 @@ type RestoreLayout struct {
 
 var restoreSlot sync.Mutex
 
-// RestoreFull materializes one authenticated full, synchronously draining every
+// RestoreFull materializes an authenticated full or direct full+differential, draining every
 // native child before returning. The caller owns the guard Task, persisted Plan,
 // source lifetime and fresh process reader BEFORE this call and through replay.
 // No PostgreSQL startup or archive lookup occurs here. Returned hashes describe
 // final local bundles only; they are NOT evidence of archive availability.
 func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Plan, native configuration.Native, budgets []configuration.FilesystemBudget, layout RestoreLayout) (result map[string]s3store.Integrity, err error) {
-	if len(plan.Chain) != 1 || plan.Chain[0].Kind != "full" {
-		return nil, errors.New("native differential restore is not implemented; no full fallback")
-	}
 	if e := plan.Validate(); e != nil {
 		return nil, e
 	}
@@ -44,16 +42,35 @@ func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Pla
 		return nil, errors.New("native restore already active")
 	}
 	defer restoreSlot.Unlock()
-	if e := validateRestoreLayout(layout, plan.Chain[0].Tablespaces); e != nil {
+	selected := plan.Chain[len(plan.Chain)-1]
+	if e := validateRestoreLayout(layout, selected.Tablespaces); e != nil {
 		return nil, e
 	}
 	phaseBudgets, e := restoreDownloadCapacity(plan.Chain[0], native, budgets, layout)
+	if len(plan.Chain) == 2 {
+		var unit int64
+		unit, e = restoreAllocationUnit(workspace)
+		if e == nil {
+			phaseBudgets, e = differentialRestoreBudget(plan.Chain, native, budgets, layout, unit)
+		}
+	}
 	if e != nil {
 		return nil, e
 	}
 	if e = configuration.CheckCapacity(phaseBudgets); e != nil {
 		return nil, e
 	}
+	var transfer int64
+	for _, c := range plan.Chain {
+		transfer += c.ManifestBytes
+		for _, a := range c.Artifacts {
+			transfer += a.StoredBytes
+		}
+	}
+	for _, b := range phaseBudgets {
+		slog.Info("native restore capacity reserved", "mount", b.Mount, "required_bytes", b.RequiredBytes)
+	}
+	slog.Info("native restore transfer", "backup_type", selected.Kind, "stored_bytes", transfer)
 	// Resolve the actual root before creating scratch; never use source staging or
 	// an alias to a memory-backed/unowned subtree.
 	if p, e := filepath.EvalSymlinks(NativeWorkspace); e != nil || p != NativeWorkspace {
@@ -83,17 +100,25 @@ func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Pla
 		return nil, e
 	}
 	defer os.RemoveAll(scratch) // ONLY this call's private scratch, never targets.
-	c := plan.Chain[0]
-	input, e := downloadFull(ctx, hold, c, scratch)
-	if e != nil {
-		return nil, fmt.Errorf("native download: %w", e)
+	inputs := make([]*fullInput, len(plan.Chain))
+	for i, c := range plan.Chain {
+		dir := filepath.Join(scratch, fmt.Sprint(i))
+		if e = os.Mkdir(dir, 0700); e != nil {
+			return nil, e
+		}
+		inputs[i], e = downloadFull(ctx, hold, c, dir)
+		if e != nil {
+			return nil, fmt.Errorf("native download: %w", e)
+		}
+		if e = inputs[i].scan(ctx, c, plan.Source.WALSegmentBytes, native); e != nil {
+			return nil, fmt.Errorf("native input scan: %w", e)
+		}
 	}
-	if e = input.scan(ctx, c, plan.Source.WALSegmentBytes, native); e != nil {
-		return nil, fmt.Errorf("native input scan: %w", e)
-	}
-	phaseBudgets, e = restoreOutputCapacity(input, c, native, budgets, layout)
-	if e != nil {
-		return nil, e
+	if len(inputs) == 1 {
+		phaseBudgets, e = restoreOutputCapacity(inputs[0], selected, native, budgets, layout)
+		if e != nil {
+			return nil, e
+		}
 	}
 	if e = configuration.CheckCapacity(phaseBudgets); e != nil {
 		return nil, e
@@ -112,18 +137,24 @@ func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Pla
 	run := func(ctx context.Context, tool string, args ...string) ([]byte, error) {
 		return runTool(ctx, []string{"LANG=C", "LC_ALL=C", "HOME=/nonexistent"}, tool, args...)
 	}
-	for _, tool := range []string{"pg_verifybackup", "pg_waldump", "pg_controldata"} {
+	for _, tool := range []string{"pg_verifybackup", "pg_waldump", "pg_controldata", "pg_combinebackup"} {
 		b, e := run(nativeCtx, tool, "--version")
 		if e != nil || !nativeVersion(b, tool) {
 			return nil, errors.New("native restore tool version mismatch")
 		}
 	}
-	if e = input.verify(nativeCtx, c, plan.Source.WALSegmentBytes, run); e != nil {
-		return nil, fmt.Errorf("native original verification: %w", e)
+	for i, input := range inputs {
+		if e = input.verify(nativeCtx, plan.Chain[i], plan.Source.WALSegmentBytes, run); e != nil {
+			return nil, fmt.Errorf("native original verification: %w", e)
+		}
 	}
-	result, err = input.materialize(nativeCtx, c, layout, run)
+	if len(inputs) == 2 {
+		result, err = combineOriginals(nativeCtx, inputs, plan.Chain, layout, native, run)
+	} else {
+		result, err = inputs[0].materialize(nativeCtx, selected, layout, run)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("native full materialization: %w", err)
+		return nil, fmt.Errorf("native materialization: %w", err)
 	}
 	if e = ctx.Err(); e != nil {
 		return nil, e

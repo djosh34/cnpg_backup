@@ -324,7 +324,7 @@ func TestRestoreNativeFailureAndCancellationLeaveTargets(t *testing.T) {
 	}
 }
 
-func TestRestoreLayoutCapacityAndUnsupportedChain(t *testing.T) {
+func TestRestoreLayoutCapacityAndInvalidChain(t *testing.T) {
 	l := RestoreLayout{PGDATA: liveData, WALDirectory: "/var/lib/postgresql/wal/pg_wal", Tablespaces: map[string]string{"fast": "/var/lib/postgresql/tablespaces/fast/data"}}
 	tables := []repository.Tablespace{{OID: 123, Name: "fast"}}
 	if e := validateRestoreLayout(l, tables); e != nil {
@@ -334,7 +334,7 @@ func TestRestoreLayoutCapacityAndUnsupportedChain(t *testing.T) {
 	if e := validateRestoreLayout(l, tables); e == nil {
 		t.Fatal("unmanaged target accepted")
 	}
-	if _, e := RestoreFull(context.Background(), nil, repository.Plan{Chain: []repository.Commit{{Kind: "full"}, {Kind: "differential"}}}, configuration.Native{}, nil, l); e == nil || !strings.Contains(e.Error(), "no full fallback") {
+	if _, e := RestoreFull(context.Background(), nil, repository.Plan{Chain: []repository.Commit{{Kind: "full"}, {Kind: "differential"}}}, configuration.Native{}, nil, l); e == nil {
 		t.Fatal(e)
 	}
 	inv := archiveInventory{files: map[string]int64{"a/b/file": 8193}, dirs: []string{"empty"}}
