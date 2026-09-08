@@ -38,15 +38,49 @@ def require_absent(result):
         raise RuntimeError('cannot positively establish candidate tag absence')
 
 
+def reuse_subject(head):
+    """The final G harness consumes the already published, unchanged product."""
+    subject = json.loads(Path('.github/ci-repair-subject.json').read_text())
+    sha = subject['revision']
+    if not re.fullmatch('[0-9a-f]{40}', sha):
+        raise RuntimeError('invalid frozen product revision')
+    run('git', 'merge-base', '--is-ancestor', sha, head)
+    # Permit only known non-product changes. Unknown/new build inputs take the
+    # existing audited publication path, rather than assuming a partial closure.
+    harness = {'hack/test', 'hack/backup_smoke.py', 'hack/wal_smoke.py',
+               'hack/premerge_candidate.py', 'hack/campaign_ci.py',
+               'hack/campaign_fixture.py', 'hack/campaign_plan.py',
+               'hack/campaign_process.py', 'hack/campaign_trust.py',
+               'hack/recovery_campaign.py', 'hack/recovery_cases.py'}
+    paths = run('git', 'diff', '--name-only', sha, head).stdout.splitlines()
+    if any(not (path.startswith(('docs/', '.github/')) or path in harness or
+                (path.startswith('hack/test_') and path.endswith('.py'))) for path in paths):
+        return None
+    for flavor in ('manager', 'pg18'):
+        if not re.fullmatch('ghcr.io/djosh34/cnpg-backup-' + flavor + '@sha256:[0-9a-f]{64}', subject['images'][flavor]):
+            raise RuntimeError('invalid frozen image digest')
+    return subject
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('phase', choices=('trust', 'preflight', 'publish'))
+    p.add_argument('phase', choices=('trust', 'preflight', 'publish', 'reuse'))
     phase = p.parse_args().phase
     sha = run('git', 'rev-parse', 'HEAD').stdout.strip()
     trust(os.environ, sha, run('git', 'remote', 'get-url', 'origin').stdout.strip())
     OUT.mkdir(parents=True, exist_ok=True)
     if phase == 'trust':
         (OUT / 'trust.json').write_text(json.dumps({'subject_sha': sha, 'trusted': True, 'release_qualified': False}) + '\n')
+        return
+    if phase == 'reuse':
+        subject = reuse_subject(sha)
+        (OUT / 'reused-subject.json').write_text(json.dumps({
+            'harness_revision': sha, 'subject': subject, 'release_qualified': False}, indent=2) + '\n')
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write('reuse=' + str(subject is not None).lower() + '\n')
+            output.write('sha=' + (subject['revision'] if subject else sha) + '\n')
+            for flavor, image in (subject['images'] if subject else {}).items():
+                output.write(flavor + '=' + image + '\n')
         return
     tags = references(sha)
     # Both phases refuse all existing tags, including partial prior publication.
