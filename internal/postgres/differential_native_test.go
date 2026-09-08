@@ -157,7 +157,9 @@ func TestActualNativeDifferentialMaterialization(t *testing.T) {
 	}
 	fixture("pg_ctl", "-D", source, "-m", "fast", "-w", "stop")
 	active = ""
-	if e = os.WriteFile(output.PGDATA+"/postgresql.auto.conf", []byte(config+"restore_command='/bin/false'\n"), 0600); e != nil {
+	// A bounded slow archive miss exposes SQL readiness before promotion. The
+	// oracle must await actual primary state, not assume pg_ctl -w implies it.
+	if e = os.WriteFile(output.PGDATA+"/postgresql.auto.conf", []byte(config+"restore_command='/bin/sh -c ''sleep 1; exit 1'''\n"), 0600); e != nil {
 		t.Fatal(e)
 	}
 	if e = os.WriteFile(output.PGDATA+"/recovery.signal", nil, 0600); e != nil {
@@ -165,6 +167,9 @@ func TestActualNativeDifferentialMaterialization(t *testing.T) {
 	}
 	fixture("pg_ctl", "-D", output.PGDATA, "-l", root+"/restore.log", "-w", "start")
 	active = output.PGDATA
+	if e := waitNativePrimary(ctx, sql); e != nil {
+		t.Fatal("native promotion", e)
+	}
 	if got := sql("SELECT count(*)||':'||md5(string_agg(id::text||':'||value,',' ORDER BY id)) FROM data"); got != expected {
 		t.Fatal("data hash", got, expected)
 	}

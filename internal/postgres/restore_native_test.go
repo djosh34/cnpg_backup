@@ -3,6 +3,8 @@ package postgres
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -221,6 +223,9 @@ func TestActualNativeFullMaterialization(t *testing.T) {
 			}
 			fixture("pg_ctl", "-D", test.layout.PGDATA, "-l", root+"/"+test.name+".log", "-w", "start")
 			defer fixture("pg_ctl", "-D", test.layout.PGDATA, "-m", "fast", "-w", "stop")
+			if e := waitNativePrimary(ctx, sql); e != nil {
+				t.Fatal("native promotion", e)
+			}
 			if got := sql(test.query); got != test.want {
 				t.Fatal(got, "want", test.want)
 			}
@@ -229,6 +234,52 @@ func TestActualNativeFullMaterialization(t *testing.T) {
 			}
 			t.Log(test.name + " actual local SQL verified")
 		}()
+	}
+}
+
+// pg_ctl -w also succeeds for hot-standby SQL readiness. Wait for the actual
+// primary predicate under the fixture's existing finite command context.
+func waitNativePrimary(ctx context.Context, sql func(string) string) error {
+	for {
+		if e := ctx.Err(); e != nil {
+			return e
+		}
+		switch state := sql("SELECT pg_is_in_recovery()"); state {
+		case "f":
+			return nil
+		case "t":
+		default:
+			return fmt.Errorf("unexpected native recovery state %q", state)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+func TestNativePrimaryWait(t *testing.T) {
+	calls := 0
+	if e := waitNativePrimary(context.Background(), func(query string) string {
+		if query != "SELECT pg_is_in_recovery()" {
+			t.Fatal(query)
+		}
+		calls++
+		if calls == 1 {
+			return "t"
+		}
+		return "f"
+	}); e != nil || calls != 2 {
+		t.Fatal("read-only readiness accepted as promotion", calls, e)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	if e := waitNativePrimary(ctx, func(string) string { return "t" }); !errors.Is(e, context.DeadlineExceeded) {
+		t.Fatal("unpromoted server accepted", e)
+	}
+	if e := waitNativePrimary(context.Background(), func(string) string { return "unknown" }); e == nil {
+		t.Fatal("unknown role accepted")
 	}
 }
 
