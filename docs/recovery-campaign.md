@@ -89,8 +89,12 @@ prerequisites have separate records; prior failed cases are not retried to green
 A leaked fixture blocks slot reuse. An audited product requirement is not causal
 proof of a product defect: automatic assertion classifications are explicitly
 unadjudicated. Preserve the original first-failure record and add separately bound
-causal adjudication after checking fixture/caller inputs and actual state. Collection and teardown errors are additional
-failures and never obscure the primary error. Primary failures are saved before
+causal adjudication after checking fixture/caller inputs and actual state. Optional
+forensic log/event/status collection errors are typed warnings in the manifest's
+`diagnostics` list, labeled **DIAGNOSTICS**, outside mandatory failure/accounting.
+They neither fail a valid case nor discard its fixture, block dependent acceptance,
+interrupt retention nor suppress safe retirement. Teardown errors remain additional
+mandatory failures and never obscure the primary error. Primary failures are saved before
 fault/object reset; every independent cleanup is attempted and recorded with its
 phase/association, including nested failures. Deadlines leave unexercised work
 blocked/incomplete. An unresolved timeout alone is not a demonstrated product bug.
@@ -146,9 +150,14 @@ TERM/KILL/reap path, independently of remote resets or an expired case budget.
 Standalone image-version/verifier containers have pre-recorded owned names and
 labels, 1CPU/512MiB/64PID limits, explicit forced removal and verified absence.
 Removal failure blocks fixture reuse; stale labeled containers also block a new
-run. Logs/events/status collectors proceed independently with typed results;
-unavailable logs are blocked only after fresh original-Pod absence or unstarted
-container evidence. Waits cap children by remaining case/run time and report
+run. Optional logs/events/status collectors proceed independently with bounded
+best-effort reads and typed DIAGNOSTICS, including startup races, absence,
+transport/auth/deadline/output-cap and optional artifact-write errors. No retry to
+green or fresh status proof is needed to tolerate an optional read failure.
+Target forensic logs have a30-second budget; final collection has300 seconds.
+Explicit oracle-required logs/markers/SQL/WAL/UIDs/holders/ownership evidence still
+fail closed: they are never read through the optional collector. Required manifest,
+identity and failure persistence, quiescence and teardown are not optional. Waits cap children by remaining case/run time and report
 last operation/status plus available scheduling/admission observations. Failures
 are collected before teardown. Fresh runs bind the120-minute budget into the immutable plan; only diagnostic
 runs can override it, and their actual budget is recorded. The campaign reserves five

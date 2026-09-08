@@ -1,7 +1,17 @@
 {
   "schema": 1,
-  "scope": "Every assert and wait/barrier in recovery_cases.py, recovery_campaign.py, campaign_fixture.py and the consumed WALFixture setup methods; registry maps all31+2 cases. Go actors and PostgreSQL tools remain unchanged independent observers, consumed through these assertions. Command status and input/resource/cleanup boundaries below are additional fail-closed harness contracts.",
+  "scope": "Every assert and wait/barrier in recovery_cases.py, recovery_campaign.py, campaign_fixture.py and the consumed WALFixture setup methods; registry maps all31+2 cases. Go actors and PostgreSQL tools remain unchanged independent observers, consumed through these assertions. Required command status and input/resource/cleanup boundaries below are additional fail-closed harness contracts; optional forensics are explicitly DIAGNOSTICS, not assertions.",
   "runtime_boundaries": [
+    {
+      "function": "Campaign.collect_target_logs/Fixture.collect_logs/collect_events/collect/Manifest.collect_diagnostics/run_plan disposal+retain/main collect+clean",
+      "category": "DIAGNOSTICS",
+      "requirement": "Optional bounded forensic logs/events/status and their artifacts persist typed warnings in manifest.diagnostics outside failures, case status and acceptance. All independent collectors and safe retirement continue; optional errors never discard fixtures or interrupt retention/cleanup. Startup/absence/auth/transport/deadline/cap errors are not backup assertions. Required manifest/identity persistence remains fail-closed outside the optional catch."
+    },
+    {
+      "function": "Campaign.replacement/replay_failure/reject/finish/terminated/retire_target",
+      "category": "safety-invariant",
+      "requirement": "Explicit oracle-required logs/markers/SQL/WAL/UID/holder/ownership observations remain mandatory and outside optional collection. Missing required evidence fails closed. Pod quiescence, original operation closure, unchanged source holders and owned backing retirement remain mandatory despite diagnostic errors."
+    },
     {
       "function": "image_config_digest/Fixture.image_digest",
       "category": "safety-invariant",

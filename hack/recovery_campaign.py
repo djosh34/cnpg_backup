@@ -111,7 +111,7 @@ class Manifest:
                          for s in names},
                      'requested_scenarios': names,
                      'not_requested_scenarios': [s for s in (*MANDATORY, *SUPPLEMENTAL) if s not in names],
-                     'remaining_mandatory': names, 'events': 0, 'failures': [], 'phase_timings': [],
+                     'remaining_mandatory': names, 'events': 0, 'failures': [], 'diagnostics': [], 'phase_timings': [],
                      'started_epoch': time.time(), 'teardown_complete': False}
         self.save()
 
@@ -138,6 +138,22 @@ class Manifest:
                 stream.flush()
                 os.fsync(stream.fileno())
         self.data['events'] += 1
+        self.save()
+
+    def collect_diagnostics(self, collector, action):
+        """Optional forensics only; never wrap an oracle or owned cleanup here."""
+        try:
+            errors = action() or []
+        except Exception as error:
+            errors = [{'collector': collector, 'error_type': type(error).__name__,
+                       'diagnostic': redact(str(error))[-4000:]}]
+        for error in errors:
+            self.data.setdefault('diagnostics', []).append({
+                **error, 'classification': 'DIAGNOSTICS', 'severity': 'warning',
+                'fixture': self.data.get('active_fixture'),
+                'scenario': getattr(self, 'current_case', None),
+                'branch': getattr(self, 'current_branch', None), 'epoch': time.time()})
+        # Required manifest persistence is deliberately OUTSIDE the optional catch.
         self.save()
 
     def failure(self, error, phase, scenario=None, fixture_requirement=None, caused_by=None):
@@ -266,6 +282,7 @@ class Manifest:
         for failure in self.data['failures']:
             label = 'unadjudicated product-requirement assertion' if failure['classification'] == 'product' else failure['classification']
             text += f"- {label}/{failure['phase']} {failure['scenario']}: {failure['diagnostic']}\n"
+        text += f"DIAGNOSTICS: {len(self.data.get('diagnostics', []))} optional collector warnings (not failures; see manifest.json)\n"
         (self.directory / 'summary.md').write_text(text)
         return passed
 
@@ -424,16 +441,17 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                 return
             fixture.commands.deadline = min(end, time.monotonic() + 600)
             try:
-                with manifest.phase('collection'):
-                    errors = fixture.collect()
-                    for error in errors:
-                        manifest.failure(RuntimeError(error['diagnostic']), 'collection')
+                with manifest.phase('collection'), fixture.commands.budget(300):
+                    manifest.collect_diagnostics('fixture', fixture.collect)
+            except Exception as error:
+                manifest.failure(error, 'failure-recording')
+            try:
                 if campaign and campaign.wal:
                     campaign.wal.close()
                     fixture.listener = None
                     fixture.record_ownership()
             except Exception as error:
-                manifest.failure(error, 'collection')
+                manifest.failure(error, 'child-reap')
             try:
                 with manifest.phase('teardown'), fixture.commands.budget(300):
                     fixture.close()
@@ -533,8 +551,8 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                         # Freeze the entire owned node after collection. Retained
                         # forensics cannot continue generating WAL/disk growth.
                         fixture.commands.deadline = min(end, time.monotonic() + 300)
-                        for error in fixture.collect():
-                            manifest.failure(RuntimeError(error['diagnostic']), 'collection')
+                        with fixture.commands.budget(300):
+                            manifest.collect_diagnostics('fixture', fixture.collect)
                         if campaign.wal:
                             campaign.wal.close()
                             fixture.listener = None
@@ -626,16 +644,15 @@ def main(argv=None):
                 print('owned fixture already closed')
                 return 0
             fixture.run('docker', 'unpause', fixture.NAME + '-control-plane', check=False, timeout=10)
-            errors = fixture.collect()
-            for error in errors:
-                manifest.failure(RuntimeError(error['diagnostic']), 'collection')
+            with fixture.commands.budget(300):
+                manifest.collect_diagnostics('fixture', fixture.collect)
             if args.command == 'clean':
                 with fixture.commands.budget(300):
                     fixture.close()
                 manifest.event('explicit-owned-cleanup', owner=str(args.owner), complete=True)
             else:
                 fixture.run('docker', 'pause', fixture.NAME + '-control-plane', timeout=10)
-            return int(bool(errors))
+            return 0
     elif args.command == 'compare':
         left, right = json.loads(args.left.read_text()), json.loads(args.right.read_text())
         print(json.dumps(validate_results(left['plan'], [left, right], cross_environment=True), indent=2))

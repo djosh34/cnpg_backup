@@ -539,24 +539,13 @@ rmdir "$path"
                 try:
                     result = self.kube_result('logs', name, '-n', namespace, '-c', container['name'],
                                               '--tail=300', '--limit-bytes=65536', timeout=10)
-                    if not result.ok and not result.timed_out and not result.dropped_bytes:
-                        # Re-read this exact identity. Error spelling alone says
-                        # nothing about whether a container ever started.
-                        current = json.loads(self.kube_result('get', 'pod', name, '-n', namespace,
-                                             '--ignore-not-found=true', '-o', 'json', timeout=10).require().stdout or '{}')
-                        statuses = current.get('status', {}).get('containerStatuses', []) + current.get('status', {}).get('initContainerStatuses', [])
-                        status = next((s for s in statuses if s['name'] == container['name']), {})
-                        absent = current.get('metadata', {}).get('uid') != pod['metadata']['uid']
-                        unstarted = not status.get('containerID') and not status.get('lastState') and (
-                            'waiting' in status.get('state', {}) or (not status and current.get('status', {}).get('phase') == 'Pending'))
-                        if absent or unstarted:
-                            self.m.event('collector-blocked', collector=collector, reason='original Pod absent' if absent else 'container never started',
-                                         observation=self.pod_evidence(current) if not absent else current.get('metadata', {}))
-                            continue
+                    # A failed optional read is a diagnostic, regardless of
+                    # startup races, absence, transport, auth or output limits.
+                    # Required log oracles use explicit kube() reads elsewhere.
                     result.require()
                     self.save_log(name + '-' + container['name'] + '.log', result.stdout + result.stderr, 65536)
                 except Exception as error:
-                    errors.append({'collector': collector, 'namespace': namespace, 'diagnostic': redact(str(error))})
+                    errors.append({'collector': collector, 'namespace': namespace, 'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:]})
         return errors
 
     def collect(self):
@@ -567,29 +556,40 @@ rmdir "$path"
             return errors
         if not (self.WORK / 'kubeconfig').is_file():
             return blocked('fixture kubeconfig')
-        if not self.container_exists(self.NAME + '-control-plane'):
-            return blocked('owned Kubernetes node')
-        if not self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=10).strip():
-            return blocked('Kubernetes sandboxes (already stopped during disposal)')
+        try:
+            if not self.container_exists(self.NAME + '-control-plane'):
+                return blocked('owned Kubernetes node')
+            if not self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=10).strip():
+                return blocked('Kubernetes sandboxes (already stopped during disposal)')
+        except Exception as error:
+            # A diagnostic availability probe grants no disposal authority.
+            # Still attempt independent Kubernetes reads; close() checks safety.
+            errors.append({'collector': 'availability', 'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:]})
         with self.commands.budget(300):
             for namespace in ('campaign-target', 'campaign-source', 'campaign-store', 'cnpg-system'):
                 try:
                     pods = json.loads(self.kube_result('get', 'pods', '-n', namespace, '-o', 'json', timeout=10).require().stdout)['items']
                 except Exception as error:
                     pods = []
-                    errors.append({'namespace': namespace, 'collector': 'statuses', 'diagnostic': redact(str(error))})
+                    errors.append({'namespace': namespace, 'collector': 'statuses', 'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:]})
                     self.m.event('collector-blocked', collector=namespace + '/logs', reason='Pod inventory unavailable')
                 else:
                     try:
                         self.save_log(namespace + '-statuses.json', json.dumps([self.pod_evidence(p) for p in pods]))
                     except Exception as error:
-                        errors.append({'namespace': namespace, 'collector': 'status-artifact', 'diagnostic': redact(str(error))})
+                        errors.append({'namespace': namespace, 'collector': 'status-artifact', 'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:]})
                 try:
                     self.collect_events(namespace)
                 except Exception as error:
-                    errors.append({'namespace': namespace, 'collector': 'events', 'diagnostic': redact(str(error))})
-                errors.extend(self.collect_logs(namespace, sorted(pods, key=lambda p: p['metadata']['creationTimestamp'], reverse=True)[:24]))
-        self.save_log('collection.json', json.dumps({'errors': errors}))
+                    errors.append({'namespace': namespace, 'collector': 'events', 'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:]})
+                try:
+                    errors.extend(self.collect_logs(namespace, sorted(pods, key=lambda p: p['metadata']['creationTimestamp'], reverse=True)[:24]))
+                except Exception as error:
+                    errors.append({'namespace': namespace, 'collector': 'logs', 'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:]})
+        try:
+            self.save_log('collection.json', json.dumps({'classification': 'DIAGNOSTICS', 'errors': errors}))
+        except Exception as error:
+            errors.append({'collector': 'collection-artifact', 'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:]})
         return errors
 
     def close(self):
