@@ -245,6 +245,9 @@ class Campaign:
                                  'plugins': [{'name': PLUGIN, 'isWALArchiver': True, 'parameters': {'repository': 'destination'}}]}}
         if 'differential' in getattr(self.args, 'fixtures', []):
             self.cluster['spec']['postgresql']['parameters']['log_replication_commands'] = 'on'
+            # Pace only this disposable workload's checkpoints within the fixed
+            # campaign budget; native captures still request checkpoint=spread.
+            self.cluster['spec']['postgresql']['parameters']['checkpoint_completion_target'] = '0.1'
         h.wait(lambda: h.admission_ready(h.kube('apply', '--server-side', '--dry-run=server', '-f', '-',
                                                 input=json.dumps(self.cluster), check=False)), 'actual mTLS discovery')
         h.apply(self.cluster)
