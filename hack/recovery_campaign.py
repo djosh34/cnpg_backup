@@ -378,13 +378,19 @@ def build_bundle(directory, diagnostic=False, reuse=None):
     return record
 
 
-def run_plan(plan, directory, bundle, duration=120, retain=False):
+def run_plan(plan, directory, bundle, duration=120, retain=False, branches=()):
     from campaign_fixture import Fixture, preflight
     from recovery_cases import Campaign
     if not 11 <= duration <= 135:
         raise ValueError('duration must be 11..135 minutes (ten minutes reserved for disposal)')
     if retain and plan['recipe']['fixture_mode'] != 'diagnostic':
         raise ValueError('retention is diagnostic-only and cannot enter fresh acceptance')
+    if branches:
+        if plan['recipe']['fixture_mode'] != 'diagnostic':
+            raise ValueError('branch replay is diagnostic-only; unselected coverage remains unproved')
+        known = {c['id'] + '/' + b for c in selected(plan['recipe']['profile'], plan['cases']) for b in c.get('branches', ['main'])}
+        if not set(branches) <= known:
+            raise ValueError('unknown branch in diagnostic replay')
     if bundle['content_hash'] != plan['harness']['content_hash'] or {k: v for k, v in bundle.items() if k != 'directory'} != plan['harness']:
         raise ValueError('selected harness bundle differs from plan')
     recipe = plan['recipe']
@@ -410,6 +416,9 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
         manifest = Manifest(directory / 'evidence', {'plan': plan, 'profile': plan['recipe']['profile'],
                             'fixture_mode': plan['recipe']['fixture_mode'], 'seed': plan['recipe']['seed'], 'duration_minutes': duration,
                             'host': os.getenv('GITHUB_ACTIONS') and 'hosted' or 'local'}, plan['cases'], end - 600)
+        if branches:
+            manifest.data['diagnostic_branches'] = list(branches)
+            manifest.save()
         commands = Commands(manifest.directory, cwd=ROOT, deadline=end - 600)
         try:
             with manifest.phase('preflight'):
@@ -463,7 +472,8 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
             raise Deadline('campaign fault-generation deadline; collection/teardown reserve begins')
         old_handler = signal.signal(signal.SIGALRM, expired)
         signal.setitimer(signal.ITIMER_REAL, max(.01, manifest.deadline - time.monotonic()))
-        pending = deque((case, branch) for case in cases for branch in case.get('branches', ['main']))
+        pending = deque((case, branch) for case in cases for branch in case.get('branches', ['main'])
+                        if not branches or case['id'] + '/' + branch in branches)
         try:
             while pending:
                 case, branch = pending.popleft()
@@ -608,6 +618,7 @@ def main(argv=None):
     run.add_argument('--run-dir', type=Path, required=True)
     run.add_argument('--duration-minutes', type=int, default=120)
     run.add_argument('--retain-on-failure', action='store_true')
+    run.add_argument('--branch', action='append', default=[], help='diagnostic-only case/branch replay; full-family accounting remains incomplete')
     pre = sub.add_parser('preflight')
     pre.add_argument('--plan', type=Path, required=True)
     pre.add_argument('--out', type=Path, required=True)
@@ -630,7 +641,7 @@ def main(argv=None):
         atomic_json(args.out, value)
     elif args.command == 'run':
         os.environ['KIND_EXPERIMENTAL_PROVIDER'] = 'docker'
-        code = run_plan(json.loads(args.plan.read_text()), args.run_dir.resolve(), load_bundle(args.bundle), args.duration_minutes, args.retain_on_failure)
+        code = run_plan(json.loads(args.plan.read_text()), args.run_dir.resolve(), load_bundle(args.bundle), args.duration_minutes, args.retain_on_failure, args.branch)
         print((args.run_dir / 'evidence/summary.md').read_text(), flush=True)
         return code
     elif args.command == 'preflight':

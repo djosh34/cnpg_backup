@@ -21,7 +21,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([c['id'] for c in cases[-2:]], ['seeded-XID-1', 'seeded-XID-2'])
         self.assertFalse(any('same-segment' in c['fixtures'] for c in selected('retry')))
 
-    def exercise_runner(self, directory, cleanup_failure=False, source_failure=False, setup_failure=False, collector_failure=False, optional_only=False, retain=False, differential=None):
+    def exercise_runner(self, directory, cleanup_failure=False, source_failure=False, setup_failure=False, collector_failure=False, optional_only=False, retain=False, differential=None, branches=()):
         source = 'source-namespace-catalog-loss-S3-only'
         cases = [dict(id=name, method=method, requires=requires, fixtures=['source'], group='targets', seconds=30, requirement='test independent SQL')
                  for name, method, requires in [(source, 'case_source_namespace_catalog_loss_S3_only', []),
@@ -128,7 +128,7 @@ class PlanTests(unittest.TestCase):
              patch('recovery_campaign.selected', side_effect=select), patch('recovery_campaign.Commands.run', return_value=''), \
              patch('recovery_campaign.Path.home', return_value=directory.parent), patch('recovery_campaign.load_bundle', return_value=harness), \
              patch('recovery_campaign.make_plan', return_value=plan):
-            self.assertEqual(run_plan(plan, directory, {**harness, 'directory': directory}, duration=11, retain=retain),
+            self.assertEqual(run_plan(plan, directory, {**harness, 'directory': directory}, duration=11, retain=retain, branches=branches),
                              0 if optional_only and not cleanup_failure else 1)
         return json.loads((directory / 'evidence/manifest.json').read_text()), calls, closed
 
@@ -176,6 +176,31 @@ class PlanTests(unittest.TestCase):
                 self.assertEqual(result['failures'][0]['classification'], 'product')
                 self.assertEqual(len(closed), 8)
                 self.assertTrue(result['teardown_complete'])
+
+    def test_diagnostic_branch_replay_does_not_claim_unexecuted_coverage(self):
+        with tempfile.TemporaryDirectory() as d:
+            result, calls, closed = self.exercise_runner(Path(d) / 'run', differential='healthy',
+                                                         branches=['differential-native/checksum'])
+            branches = result['scenarios']['differential-native']['branches']
+            self.assertEqual(branches['checksum']['status'], 'passed')
+            self.assertTrue(all(v['status'] == 'not_executed' for k, v in branches.items() if k != 'checksum'))
+            self.assertEqual(result['scenarios']['seeded-XID-1']['status'], 'not_executed')
+            self.assertEqual(result['diagnostic_branches'], ['differential-native/checksum'])
+            self.assertFalse(result['scope_passed'])
+            self.assertFalse(result['release_qualified'])
+            self.assertFalse(result['failures'])
+            self.assertEqual(calls, ['fresh setup', 'checksum'])
+            self.assertEqual(len(closed), 1)
+            self.assertTrue(result['teardown_complete'])
+
+    def test_branch_replay_rejects_fresh_and_unknown_selection(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, 'diagnostic-only'):
+                run_plan({'recipe': {'fixture_mode': 'fresh'}}, Path(d) / 'fresh', {}, branches=['differential-native/checksum'])
+            self.assertFalse((Path(d) / 'fresh').exists())
+            with self.assertRaisesRegex(ValueError, 'unknown branch'):
+                self.exercise_runner(Path(d) / 'unknown', differential='healthy', branches=['differential-native/typo'])
+            self.assertFalse((Path(d) / 'unknown').exists())
 
     def test_H_baseline_failure_blocks_only_actual_differential_dependents(self):
         with tempfile.TemporaryDirectory() as d:
