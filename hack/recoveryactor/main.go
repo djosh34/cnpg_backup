@@ -136,8 +136,40 @@ func main() {
 	event(map[string]any{"event": "actual-cnpg-exit", "exit": code})
 	mark("cnpg-exited")
 	must(wait(ctx, "release-shutdown"))
+	writer, e := os.ReadFile(root + "/release-shutdown")
+	must(e)
+	writerPID, e := strconv.Atoi(string(writer))
+	must(e)
+	shutdownCtx, cancelShutdown := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelShutdown()
+	must(waitProcessExit(shutdownCtx, writerPID))
 	// Do NOT reap proxy: product guard must adopt/reap detached descendants.
 	os.Exit(code)
+}
+
+// The shutdown marker's writer is an exec process in the guarded namespace.
+// Let it exit before this wrapper exits and PID1 signals every remaining process;
+// marker visibility alone otherwise races the writer's successful exec result.
+func waitProcessExit(ctx context.Context, pid int) error {
+	if pid <= 1 {
+		return errors.New("invalid shutdown marker writer")
+	}
+	t := time.NewTicker(20 * time.Millisecond)
+	defer t.Stop()
+	for {
+		err := syscall.Kill(pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
 }
 
 // /plugins is a subPath bind mount. Rename via the full volume alias for BOTH

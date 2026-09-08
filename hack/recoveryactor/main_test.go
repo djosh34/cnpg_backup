@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,6 +19,33 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
+
+// This real process test covers only the shutdown signaling seam, not PG or
+// guard qualification; process_drain still requires actual PG descendants.
+func TestShutdownWaitsForExecWriterExit(t *testing.T) {
+	writer := exec.Command("sleep", "30")
+	if err := writer.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.Process.Kill(); _ = writer.Wait() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := waitProcessExit(ctx, writer.Process.Pid); err != context.DeadlineExceeded {
+		t.Fatalf("shutdown permitted while exec writer is live: %v", err)
+	}
+	if err := writer.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Wait()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := waitProcessExit(ctx, writer.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitProcessExit(ctx, 1); err == nil {
+		t.Fatal("namespace PID1 accepted as signaling writer")
+	}
+}
 
 func TestRelocateSocketUsesFullVolumeAliasAndPreservesListener(t *testing.T) {
 	volume, err := os.MkdirTemp("", "sock-")

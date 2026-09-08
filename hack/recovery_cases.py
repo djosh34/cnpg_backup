@@ -420,6 +420,12 @@ class Campaign:
         self.event('fault-precondition', pod=pod, barrier=name, observed=True)
 
     def release(self, pod, name):
+        if name == 'release-shutdown':
+            # Atomically publish this exec writer's PID. The actor waits for its
+            # exit before allowing PID1 to terminate all remaining descendants.
+            h.kube('exec', '-n', TARGET, pod, '-c', 'full-recovery', '--', 'sh', '-ec',
+                   'printf "%s" "$$" > "$1.next"; mv "$1.next" "$1"', 'shutdown-writer', '/controller/campaign/' + name)
+            return
         self.file(pod, '/controller/campaign/' + name, 'release\n')
 
     def start(self, target, hold_replay=False):
@@ -1207,11 +1213,20 @@ class Campaign:
             self.release(state['pod'], 'release-response')
             self.barrier(state['pod'], 'replay-held')
             before = json.loads(h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', '/controller/manager', 'stop-cnpg'))
+            self.event('PostgreSQL-before-orphan-adoption', processes=before)
             self.barrier(state['pod'], 'cnpg-exited')
-            after = json.loads(h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', '/controller/manager', 'processes'))
             cnpg = next(p for p in before if p['kind'] == 'cnpg')
-            orphans = [p for p in after if p['kind'] == 'postgres' and p['parent'] == 1]
-            assert orphans, 'actual PostgreSQL orphan adoption not observed'
+            postgres_pids = {p['pid'] for p in before if p['kind'] == 'postgres'}
+            orphans = []
+            def adopted():
+                nonlocal orphans
+                after = json.loads(h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', '/controller/manager', 'processes'))
+                self.event('PostgreSQL-orphan-adoption-observation', processes=after)
+                orphans = [p for p in after if p['kind'] == 'postgres' and p['parent'] == 1 and p['pid'] in postgres_pids]
+                return bool(orphans)
+            # CNPG's pg_ctl can still parent the postmaster after CNPG exits.
+            # Wait for actual adoption, not a guessed delay or CNPG's exit alone.
+            h.wait(adopted, 'actual PostgreSQL orphan adoption', 30)
             assert any(p['group'] != cnpg['group'] or p['session'] != cnpg['session'] for p in orphans), 'detached PG process-group/session injection not established'
             assert self.markers(state) == ['present'] * 3
             self.replacement(state)
