@@ -48,6 +48,15 @@ MANDATORY = SMOKE + (
 )
 
 
+def scenarios(profile):
+    if profile == 'smoke':
+        return SMOKE
+    if profile == 'ownership':
+        # Local diagnostic slice; source loss remains a real prerequisite.
+        return ('source-namespace-catalog-loss-S3-only',) + MANDATORY[MANDATORY.index('guard-before-RPC-same-PVC-no-mutation'):]
+    return MANDATORY
+
+
 class Deadline(RuntimeError):
     pass
 
@@ -190,7 +199,7 @@ def collect():
 
 def options(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--profile', choices=('smoke', 'recovery', 'qualification'), default='recovery')
+    p.add_argument('--profile', choices=('smoke', 'ownership', 'recovery', 'qualification'), default='recovery')
     p.add_argument('--seed', type=int, default=1806)
     p.add_argument('--duration-minutes', type=int, default=120)
     p.add_argument('--subject-sha', required=True)
@@ -219,7 +228,7 @@ def execute(args):
     if args.worker:
         from recovery_cases import Campaign
         m = Manifest(OUT, json.loads((WORK / 'inputs.json').read_text()),
-                     SMOKE if args.profile == 'smoke' else MANDATORY,
+                     scenarios(args.profile),
                      deadline=time.monotonic() + args.duration_minutes * 60 - 300)
         campaign = Campaign(args, m)
         try:
@@ -256,7 +265,7 @@ def execute(args):
               'replay': ['python3', 'hack/recovery_campaign.py', *sys.argv[1:]],
               'real_system_seed_is_not_deterministic': True}
     atomic_json(WORK / 'inputs.json', inputs)
-    Manifest(OUT, inputs, SMOKE if args.profile == 'smoke' else MANDATORY)
+    Manifest(OUT, inputs, scenarios(args.profile))
     # Child owns provisioning/faults. A process-group deadline covers blocked
     # kubectl, Go build, downloads and test actors; five minutes remain to collect.
     command = [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:], '--worker']

@@ -192,7 +192,10 @@ class Campaign:
         h.apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'campaign-target'},
                  'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
         self.pool(3)
-        backup_smoke.bounded_capture_workspaces(h, count=16 if self.args.profile == 'smoke' else 80)
+        # One fresh capture workspace per source/target identity; the local
+        # ownership slice needs fewer than the full matrix, never smaller quotas.
+        workspace_count = {'smoke': 16, 'ownership': 32}.get(self.args.profile, 80)
+        backup_smoke.bounded_capture_workspaces(h, count=workspace_count)
         install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', SOURCE,
                                     ['s3-auth', 'database-ca', 'database-replication'])
         target_install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', TARGET, target_secret_names())
@@ -720,6 +723,11 @@ class Campaign:
             h.kube('delete', 'namespace', SOURCE, '--wait=true', '--timeout=180s', timeout=200)
             assert not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']
             self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
+        if self.args.profile == 'ownership':
+            self.ownership()
+            self.process_drain()
+            self.protection()
+            return  # Manifest still fails on any missing requested family.
         with self.m.case('full-latest-remote-SQL'):
             selected = self.restore({}, LATEST, ordinary=True)
             newest = getattr(self, 'same_commit', self.newest)

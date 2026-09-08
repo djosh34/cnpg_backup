@@ -41,6 +41,12 @@ J operations/security and K certification are not implemented here. Every profil
 always reports `release_qualified=false`; absent mandatory evidence fails its
 scope, even after earlier successful cases.
 
+For fast local failure diagnosis, `--profile ownership` runs the source-loss
+recovery prerequisite and all 12 guard/crash/drain/protection families using the
+same setup, methods and oracles. Its manifest lists the 18 unrequested families
+and cannot claim all-G coverage. Run `--profile recovery` afterward for the full
+mandatory gate; hosted candidate and qualification defaults are unchanged.
+
 The reusable/manual `.github/workflows/recovery-campaign.yml` has `contents: read`,
 pinned Actions, a 150-minute job deadline and an earlier process-group deadline.
 Duration is constrained to 10–135 minutes; default 120 includes collection, with

@@ -9,6 +9,47 @@ import recovery_campaign as c
 
 
 class CampaignTests(unittest.TestCase):
+    def test_ownership_slice_never_claims_all_g_or_qualification(self):
+        self.assertEqual(c.scenarios('recovery'), c.MANDATORY)
+        self.assertEqual(c.scenarios('qualification'), c.MANDATORY)
+        self.assertEqual(c.scenarios('smoke'), c.SMOKE)
+        selected = c.scenarios('ownership')
+        self.assertEqual(len(selected), 13)
+        self.assertIn('source-namespace-catalog-loss-S3-only', selected)
+        self.assertIn('controller-all-Job-retry-Pods-terminated', selected)
+        with tempfile.TemporaryDirectory() as tmp:
+            m = c.Manifest(Path(tmp), {'profile': 'ownership'}, selected)
+            for name in selected[:-1]:
+                with m.case(name):
+                    pass
+            self.assertFalse(m.finish())
+            with m.case(selected[-1]):
+                pass
+            self.assertTrue(m.finish())
+            self.assertFalse(m.data['all_g_families_passed'])
+            self.assertFalse(m.data['release_qualified'])
+            self.assertEqual(set(m.data['not_requested_scenarios']), set(c.MANDATORY) - set(selected))
+
+    def test_ownership_slice_runs_source_loss_then_all_remaining_methods(self):
+        from recovery_cases import Campaign
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            m = c.Manifest(out, {'profile': 'ownership'}, c.scenarios('ownership'))
+            campaign = Campaign(SimpleNamespace(profile='ownership'), m)
+            campaign.base = {'backup_uid': 'original'}
+            calls = []
+            with patch('recovery_cases.OUT', out), patch.object(campaign, 'inventory', return_value=[]), \
+                 patch('recovery_cases.h.kube', return_value='{"items":[]}') as kube, \
+                 patch.object(campaign, 'restore', side_effect=lambda *a: calls.append('source-restore')), \
+                 patch.object(campaign, 'ownership', side_effect=lambda: calls.append('ownership')), \
+                 patch.object(campaign, 'process_drain', side_effect=lambda: calls.append('drain')), \
+                 patch.object(campaign, 'protection', side_effect=lambda: calls.append('protection')):
+                campaign.run()
+            self.assertEqual(kube.call_args_list[0].args[:3], ('delete', 'namespace', 'campaign-source'))
+            self.assertEqual(calls, ['source-restore', 'ownership', 'drain', 'protection'])
+            self.assertFalse(m.finish())  # Mocked methods are not actual coverage.
+
     def test_subject_is_exact_and_does_not_accept_other_registry_or_tag(self):
         good = 'ghcr.io/djosh34/cnpg-backup-manager@sha256:' + 'a' * 64
         self.assertEqual(c.subject_image(good, 'manager'), good)
