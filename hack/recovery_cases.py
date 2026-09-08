@@ -720,17 +720,12 @@ class Campaign:
 
     def collect_target_logs(self, pods):
         from campaign_fixture import Fixture
-        errors = Fixture.collect_logs(self.h, TARGET, pods)
-        if errors:
-            failures = []
-            for item in errors:
-                error = CommandFailure(item['collector'] + ': ' + item['diagnostic'])
-                error.campaign_phase = 'collection'
-                failures.append(error)
-            raise ExceptionGroup('target evidence collection failed', failures)
+        with self.h.commands.budget(30):
+            self.m.collect_diagnostics('target-logs', lambda: Fixture.collect_logs(self.h, TARGET, pods))
 
     def retire_target(self, state):
-        # Bound live PostgreSQL/sidecar memory. Preserve status/log evidence first;
+        # Bound live PostgreSQL/sidecar memory. Logs are optional forensics;
+        # Pod/operation/holder identities and safe retirement remain mandatory.
         # PVCs and durable poison markers are NEVER cleared or reused here.
         h = self.h
         observed_pods = self.pods(state['name'])

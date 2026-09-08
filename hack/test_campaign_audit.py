@@ -44,6 +44,14 @@ class AuditTests(unittest.TestCase):
         observed.subtract([next(iter(observed))])
         self.assertNotEqual(observed, required_records())
 
+    def test_optional_collectors_are_diagnostics_not_assertions(self):
+        audit = json.loads((ROOT / 'docs/campaign-assertion-audit.json').read_text())
+        optional = next(r for r in audit['runtime_boundaries'] if 'Manifest.collect_diagnostics' in r['function'])
+        self.assertEqual(optional['category'], 'DIAGNOSTICS')
+        self.assertIn('outside failures', optional['requirement'])
+        required = next(r for r in audit['runtime_boundaries'] if 'Campaign.replacement' in r['function'])
+        self.assertEqual(required['category'], 'safety-invariant')
+
     def test_conditional_and_fixture_requirement_mappings(self):
         records = json.loads((ROOT / 'docs/campaign-assertion-audit.json').read_text())['assertions']
         ordinary = next(r for r in records if r['id'] == 'd75da2f47d486740')

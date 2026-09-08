@@ -297,7 +297,7 @@ class ReviewFixTests(unittest.TestCase):
             self.assertEqual(len(errors), 8)
             self.assertEqual(sum('API forbidden' in e['diagnostic'] for e in errors), 4)
 
-    def test_unavailable_logs_need_fresh_absence_or_unstarted_status_evidence(self):
+    def test_unavailable_optional_logs_are_warnings_not_retirement_gates(self):
         for state in ('running', 'waiting', 'deleted', 'forbidden'):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -314,19 +314,19 @@ class ReviewFixTests(unittest.TestCase):
                     if args[0] == 'logs' or state == 'forbidden':
                         return CommandResult('logs', 1, '', 'API unavailable', 0, False, 0)
                     return CommandResult('status', 0, '' if state == 'deleted' else json.dumps(pod), '', 0, False, 0)
-                with patch.object(c, 'pods', return_value=[pod]), patch.object(f, 'kube_result', side_effect=kube_result), patch.object(f, 'kube') as mutate:
-                    if state in ('running', 'forbidden'):
-                        with self.assertRaises(BaseException):
-                            with m.case('retire'):
-                                c.retire_target({'name': 'g', 'pvc_uids': []})
-                        self.assertEqual(len(m.data['failures']), 2)
-                        self.assertTrue(all(e['phase'] == 'collection' for e in m.data['failures']))
-                        mutate.assert_not_called()
-                    else:
-                        c.collect_target_logs([pod])
-                        events = [json.loads(line) for line in (m.directory / 'events.jsonl').read_text().splitlines()]
-                        self.assertEqual([e['event'] for e in events], ['collector-blocked'] * 2)
-                        self.assertFalse(m.data['failures'])
+                with patch.object(c, 'pods', side_effect=[[pod], []]), patch.object(f, 'kube_result', side_effect=kube_result), \
+                     patch.object(f, 'kube') as mutate, patch.object(f, 'wait', side_effect=lambda check, *a: self.assertTrue(check())), \
+                     patch.object(c, 'operation_state', return_value={'state': 'uncertain'}), \
+                     patch.object(c, 'gate', return_value={'holders': ['original-holder']}), patch.object(f, 'retire_claims') as retire:
+                    with m.case('retire'):
+                        c.retire_target({'name': 'g', 'pvc_uids': []})
+                    retire.assert_called_once()
+                    self.assertTrue(mutate.called)
+                    self.assertFalse(m.data['failures'])
+                    self.assertEqual(m.data['scenarios']['retire']['status'], 'passed')
+                    self.assertEqual(len(m.data['diagnostics']), 2)
+                    self.assertTrue(all(e['classification'] == 'DIAGNOSTICS' and e['error_type'] == 'CommandFailure'
+                                        for e in m.data['diagnostics']))
                 self.assertEqual(sum(a[0] == 'logs' for a in calls), 2)
 
     def test_actual_runner_finishes_independent_branches_on_certified_fresh_fixtures(self):

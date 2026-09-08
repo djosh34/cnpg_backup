@@ -44,6 +44,7 @@ class CampaignTests(unittest.TestCase):
             def wait(predicate, *args):
                 self.assertTrue(predicate())
             with patch.object(campaign, 'pods', return_value=[]), patch.object(campaign, 'event'), \
+                 patch.object(campaign, 'collect_target_logs'), \
                  patch.object(campaign, 'operation_state', return_value={'state': 'uncertain' if closed else 'active'}), \
                  patch('recovery_cases.h.kube', side_effect=kube), patch('recovery_cases.h.wait', side_effect=wait):
                 if closed:
