@@ -698,8 +698,18 @@ class Campaign:
                     continue
                 text = h.kube('logs', pod['metadata']['name'], '-n', TARGET, '-c', container, '--tail=300', '--limit-bytes=65536', check=False)
                 h.save_log(pod['metadata']['name'] + '-' + container + '.log', text, 65536)
-        h.kube('delete', 'cluster', state['name'], '-n', TARGET, '--wait=true', '--timeout=120s')
+        # Keep the operation object until the original observer records closure.
+        # Deleting its Cluster first can GC that object before uncertainty is
+        # durable, correctly retaining an in-memory fence/capacity indefinitely.
+        h.kube('annotate', 'cluster/' + state['name'], '-n', TARGET, 'cnpg.io/reconciliationLoop=disabled', '--overwrite')
+        for resource in ('jobs', 'pods'):
+            h.kube('delete', resource, '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'],
+                   '--ignore-not-found=true', '--wait=true', '--timeout=120s')
         h.wait(lambda: not self.pods(state['name']), 'owned target Pods stopped before next scenario', 120)
+        h.wait(lambda: self.operation_state(state)['state'] in ('uncertain', 'completed'),
+               'original observer durably closed before test Cluster cleanup', 120)
+        self.event('target-cleanup-operation-closed', cluster=state['name'], operation=self.operation_state(state))
+        h.kube('delete', 'cluster', state['name'], '-n', TARGET, '--wait=true', '--timeout=120s')
         self.event('target-retired-after-evidence', cluster=state['name'], pvc_uids=state['pvc_uids'], target_markers_removed_by_harness=False)
 
     def inventory(self, prefix):

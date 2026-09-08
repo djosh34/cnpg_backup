@@ -183,6 +183,11 @@ release evidence. Unit-test results do not populate real scenario completion.
 fixtures. Stale work/evidence is refused rather than overwritten. Successful
 Cluster Pods are removed **after** evidence and clean completion checks to bound
 live memory; target PVCs/poison markers are never cleared/reused by the harness.
+For per-target cleanup, pause CNPG reconciliation and stop owned Jobs/Pods while
+the Cluster/operation ConfigMap still exist. Require the original observer's
+durable uncertain/completed close before deleting the Cluster; this does not
+certify completion or release uncertain source holders. Deleting that object
+first can correctly retain a bounded in-memory fence and exhaust later admission.
 The collector leaves kind/PVC state for diagnosis. After collecting a local run,
 its recorded cluster can be deleted with the downloaded kind executable; never
 clear a product poison marker to rerun a case.

@@ -72,6 +72,28 @@ class CampaignTests(unittest.TestCase):
             self.assertEqual(calls, ['source-restore', 'retry'])
             self.assertFalse(m.finish())
 
+    def test_cleanup_keeps_operation_until_original_observer_is_closed(self):
+        from recovery_cases import Campaign
+        state = {'name': 'g-001', 'pvc_uids': ['data', 'wal', 'tablespace']}
+        for closed in (False, True):
+            campaign = Campaign(None, None)
+            actions = []
+            def kube(*args, **kwargs):
+                actions.append(args)
+            def wait(predicate, *args):
+                self.assertTrue(predicate())
+            with patch.object(campaign, 'pods', return_value=[]), patch.object(campaign, 'event'), \
+                 patch.object(campaign, 'operation_state', return_value={'state': 'uncertain' if closed else 'active'}), \
+                 patch('recovery_cases.h.kube', side_effect=kube), patch('recovery_cases.h.wait', side_effect=wait):
+                if closed:
+                    campaign.retire_target(state)
+                else:
+                    with self.assertRaises(AssertionError):
+                        campaign.retire_target(state)
+            deletions = [a[1] for a in actions if a[0] == 'delete']
+            self.assertEqual(deletions, ['jobs', 'pods', 'cluster'] if closed else ['jobs', 'pods'])
+            self.assertFalse(any('--force' in a or '--grace-period=0' in a for a in actions))
+
     def test_subject_is_exact_and_does_not_accept_other_registry_or_tag(self):
         good = 'ghcr.io/djosh34/cnpg-backup-manager@sha256:' + 'a' * 64
         self.assertEqual(c.subject_image(good, 'manager'), good)
