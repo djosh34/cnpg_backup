@@ -64,6 +64,50 @@ class ProcessTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, 'helper exit differs'):
                 campaign.helper({'pod': 'owned-negative'}, '000000010000000000000003', 1)
 
+    def test_archive_config_identity_and_node_consumption_do_not_use_docker_display_id(self):
+        import hashlib, io, json, tarfile
+        from campaign_fixture import Fixture
+        from campaign_plan import image_config_digest
+        from campaign_process import CommandResult
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)
+            tag = 'cb-repair-minio:test'
+            raw = json.dumps({'os': 'linux', 'architecture': 'amd64', 'rootfs': {'type': 'layers', 'diff_ids': []}}).encode()
+            expected = 'sha256:' + hashlib.sha256(raw).hexdigest()
+            archive = directory / 'minio.tar'
+            with tarfile.open(archive, 'w') as out:
+                for name, data in [('config.json', raw), ('manifest.json', json.dumps([{'Config': 'config.json', 'RepoTags': [tag], 'Layers': []}]).encode())]:
+                    member = tarfile.TarInfo(name); member.size = len(data)
+                    out.addfile(member, io.BytesIO(data))
+            self.assertEqual(image_config_digest(archive, tag), expected)
+            with self.assertRaisesRegex(ValueError, 'requested image'):
+                image_config_digest(archive, 'wrong:tag')
+            for wrong in (False, True):
+                fixture = Fixture.__new__(Fixture)
+                fixture.NAME, fixture.WORK = 'cb-repair-aaaaaaaaaaaa', directory
+                fixture.bundle = {'directory': directory, 'images': {'minio': {'tag': tag, 'archive': 'minio.tar', 'config_digest': expected}},
+                    'files': {'minio.tar': hashlib.sha256(archive.read_bytes()).hexdigest()}}
+                manifest = json.dumps({'config': {'digest': 'sha256:' + 'f' * 64 if wrong else expected}})
+                manifest_digest = 'sha256:' + hashlib.sha256(manifest.encode()).hexdigest()
+                calls = []
+                def run(*args, **kwargs):
+                    calls.append(args)
+                    if 'list' in args:
+                        return f'docker.io/library/{tag} media-type {manifest_digest} 100'
+                    return ''
+                fixture.run = run
+                fixture.commands = Mock()
+                fixture.commands.command.return_value = CommandResult('node-manifest', 0, manifest, '', 0, False, 0)
+                fixture.m = Mock(data={})
+                if wrong:
+                    with self.assertRaisesRegex(ValueError, 'config differs'):
+                        fixture.image_digest('minio')
+                else:
+                    fixture.image_digest('minio')
+                    self.assertEqual(fixture.m.data['fixture_images']['minio']['config_digest'], expected)
+                self.assertTrue(any('image-archive' in args for args in calls))
+                self.assertFalse(any('inspect' in args or 'docker-image' in args for args in calls))
+
     def test_container_absence_requires_successful_list_not_error_spelling(self):
         from campaign_fixture import Fixture
         fixture = Fixture.__new__(Fixture)

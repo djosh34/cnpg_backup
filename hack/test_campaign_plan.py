@@ -126,13 +126,15 @@ class PlanTests(unittest.TestCase):
             self.assertFalse(result['teardown_complete'])
 
     def test_parity_rejects_partial_retained_mismatched_and_missing_supplemental(self):
-        images = {name: {'id': name + '-immutable'} for name in ('minio', 'walproxy', 'recoveryactor')}
+        images = {name: {'config_digest': name + '-immutable', 'archive': name + '.tar'} for name in ('minio', 'walproxy', 'recoveryactor')}
+        files = {name + '.tar': name + '-archive-sha256' for name in images}
         limits = {'node_cpus': 4, 'node_memory_gib': 5}
-        plan = {'subject': {'digest': 'same'}, 'harness': {'digest': 'same', 'images': images},
+        plan = {'subject': {'digest': 'same'}, 'harness': {'schema': 2, 'digest': 'same', 'images': images, 'files': files},
                 'recipe': {'seed': 1806, 'registry_hash': digest(REGISTRY), 'fixture_mode': 'fresh', 'resources': limits, 'duration_minutes': 120},
                 'cases': [c['id'] for c in selected('recovery')]}
         result = {'plan': plan, 'fixture_mode': 'fresh', 'scope_passed': True, 'teardown_complete': True, 'duration_minutes': 120,
-                  'fixture_envelopes': {'owned-node': limits}, 'fixture_images': images,
+                  'fixture_envelopes': {'owned-node': limits},
+                  'fixture_images': {name: {'config_digest': image['config_digest'], 'archive_sha256': files[image['archive']]} for name, image in images.items()},
                   'scenarios': {s: {'status': 'passed'} for s in plan['cases']}}
         validate_results(plan, [result])
         for mutate in (lambda r: r.update(fixture_mode='retained'),
@@ -140,7 +142,7 @@ class PlanTests(unittest.TestCase):
                        lambda r: r['plan']['recipe'].update(seed=1807),
                        lambda r: r.update(teardown_complete=False),
                        lambda r: r.update(duration_minutes=135),
-                       lambda r: r['fixture_images']['minio'].update(id='wrong'),
+                       lambda r: r['fixture_images']['minio'].update(config_digest='wrong'),
                        lambda r: r['fixture_envelopes'].update(other={'node_cpus': 8, 'node_memory_gib': 5}),
                        lambda r: r.update(failures=[{'diagnostic': 'hidden failure'}])):
             bad = copy.deepcopy(result)

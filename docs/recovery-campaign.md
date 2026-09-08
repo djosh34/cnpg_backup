@@ -19,7 +19,9 @@ and hashes into `harness.json`, separately from the subject. `--reuse OLD_BUNDLE
 reuses verified identical fixture-tool bytes when Go/tool inputs are unchanged;
 Python-only harness changes do not rebuild any product or fixture executable.
 The harness record binds source content, revision, Python version and all bundle
-bytes. Dirty bundles are explicitly diagnostic. Fresh acceptance rejects them.
+bytes. Fixtures import these verified archives directly into kind and check the
+canonical config digest in consuming containerd; Docker classic and containerd
+image stores expose different objects as `.Id`, which is not a portable oracle. Dirty bundles are explicitly diagnostic. Fresh acceptance rejects them.
 
 ```sh
 # Create records once (subject.json comes from the audited publication).

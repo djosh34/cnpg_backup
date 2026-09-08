@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import cnpg_smoke as h
 from campaign_plan import (ROOT, MANDATORY, SMOKE, REGISTRY, SUPPLEMENTAL, selected,
-                           content_hash, digest, make_plan, validate_results)
+                           content_hash, digest, image_config_digest, make_plan, validate_results)
 from campaign_process import Commands, CommandFailure, redact
 
 # Compatibility constants for independently checking scenario helpers/tests.
@@ -218,6 +218,8 @@ class Manifest:
 def load_bundle(directory):
     directory = directory.resolve()
     record = json.loads((directory / 'harness.json').read_text())
+    if record.get('schema') != 2:
+        raise ValueError('unsupported harness image-identity schema')
     if record['content_hash'] != content_hash():
         raise ValueError('harness content mismatch')
     if record['python'] != sys.version.split()[0]:
@@ -229,7 +231,7 @@ def load_bundle(directory):
     if set(record['images']) != set(images) or set(record['files']) != {'actor', 'wal-proxy', 'wal-client', 'verify', 'minio', *(n + '.tar' for n in images)}:
         raise ValueError('incomplete fixture bundle')
     for flavor, image in record['images'].items():
-        if image['archive'] != flavor + '.tar' or not re.fullmatch(r'sha256:[a-f0-9]{64}', image['id']):
+        if image['archive'] != flavor + '.tar' or not re.fullmatch(r'sha256:[a-f0-9]{64}', image['config_digest']):
             raise ValueError('invalid immutable fixture image identity')
     for name, wanted in record['files'].items():
         path = directory / name
@@ -239,6 +241,9 @@ def load_bundle(directory):
             actual = hashlib.file_digest(stream, 'sha256').hexdigest()
         if actual != wanted:
             raise ValueError('tampered harness bundle: ' + name)
+    for image in record['images'].values():
+        if image_config_digest(directory / image['archive'], image['tag']) != image['config_digest']:
+            raise ValueError('fixture config identity differs from verified archive')
     return {**record, 'directory': directory}
 
 
@@ -263,8 +268,11 @@ def build_bundle(directory, diagnostic=False, reuse=None):
             if Path(name).name != name or hashlib.sha256((reuse / name).read_bytes()).hexdigest() != checksum:
                 raise ValueError('tampered reused fixture bundle')
             os.link(reuse / name, directory / name)  # immutable bytes, never modified
-        record = {**previous, 'content_hash': content_hash(), 'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip(),
+        record = {**previous, 'schema': 2, 'content_hash': content_hash(), 'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip(),
                   'diagnostic': bool(dirty or diagnostic), 'python': sys.version.split()[0]}
+        record['images'] = {flavor: {'tag': image['tag'], 'archive': image['archive'],
+            'config_digest': image_config_digest(directory / image['archive'], image['tag'])}
+            for flavor, image in previous['images'].items()}
         atomic_json(directory / 'harness.json', record)
         return record
     commands = Commands(directory / 'build-evidence', cwd=ROOT)
@@ -286,12 +294,11 @@ def build_bundle(directory, diagnostic=False, reuse=None):
         dockerfile.write_text(f'FROM scratch\nCOPY --chmod=0555 {executable} /{executable}\nENTRYPOINT ["/{executable}"]\n')
         tag = 'cb-repair-' + flavor + ':' + hashlib.sha256((directory / executable).read_bytes()).hexdigest()[:24]
         commands.run('docker', 'build', '--network=none', '-t', tag, directory, timeout=300)
-        image_id = commands.run('docker', 'image', 'inspect', tag, '--format', '{{.Id}}').strip()
         archive = flavor + '.tar'
         commands.run('docker', 'save', '-o', directory / archive, tag, timeout=120)
-        images[flavor] = {'id': image_id, 'tag': tag, 'archive': archive}
+        images[flavor] = {'config_digest': image_config_digest(directory / archive, tag), 'tag': tag, 'archive': archive}
     (directory / 'Dockerfile').unlink()
-    record = {'schema': 1, 'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip(),
+    record = {'schema': 2, 'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip(),
               'content_hash': content_hash(), 'fixture_source_hash': fixture_source_hash(),
               'diagnostic': bool(dirty or diagnostic), 'python': sys.version.split()[0],
               'images': images, 'files': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.iterdir() if p.is_file()}}

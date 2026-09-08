@@ -227,19 +227,42 @@ class Fixture:
                 kind_commands.cancelled.set()  # TERM/KILL/reap before leaving the fixture
 
     def image_digest(self, flavor, source=None):
-        # Bundle tags contain content-addressed image IDs, not checkout SHA.
+        # Import the verified archive directly, avoiding host Docker tag state
+        # and the classic/config versus containerd/manifest .Id ambiguity.
         image = self.bundle['images'][flavor]
-        self.run('docker', 'load', '-i', self.bundle['directory'] / image['archive'])
-        actual = self.run('docker', 'image', 'inspect', image['tag'], '--format', '{{.Id}}').strip()
-        if actual != image['id']:
-            raise ValueError('fixture image bytes differ from immutable bundle')
-        self.run(self.WORK / 'kind-linux-amd64', 'load', 'docker-image', '--name', self.NAME, image['tag'])
+        archive = self.bundle['directory'] / image['archive']
+        with archive.open('rb') as stream:
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != self.bundle['files'][image['archive']]:
+                raise ValueError('fixture archive changed before consumption')
+        self.run(self.WORK / 'kind-linux-amd64', 'load', 'image-archive', '--name', self.NAME, archive)
         full = 'docker.io/library/' + image['tag']
         lines = self.run('docker', 'exec', self.NAME + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'list').splitlines()
         digest = next(line.split()[2] for line in lines if line.split()[0] == full)
+        # Verify the canonical config identity inside the consuming node. A
+        # bounded single-platform index traversal also handles OCI save layouts.
+        current = digest
+        for _ in range(3):
+            result = self.commands.command('fixture/consumed-image-manifest', 'docker', 'exec', self.NAME + '-control-plane',
+                'ctr', '-n', 'k8s.io', 'content', 'get', current, timeout=10).require()
+            if 'sha256:' + hashlib.sha256(result.stdout.encode()).hexdigest() != current:
+                raise ValueError('consumed fixture manifest digest mismatch')
+            manifest = json.loads(result.stdout)
+            if 'config' in manifest:
+                actual = manifest['config']['digest']
+                break
+            candidates = [m for m in manifest.get('manifests', []) if m.get('platform', {}).get('os') == 'linux'
+                          and m.get('platform', {}).get('architecture') == 'amd64']
+            if len(candidates) != 1:
+                raise ValueError('ambiguous consumed fixture image platform')
+            current = candidates[0]['digest']
+        else:
+            raise ValueError('nested fixture image index exceeds supported bound')
+        if actual != image['config_digest']:
+            raise ValueError('consumed fixture config differs from immutable archive')
         ref = full.split(':')[0] + '@' + digest
         self.run('docker', 'exec', self.NAME + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'tag', full, ref)
-        self.m.data.setdefault('fixture_images', {})[flavor] = {'id': actual, 'manifest': ref}
+        self.m.data.setdefault('fixture_images', {})[flavor] = {'config_digest': actual, 'manifest': ref,
+            'archive_sha256': self.bundle['files'][image['archive']]}
         self.m.save()
         return ref
 

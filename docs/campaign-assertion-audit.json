@@ -3,6 +3,11 @@
   "scope": "Every assert and wait/barrier in recovery_cases.py, recovery_campaign.py, campaign_fixture.py and the consumed WALFixture setup methods; registry maps all31+2 cases. Go actors and PostgreSQL tools remain unchanged independent observers, consumed through these assertions. Command status and input/resource/cleanup boundaries below are additional fail-closed harness contracts.",
   "runtime_boundaries": [
     {
+      "function": "image_config_digest/Fixture.image_digest",
+      "category": "safety-invariant",
+      "requirement": "Import the exact SHA256-verified archive directly into kind and verify its canonical config digest in consuming containerd. Docker classic/config and containerd/manifest display IDs are not interchangeable. Wrong archive, platform or consumed config is rejected."
+    },
+    {
       "function": "Commands.command/run/require/wait",
       "category": "safety-invariant",
       "requirement": "A nonzero status, killed child, exceeded deadline or truncated oracle input is never successful proof. Separate bounded diagnostics retain actual status; all child groups are reaped."

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tarfile
 
 from campaign_process import redact
 
@@ -86,6 +87,28 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def image_config_digest(archive, tag):
+    """Canonical config identity from a single-image Docker/OCI save archive.
+
+    Docker classic calls this .Id; containerd-backed Docker may call a manifest
+    .Id instead. Neither a mutable tag nor that display field is byte identity.
+    """
+    with tarfile.open(archive) as source:
+        def member(name):
+            entry = source.getmember(name)
+            if not entry.isfile() or entry.size > 1 << 20:
+                raise ValueError('invalid bounded fixture image metadata')
+            return source.extractfile(entry).read()
+        manifests = json.loads(member('manifest.json'))
+        if len(manifests) != 1 or tag not in manifests[0]['RepoTags']:
+            raise ValueError('fixture archive does not select exactly the requested image')
+        raw = member(manifests[0]['Config'])
+        config = json.loads(raw)
+        if config.get('os') != 'linux' or config.get('architecture') != 'amd64' or config['rootfs']['type'] != 'layers':
+            raise ValueError('fixture image differs from declared platform')
+        return 'sha256:' + hashlib.sha256(raw).hexdigest()
+
+
 def content_hash():
     inputs = ['hack', 'config', 'build', 'go.mod', 'go.sum', 'internal', 'docs/campaign-assertion-audit.json', '.github/workflows']
     files = subprocess.check_output(['git', 'ls-files', '-z', *inputs], cwd=ROOT).decode().split('\0')
@@ -121,6 +144,8 @@ def make_plan(subject, harness, profile='recovery', seed=1806, requested=(), mod
 
 
 def validate_results(plan, results):
+    if plan['harness'].get('schema') != 2:
+        raise ValueError('unsupported harness image-identity schema')
     expected = set(plan['cases'])
     if len(plan['cases']) != len(expected) or plan['recipe'].get('registry_hash') != digest(REGISTRY):
         raise ValueError('duplicate cases or mismatched scenario registry')
@@ -144,7 +169,7 @@ def validate_results(plan, results):
         if not envelopes or any(set(limits) != {'node_cpus', 'node_memory_gib'} or any(v != plan['recipe']['resources'][k] for k, v in limits.items()) for limits in envelopes.values()):
             raise ValueError('missing or mismatched actual resource envelope')
         observed = result.get('fixture_images', {})
-        if set(observed) != set(plan['harness']['images']) or any(observed[k]['id'] != image['id'] for k, image in plan['harness']['images'].items()):
+        if set(observed) != set(plan['harness']['images']) or any(observed[k].get('config_digest') != image['config_digest'] or observed[k].get('archive_sha256') != plan['harness']['files'][image['archive']] for k, image in plan['harness']['images'].items()):
             raise ValueError('missing or mismatched consumed fixture image bytes')
     return {'same_inputs': True, 'full_fresh_attempts': len(results), 'release_qualified': False,
             'host_fingerprints': [r.get('host_fingerprint', {}) for r in results],
