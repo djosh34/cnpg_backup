@@ -1,6 +1,6 @@
 {
   "purpose": "CI REPAIR; G delivery paused",
-  "series": 2,
+  "series": 3,
   "seeds": [1806, 1806, 1807],
-  "reason": "Verify canonical archive/config identity, observed CRI disposal races, and bounded event pagination. Series1 failures preserved; no product builds or G delivery."
+  "reason": "Final independently cleared 6822b950 harness: 33 families/47 required branches, cross-host unique execution accounting, primary failure persistence and independent owned disposal. Preserve prior series; frozen49a product, no product builds/publication or G delivery."
 }
