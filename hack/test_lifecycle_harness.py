@@ -179,7 +179,7 @@ class LifecycleHarness(unittest.TestCase):
                     'status': {'containerStatuses': [main], 'initContainerStatuses': [c for c in containers if c != main]}}]})
             if args[0] == 'logs':
                 if args[-1] == 'cnpg-backup':
-                    return 'WARN protected full restore failed phase=native-materialization'
+                    return 'WARN protected restore failed phase=native-materialization'
                 if args[1].endswith('-replacement'):
                     return 'recovery-guard: TargetOwnershipUncertain'
                 logs = observations[case]['logs']
@@ -187,7 +187,7 @@ class LifecycleHarness(unittest.TestCase):
                     # Preserve historical D logs on disk. This unit-only G
                     # projection is NOT executed CNPG materialization evidence.
                     logs = logs.replace('no plugin supports the restore job hooks capability',
-                                        'rpc error: code = FailedPrecondition desc = protected full restore failed'
+                                        'rpc error: code = FailedPrecondition desc = protected restore failed'
                                         if wrong_cause is None else wrong_cause)
                     logs += '\nrecovery-guard: TargetOwnershipUncertain\n'
                 return logs

@@ -49,7 +49,14 @@ func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Pla
 	phaseBudgets, e := restoreDownloadCapacity(plan.Chain[0], native, budgets, layout)
 	if len(plan.Chain) == 2 {
 		var unit int64
-		unit, e = restoreAllocationUnit(workspace)
+		for _, mount := range restoreMounts(layout) {
+			var allocation int64
+			allocation, e = restoreAllocationUnit(mount)
+			if e != nil {
+				break
+			}
+			unit = max(unit, allocation)
+		}
 		if e == nil {
 			phaseBudgets, e = differentialRestoreBudget(plan.Chain, native, budgets, layout, unit)
 		}

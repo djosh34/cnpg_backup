@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -121,6 +122,19 @@ func TestDifferentialCapacityIncludesBothOriginalsOutputAndWAL(t *testing.T) {
 	}
 	if _, e = differentialRestoreBudget([]repository.Commit{f, d, d}, n, budgets, l, 8192); e == nil {
 		t.Fatal("arbitrary chain budget accepted")
+	}
+	// Per-volume conservatism must not bypass the aggregate supported ceiling.
+	n.MaxRestoredBytes = 1024 * configuration.GiB
+	for i := 0; i < 9; i++ {
+		name := fmt.Sprint("extra", i)
+		l.Tablespaces[name] = "/var/lib/postgresql/tablespaces/" + name + "/data"
+	}
+	budgets = nil
+	for _, p := range restoreMounts(l) {
+		budgets = append(budgets, configuration.FilesystemBudget{Mount: p, LimitBytes: 8192 * configuration.GiB})
+	}
+	if _, e = differentialRestoreBudget([]repository.Commit{f, d}, n, budgets, l, 8192); !errors.Is(e, repository.ErrCapacity) {
+		t.Fatal("aggregate ceiling bypassed", e)
 	}
 }
 

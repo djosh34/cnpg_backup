@@ -347,6 +347,10 @@ func processes(stop bool) []map[string]any {
 		if filepath.Base(parts[0]) == "postgres" || strings.HasPrefix(parts[0], "postgres: ") {
 			kind = "postgres"
 		}
+		switch filepath.Base(parts[0]) {
+		case "pg_basebackup", "pg_verifybackup", "pg_waldump", "pg_combinebackup":
+			kind = "native"
+		}
 		if kind == "" {
 			continue
 		}

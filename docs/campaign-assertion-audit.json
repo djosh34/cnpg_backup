@@ -2212,6 +2212,66 @@
       "requirement": "PR H / design \u00a73/5/6: exact original full parent, reduced transfer, independent recovered SQL/datahash, no replacement full command/upload/success, and per-type failure semantics remain mandatory.",
       "temporal_semantics": "Assert after the documented native/SQL/terminal boundary; bounded waits require the actual outcome. Independent branch failures are retained, never retried to green.",
       "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "actor.stat().st_size < 32 << 20",
+      "id": "b949b68fbe58d28d",
+      "category": "fixture-precondition",
+      "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
+      "temporal_semantics": "Positively establish actor/child/container identity before injection. After cancellation require terminal failed Backup, source replication drainage and actual replacement readiness; elapsed time alone never proves drainage.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', actor_path).split()[0] == h.bundle['files']['actor']",
+      "id": "5b4b39a58e78485d",
+      "category": "fixture-precondition",
+      "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
+      "temporal_semantics": "Positively establish actor/child/container identity before injection. After cancellation require terminal failed Backup, source replication drainage and actual replacement readiness; elapsed time alone never proves drainage.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "native and all((p['kind'] == 'native' for p in native))",
+      "id": "96c920d6eb46b2d4",
+      "category": "fixture-precondition",
+      "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
+      "temporal_semantics": "Positively establish actor/child/container identity before injection. After cancellation require terminal failed Backup, source replication drainage and actual replacement readiness; elapsed time alone never proves drainage.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "h.wait(replaced, 'canceled sidecar terminated and replacement probe ready', 360)",
+      "id": "fe11ae481e8e44cf",
+      "category": "safety-invariant",
+      "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
+      "temporal_semantics": "Positively establish actor/child/container identity before injection. After cancellation require terminal failed Backup, source replication drainage and actual replacement readiness; elapsed time alone never proves drainage.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "not json.loads(h.kube('exec', '-n', SOURCE, pod, '-c', 'cnpg-backup', '--', actor_path, 'processes'))",
+      "id": "ef024f4a7b28a3bd",
+      "category": "safety-invariant",
+      "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
+      "temporal_semantics": "Positively establish actor/child/container identity before injection. After cancellation require terminal failed Backup, source replication drainage and actual replacement readiness; elapsed time alone never proves drainage.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_failed",
+      "expression": "self.sql(SOURCE, pod, 'SELECT pg_postmaster_start_time()') == postmaster",
+      "id": "0937dd6daba456d0",
+      "category": "safety-invariant",
+      "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
+      "temporal_semantics": "Positively establish actor/child/container identity before injection. After cancellation require terminal failed Backup, source replication drainage and actual replacement readiness; elapsed time alone never proves drainage.",
+      "failure_layer": "product"
     }
   ]
 }

@@ -50,7 +50,15 @@ func differentialRestoreBudget(chain []repository.Commit, n configuration.Native
 	if l.WALDirectory != l.PGDATA+"/pg_wal" {
 		need[filepath.Dir(l.WALDirectory)] = n.MaxBootstrapWALBytes + unit*(maxEntries+256)
 	}
-	return finishRestoreBudgets(set, need), nil
+	result := finishRestoreBudgets(set, need)
+	var aggregate int64
+	for _, b := range result {
+		aggregate += b.RequiredBytes
+	}
+	if aggregate > 8192*configuration.GiB {
+		return nil, repository.ErrCapacity
+	}
+	return result, nil
 }
 
 func inputLayout(directory string, c repository.Commit) RestoreLayout {

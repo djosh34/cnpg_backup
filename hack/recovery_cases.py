@@ -1,5 +1,6 @@
 """Disposable real CNPG G scenarios. Test arrangements never replace product I/O."""
 import contextlib
+import base64
 import copy
 import gzip
 import hashlib
@@ -472,6 +473,14 @@ class Campaign:
                 commands_before = self.native_backup_commands(pod)
                 name = 'h-failed-' + fault
                 if fault == 'cancellation':
+                    actor = h.bundle['directory'] / 'actor'
+                    assert actor.stat().st_size < 32 << 20
+                    actor_path = '/var/lib/postgresql/data/h-native-processes'
+                    h.kube('exec', '-i', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
+                           'base64 -d > ' + actor_path + '; chmod 0555 ' + actor_path,
+                           input=base64.b64encode(actor.read_bytes()).decode())
+                    assert h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', actor_path).split()[0] == h.bundle['files']['actor']
+                    postmaster = self.sql(SOURCE, pod, 'SELECT pg_postmaster_start_time()')
                     self.sql(SOURCE, pod, "UPDATE h_data SET value=repeat(md5(id::text||'cancel'),16)")
                 h.apply(backup_smoke.definition(h, name, backup_type='differential'))
                 if fault == 'cancellation':
@@ -483,8 +492,10 @@ class Campaign:
                     container = sidecar['containerID'].split('://')[1]
                     pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container))['info']['pid'])
                     assert pid > 1
+                    native = json.loads(h.kube('exec', '-n', SOURCE, pod, '-c', 'cnpg-backup', '--', actor_path, 'processes'))
+                    assert native and all(p['kind'] == 'native' for p in native), 'actual native process group was not observed'
                     h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-TERM', str(pid))
-                    self.event('differential-cancellation-fired', container_id=container, native_query=active)
+                    self.event('differential-cancellation-fired', container_id=container, native_query=active, native_processes=native)
                 def failed():
                     b = json.loads(h.kube('get', 'backup', name, '-n', SOURCE, '-o', 'json'))
                     assert b.get('status', {}).get('phase') != 'completed', 'requested D fault falsely succeeded'
@@ -496,6 +507,13 @@ class Campaign:
                 assert not any('/data/' in k or k.endswith('/commit.json') or k.endswith('/manifest.pg.json') for k in keys), 'failure uploaded/published a replacement backup'
                 if fault == 'cancellation':
                     h.wait(lambda: self.sql(SOURCE, pod, 'SELECT count(*) FROM pg_stat_progress_basebackup') == '0', 'canceled native replication drained', 60)
+                    def replaced():
+                        p = json.loads(h.kube('get', 'pod', pod, '-n', SOURCE, '-o', 'json'))
+                        current = next(c for c in p['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+                        return current['restartCount'] > sidecar['restartCount'] and current.get('ready', False)
+                    h.wait(replaced, 'canceled sidecar terminated and replacement probe ready', 360)
+                    assert not json.loads(h.kube('exec', '-n', SOURCE, pod, '-c', 'cnpg-backup', '--', actor_path, 'processes')), 'native child survived cancellation'
+                    assert self.sql(SOURCE, pod, 'SELECT pg_postmaster_start_time()') == postmaster, 'cancellation restarted the source database'
                 commands_after = self.native_backup_commands(pod)
                 assert sum('INCREMENTAL' not in c.upper() for c in commands_after) == sum('INCREMENTAL' not in c.upper() for c in commands_before), 'requested D started a replacement full command'
                 self.event('requested-differential-failed-closed', fault=fault, uid=uid, keys=keys, native_commands=commands_after, no_replacement_upload=True)
