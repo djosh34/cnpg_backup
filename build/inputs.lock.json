@@ -16,7 +16,7 @@
     {
       "name": "base-files",
       "version": "13ubuntu10.4",
-      "url": "https://archive.ubuntu.com/ubuntu/pool/main/b/base-files/base-files_13ubuntu10.4_amd64.deb",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20260908T000000Z/pool/main/b/base-files/base-files_13ubuntu10.4_amd64.deb",
       "sha256": "94daf9ede91f6263d676611623d4c9edab695c728a584ab2fb1d11cabb8479e8"
     },
     {
