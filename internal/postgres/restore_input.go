@@ -133,6 +133,9 @@ func decodeOriginal(ctx context.Context, src, dst *os.File, stored, raw s3store.
 	return dst.Sync()
 }
 
+// scan bounds authenticated originals by their raw input budgets. Historical F/D
+// inputs may exceed the output cap after DROP/TRUNCATE; callers enforce that cap
+// on full-only output admission or on the reconstructed synthetic tree.
 func (in *fullInput) scan(ctx context.Context, c repository.Commit, segment int64, n configuration.Native) (err error) {
 	phase := "manifest"
 	defer func() {
@@ -164,7 +167,7 @@ func (in *fullInput) scan(ctx context.Context, c repository.Commit, segment int6
 	}
 	in.archives = map[string]archiveInventory{}
 	actual := map[string]int64{}
-	entries, extracted, raw := 0, c.ManifestBytes, c.ManifestBytes
+	entries, raw := 0, c.ManifestBytes
 	for _, a := range c.Artifacts {
 		phase = "archive headers and inventory"
 		name := artifactName(a)
@@ -231,9 +234,8 @@ func (in *fullInput) scan(ctx context.Context, c repository.Commit, segment int6
 			}
 		}
 		entries += inv.entries
-		extracted += inv.bytes
 		raw += a.RawBytes
-		if entries > maxEntries || extracted > n.MaxRestoredBytes || raw > n.MaxBackupBytes || a.Role == "wal" && a.RawBytes > n.MaxBootstrapWALBytes {
+		if entries > maxEntries || raw > n.MaxBackupBytes || a.Role == "wal" && a.RawBytes > n.MaxBootstrapWALBytes {
 			return ErrInput
 		}
 		if _, e = nativeDirectories(inv); e != nil {

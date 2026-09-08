@@ -121,6 +121,8 @@ func RestoreFull(ctx context.Context, hold *repository.Hold, plan repository.Pla
 			return nil, fmt.Errorf("native input scan: %w", e)
 		}
 	}
+	// A full-only original is the output. For F+D, only the synthetic tree is
+	// subject to MaxRestoredBytes (in combineOriginals), not historical inputs.
 	if len(inputs) == 1 {
 		phaseBudgets, e = restoreOutputCapacity(inputs[0], selected, native, budgets, layout)
 		if e != nil {
