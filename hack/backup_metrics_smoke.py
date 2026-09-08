@@ -14,6 +14,7 @@ import unittest
 import urllib.request
 
 LABELS = {'repository_id', 'namespace', 'cluster', 'backup_type'}
+RETENTION_METRICS = ('cnpg_backup_retention_blocked', 'cnpg_backup_repository_admission_blocked', 'cnpg_backup_repository_holders')
 METRICS = ('cnpg_backup_failures_total', 'cnpg_backup_success_history_known',
            'cnpg_backup_last_success_timestamp_seconds', 'cnpg_backup_freshness_max_age_seconds')
 
@@ -24,10 +25,14 @@ def samples(text):
         if not line or line.startswith('#'):
             continue
         match = re.fullmatch(r'([a-z_]+)\{(.*)\} ([0-9.eE+-]+)', line)
-        assert match and match[1] in METRICS, 'unexpected manager metric/format'
+        assert match and match[1] in (*METRICS, *RETENTION_METRICS), 'unexpected manager metric/format'
         labels = dict(re.findall(r'([a-z_]+)="([^"\\]*)"', match[2]))
-        assert set(labels) == LABELS and labels['backup_type'] in ('full', 'differential'), 'unbounded metric labels'
-        key = (match[1], labels['repository_id'], labels['namespace'], labels['cluster'], labels['backup_type'])
+        if match[1] in RETENTION_METRICS:
+            assert set(labels) == LABELS - {'backup_type'}, 'unbounded retention metric labels'
+            key = (match[1], labels['repository_id'], labels['namespace'], labels['cluster'])
+        else:
+            assert set(labels) == LABELS and labels['backup_type'] in ('full', 'differential'), 'unbounded metric labels'
+            key = (match[1], labels['repository_id'], labels['namespace'], labels['cluster'], labels['backup_type'])
         assert key not in result, 'duplicate manager-owned metric sample'
         result[key] = float(match[3])
     return result

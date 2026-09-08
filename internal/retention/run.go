@@ -90,6 +90,11 @@ func Run(ctx context.Context, r *repository.Repository, files wal.Files, now tim
 		if e := reserve(1024); e != nil {
 			return e
 		}
+		observed, _, positionErr := repository.ArchivePosition(ob.Name[:8]+"0000000000000000", r.Identity().WALSegmentBytes)
+		if positionErr != nil {
+			return positionErr
+		}
+		timelines[observed] = true
 		if len(ob.Name) == 24 {
 			t, start, e := repository.ArchivePosition(ob.Name, r.Identity().WALSegmentBytes)
 			if e != nil {

@@ -566,6 +566,114 @@ class Campaign:
                 else:
                     self.differential_failed(branch)
 
+    def retention_batch(self, cutoff, mode='execute'):
+        h = self.h
+        pod = self.primary()
+        actor = h.bundle['directory'] / 'actor'
+        path = '/var/lib/postgresql/data/i-retention-actor'
+        h.kube('exec', '-i', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
+               'base64 -d > ' + path + '; chmod 0555 ' + path, input=base64.b64encode(actor.read_bytes()).decode())
+        assert h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', path).split()[0] == h.bundle['files']['actor']
+        result = json.loads(h.kube('exec', '-n', SOURCE, pod, '-c', 'cnpg-backup', '--', path, 'retention', cutoff, mode, timeout=120))
+        self.event('actual-retention-batch', **result)
+        return result
+
+    def retention_warning(self):
+        h = self.h
+        h.kube('patch', 'repository/destination', '-n', SOURCE, '--type=merge', '-p',
+               json.dumps({'spec': {'retention': {'enabled': True, 'dryRun': False, 'window': '1h', 'minimumFulls': 1, 'interval': '5m'}}}))
+        def observed():
+            events = json.loads(h.kube('get', 'events', '-n', SOURCE, '--field-selector', 'reason=RetentionBlocked', '-o', 'json'))['items']
+            return any(e.get('type') == 'Warning' and e.get('involvedObject', {}).get('kind') == 'Repository' and
+                       e.get('involvedObject', {}).get('name') == 'destination' for e in events)
+        h.wait(observed, 'actual manager RetentionBlocked Warning during protected replay', 180)
+        repository = json.loads(h.kube('get', 'repository/destination', '-n', SOURCE, '-o', 'json'))
+        assert any(c['type'] == 'RetentionBlocked' and c['status'] == 'True' for c in repository['status']['conditions'])
+        self.event('actual-manager-retention-blocked', holders=self.gate()['holders'])
+
+    def case_retention_runtime(self):
+        import datetime
+        h = self.h
+        with self.m.case('retention-runtime'):
+            for branch in self.variants(('expiration-window', 'protected-replay', 'crashed-guard')):
+                # Native immutable metadata is never aged/rewritten. Supply the
+                # runtime's explicit pure-planner clock at the test seam only.
+                # Gate/batch request lifetimes always use real time, never this clock.
+                self.archive()
+                cutoff = datetime.datetime.fromisoformat(self.sql(SOURCE, self.primary(), 'SELECT clock_timestamp()')).isoformat()
+                self.acknowledge(2, 'before')
+                point = self.sql(SOURCE, self.primary(), "SELECT pg_create_restore_point('i_after_d2')")
+                self.acknowledge(3, 'target')
+                self.acknowledge(4, 'after')
+                self.remote = self.archive()
+                assert lsn(point) > lsn(self.d2['bundled_wal_end_lsn'])
+                target = {'backupID': self.d2['backup_uid'], 'targetName': 'i_after_d2'}
+                if branch == 'expiration-window':
+                    # A newer independent full satisfies minimumFulls=1. Keeping
+                    # the older F must therefore follow D2's parent edge, not
+                    # merely the minimum-root floor.
+                    self.full('i-independent-full')
+                    self.archive()
+                    before = self.inventory('smoke/v1/' + SOURCE_ID + '/backups/')
+                    dry = self.retention_batch(cutoff, 'dry-run')
+                    assert dry['error'] == '' and dry['result']['Planned'] > 0
+                    assert self.inventory('smoke/v1/' + SOURCE_ID + '/backups/') == before, 'dry-run deleted backup bytes'
+                    decision = dry['result']['Decision']
+                    assert self.base['backup_uid'] in decision['Keep'] and self.d2['backup_uid'] in decision['Keep'], 'old full or selected differential lost'
+                    assert self.d1['backup_uid'] in decision['Expire'], 'unrelated old differential not eligible'
+                    for _ in range(8):
+                        result = self.retention_batch(cutoff)
+                        assert result['error'] == '' and self.gate()['owner'] is None, 'conclusive batch did not drain/release'
+                        if result['result']['Planned'] == 0:
+                            break
+                    else:
+                        raise AssertionError('bounded expiration did not finish')
+                    prefix = 'smoke/v1/' + SOURCE_ID + '/backups/' + self.d1['backup_uid'] + '/'
+                    keys = self.inventory(prefix)
+                    assert prefix + 'retired.json' in keys and prefix + 'commit.json' in keys and prefix + 'request.json' in keys
+                    assert not any('/data/' in k or k.endswith('/manifest.pg.json') for k in keys), 'expired payload cleanup incomplete'
+                    state = self.start(target)
+                    state['differential_expected'] = self.differential_expected
+                    plan = self.materialize(state)
+                    assert plan['plan']['required_archive'], 'retention positive did not replay remote WAL'
+                    self.finish(state, BEFORE, drop_present=True)
+                    # The actual CNPG path must reject the permanently expired D1.
+                    self.reject({'backupID': self.d1['backup_uid'], 'targetImmediate': True}, 'permanently-expired-selection')
+                else:
+                    state = self.start(target, hold_replay=True)
+                    state['differential_expected'] = self.differential_expected
+                    self.materialize(state)
+                    protected = {x['id'] for x in self.gate()['holders']}
+                    before = self.inventory('smoke/v1/' + SOURCE_ID + '/backups/')
+                    assert self.retention_batch(cutoff)['error'] == 'RepositoryAdmissionBlocked', 'post-bootstrap holder did not exclude GC'
+                    self.release(state['pod'], 'release-response')
+                    self.barrier(state['pod'], 'replay-held')
+                    self.retention_warning()
+                    if branch == 'crashed-guard':
+                        self.no_retries(state)
+                        pid, container = self.node_pid(state, 'full-recovery')
+                        h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-KILL', str(pid))
+                        self.event('actual-retention-guard-kill', pid=pid, container=container)
+                        h.wait(lambda: self.main_terminated(state), 'actual killed guard termination', 60)
+                        assert self.markers(state) == ['present'] * 3, 'crash unpoisoned targets'
+                        self.retire_target(state)
+                    else:
+                        h.kube('rollout', 'restart', '-n', 'cnpg-system', 'deployment/cnpg-backup')
+                        h.kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
+                        h.wait(lambda: self.operation_state(state)['state'] == 'uncertain', 'manager restart retains uncertain replay lifetime', 180)
+                        assert self.retention_batch(cutoff)['error'] == 'RepositoryAdmissionBlocked'
+                        self.finish(state, BEFORE, drop_present=True, stable_retained=True)
+                    future = (datetime.datetime.fromisoformat(cutoff) + datetime.timedelta(days=365)).isoformat()
+                    assert self.retention_batch(future)['error'] == 'RepositoryAdmissionBlocked', 'clock advancement resurrected GC admission'
+                    assert self.inventory('smoke/v1/' + SOURCE_ID + '/backups/') == before, 'protected backup bytes changed'
+                    assert protected.intersection(x['id'] for x in self.gate()['holders']), 'uncertain protection disappeared'
+                    # A different Cluster/PVC set still admits and restores while
+                    # the old crashed/uncertain hold blocks only deletion.
+                    other = self.start(target)
+                    other['differential_expected'] = self.differential_expected
+                    self.materialize(other)
+                    self.finish(other, BEFORE, drop_present=True)
+
     def make_workload(self):
         h = self.h
         WORK, OUT = h.WORK, h.OUT

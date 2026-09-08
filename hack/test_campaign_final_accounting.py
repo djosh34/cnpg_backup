@@ -129,8 +129,8 @@ class FinalAccountingTests(unittest.TestCase):
 
     def test_hosted_aggregate_rejects_reused_execution_across_attempt_artifacts(self):
         cases = selected('recovery')
-        self.assertEqual(len(cases), 34)
-        self.assertEqual(sum(len(c['branches']) for c in cases), 54)
+        self.assertEqual(len(cases), 35)
+        self.assertEqual(sum(len(c['branches']) for c in cases), 57)
         images = {n: {'config_digest': n + '-config', 'archive': n + '.tar'}
                   for n in ('minio', 'walproxy', 'recoveryactor')}
         files = {n + '.tar': n + '-archive' for n in images}

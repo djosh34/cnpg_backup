@@ -83,6 +83,28 @@ caller accepts the H branch and can reuse only the explicitly recorded H candida
 when actual build inputs are unchanged. No new CI runner or qualification system
 is introduced. Current execution results and remaining gates live in PR H's report.
 
+## PR I extension
+
+I adds `retention-runtime` to the existing registry with three fresh-fixture
+branches: expiration/window SQL recovery, protected replay with manager restart,
+and guard crash with a new cross-cluster restore. Full scope is now **35 families /
+57 branches**. The test actor invokes the actual retention runner with an explicit
+planner cutoff over unchanged immutable native F/D1/D2 backups; this avoids
+rewriting capture metadata or sleeping for the one-hour minimum policy window.
+It does **not** change gate/request clocks, expire holders or impersonate the
+periodic manager. The actual candidate manager separately demonstrates automatic
+admission refusal, durable blocked status and a required Warning during replay.
+
+Dry-run and real MinIO batches retain F+D2, permanently retire D1, drain/release,
+remove only eligible payload, then execute real CNPG remote-WAL SQL recovery and
+reject the expired selection. Pause/crash branches retain source protection even
+with a far-future planner cutoff and permit a different protected Cluster to
+restore. Existing Go graph/DST/conditional MinIO tests own exhaustive request-step
+interleavings; these are complementary evidence, not a claim that every OS
+schedule is deterministic. I requires new subject images and a newly checksum-bound
+actor bundle. Execution results remain in PR I's current report; registry presence
+alone is not passing evidence. Unrelated forensic logs/events remain nonblocking.
+
 ## Scope and independent failures
 
 `campaign_plan.REGISTRY` is the sole execution/dependency registry: all **31 fixed
