@@ -33,6 +33,37 @@ class CommandFailure(RuntimeError):
     pass
 
 
+@contextlib.contextmanager
+def cleanup(actions, report=None):
+    """Run every owned cleanup independently; primary always precedes cleanup."""
+    primary = None
+    errors = []
+    def record(error):
+        if report:
+            try:
+                report(error)
+            except BaseException as recording_error:
+                recording_error.campaign_phase = 'failure-recording'
+                errors.append(recording_error)
+    try:
+        yield
+    except BaseException as error:
+        primary = error
+        record(error)  # durable first failure BEFORE any potentially failing reset
+        raise
+    finally:
+        for phase, action in actions:
+            try:
+                action()
+            except BaseException as error:
+                error.campaign_phase = phase
+                error.campaign_primary = primary
+                errors.append(error)
+                record(error)
+        if errors:
+            raise BaseExceptionGroup('operation/cleanup failures', ([primary] if primary else []) + errors) from None
+
+
 @dataclass(frozen=True)
 class CommandResult:
     operation: str
@@ -118,7 +149,10 @@ class Commands:
                             buffer.extend(chunk[:keep])
                             dropped += len(chunk) - keep
                 if expired:
-                    os.killpg(child.pid, signal.SIGTERM)
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
                     try:
                         child.wait(timeout=.5)
                     except subprocess.TimeoutExpired:
@@ -157,6 +191,27 @@ class Commands:
         # Compatibility for existing text oracles. Status predicates must use
         # command().ok; text never represents successful execution by absence.
         return result.stdout + result.stderr
+
+    @contextlib.contextmanager
+    def background(self, operation, *argv, timeout=300, save_log, report):
+        # The one asynchronous exec caller uses the SAME bounded capture and
+        # TERM/KILL/reap implementation as foreground commands. Its cancellation
+        # is independent of the parent's expired remote-command budget.
+        from concurrent.futures import ThreadPoolExecutor
+        owned = Commands(self.out / operation, cwd=self.cwd, deadline=self.deadline, output_limit=self.output_limit)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(owned.command, operation, *argv, timeout=timeout)
+            def reap():
+                owned.cancelled.set()
+                # command() cancellation polls at 100ms, TERM .5s, KILL/reap 1s.
+                result = future.result(timeout=3)
+                self.record({'background': operation, 'exit': result.returncode,
+                             'timed_out': result.timed_out, 'dropped_bytes': result.dropped_bytes})
+                save_log(operation + '.log', result.stdout + result.stderr)
+                if result.dropped_bytes:
+                    result.require()
+            with cleanup([('child-reap', reap)], report):
+                yield future
 
     def wait(self, predicate, description, seconds=180):
         with self.budget(seconds):

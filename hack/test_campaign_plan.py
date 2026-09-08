@@ -132,11 +132,21 @@ class PlanTests(unittest.TestCase):
         plan = {'subject': {'digest': 'same'}, 'harness': {'schema': 2, 'digest': 'same', 'images': images, 'files': files},
                 'recipe': {'seed': 1806, 'registry_hash': digest(REGISTRY), 'fixture_mode': 'fresh', 'resources': limits, 'duration_minutes': 120},
                 'cases': [c['id'] for c in selected('recovery')]}
-        result = {'plan': plan, 'fixture_mode': 'fresh', 'scope_passed': True, 'teardown_complete': True, 'duration_minutes': 120,
+        result = {'plan': plan, 'execution_id': 'a' * 32, 'host': 'local', 'fixture_mode': 'fresh', 'scope_passed': True, 'teardown_complete': True, 'duration_minutes': 120,
                   'fixture_envelopes': {'owned-node': limits},
                   'fixture_images': {name: {'config_digest': image['config_digest'], 'archive_sha256': files[image['archive']]} for name, image in images.items()},
-                  'scenarios': {s: {'status': 'passed'} for s in plan['cases']}}
+                  'scenarios': {c['id']: {'status': 'passed', 'branches': {b: {'status': 'passed'} for b in c['branches']}}
+                                for c in selected('recovery')}}
         validate_results(plan, [result])
+        for duplicates in ([result, result], [result] * 4):
+            with self.assertRaisesRegex(ValueError, 'duplicate execution'):
+                validate_results(plan, duplicates)
+        hosted = copy.deepcopy(result)
+        hosted.update(execution_id='b' * 32, host='hosted')
+        validate_results(plan, [result, hosted], cross_environment=True)
+        hosted['host'] = 'local'
+        with self.assertRaisesRegex(ValueError, 'one local and one hosted'):
+            validate_results(plan, [result, hosted], cross_environment=True)
         for mutate in (lambda r: r.update(fixture_mode='retained'),
                        lambda r: r['scenarios'].pop('seeded-XID-2'),
                        lambda r: r['plan']['recipe'].update(seed=1807),

@@ -16,7 +16,7 @@ import time
 import urllib.request
 
 import cnpg_smoke
-from campaign_process import Commands, CommandFailure, redact
+from campaign_process import Commands, CommandFailure, redact, cleanup
 
 GIB = 1 << 30
 
@@ -100,6 +100,7 @@ class Fixture:
         self.captures_enabled = False
         self.closed = False
         self.listener = None
+        self.containers = []
         self.record_ownership()
 
     @classmethod
@@ -119,6 +120,9 @@ class Fixture:
         fixture.m, fixture.resources = manifest, record['resources']
         fixture.allocations, fixture.closed = record['allocations'], record['closed']
         fixture.listener = record.get('listener')
+        fixture.containers = record.get('containers', [])
+        if any(not re.fullmatch(re.escape(fixture.NAME) + r'-tool-[a-f0-9]{12}', name) for name in fixture.containers):
+            raise ValueError('unowned standalone container in handle')
         fixture.commands = Commands(fixture.OUT, cwd=cls.ROOT, deadline=time.monotonic() + 600)
         fixture.run = fixture.commands.run
         if fixture.container_exists(fixture.NAME + '-control-plane'):
@@ -131,7 +135,7 @@ class Fixture:
         from recovery_campaign import atomic_json
         atomic_json(self.WORK.parent / 'owner.json', {'schema': 1, 'name': self.NAME, 'uid': os.getuid(),
                     'work': str(self.WORK), 'out': str(self.OUT), 'resources': self.resources,
-                    'listener': self.listener,
+                    'listener': self.listener, 'containers': self.containers,
                     'allocations': self.allocations, 'closed': self.closed})
 
     def kube(self, *args, **kwargs):
@@ -200,12 +204,60 @@ class Fixture:
         return target
 
     def container_exists(self, name):
-        if name not in (self.NAME + '-control-plane', self.NAME + '-image-audit'):
+        if name not in (self.NAME + '-control-plane', self.NAME + '-image-audit', *getattr(self, 'containers', [])):
             raise ValueError('container observation outside fixture ownership')
         names = self.run('docker', 'container', 'ls', '-a', '--filter', 'name=^/' + name + '$', '--format', '{{.Names}}', timeout=10).split()
         if names not in ([], [name]):
             raise CommandFailure('unexpected Docker container selection')
         return bool(names)  # absence ONLY after a successful list operation
+
+    def remove_tool(self, name):
+        if self.container_exists(name):
+            labels = json.loads(self.run('docker', 'inspect', name, '--format', '{{json .Config.Labels}}', timeout=10)) or {}
+            if labels.get('cnpg-backup-fixture') != self.NAME:
+                raise CommandFailure('cleanup: standalone container ownership mismatch')
+            self.run('docker', 'rm', '--force', name, timeout=30)
+        if self.container_exists(name):
+            raise CommandFailure('cleanup: owned standalone container remains')
+        self.containers.remove(name)
+        self.record_ownership()
+
+    def tool(self, image, entry, *args, mounts=(), rejection=False):
+        import uuid
+        name = self.NAME + '-tool-' + uuid.uuid4().hex[:12]
+        self.containers.append(name)
+        self.record_ownership()  # Docker may create it even if its client fails.
+        self.m.event('owned-standalone-tool', name=name, cpus=1, memory_mib=512, pids=64)
+        def remove():
+            # A private cleanup budget, never the expired case command budget.
+            previous = self.commands
+            self.commands = Commands(self.OUT, cwd=self.ROOT, deadline=time.monotonic() + 60)
+            self.run = self.commands.run
+            try:
+                self.remove_tool(name)
+            finally:
+                self.commands = previous
+                self.run = previous.run
+        with cleanup([('container-cleanup', remove)], lambda error:
+                     self.m.failure(error, 'case' if getattr(self.m, 'current_case', None) else 'setup', getattr(self.m, 'current_case', None))):
+            result = self.commands.command('shell-free-verifier' if rejection else 'subject-tool',
+                'docker', 'run', '--name', name, '--label', 'cnpg-backup-fixture=' + self.NAME,
+                '--cpus=1', '--memory=512m', '--memory-swap=512m', '--pids-limit=64',
+                '--network=none', '--read-only', '--cap-drop=ALL', '--user', str(os.getuid()),
+                *mounts, '--entrypoint', entry, image, *args)
+            if rejection:
+                if result.timed_out or result.dropped_bytes:
+                    result.require()
+                # backupverify's precise native rejection, not Docker 125/126/
+                # 127, SIGKILL, or a verifier invocation/manifest failure.
+                if result.returncode != 2 or result.stdout.strip() != 'WAL rejected':
+                    error = CommandFailure('shell-free-verifier: expected exit=2 and WAL rejected; observed exit='
+                                           + str(result.returncode) + ': ' + (result.stdout + result.stderr)[-4000:])
+                    error.campaign_oracle = 'shell-free-native-rejection'
+                    raise error
+            else:
+                result.require()
+            return result.stdout + result.stderr
 
     def create_node(self):
         # kind exposes no node resource-limit flag. Cap the owned container as
@@ -477,6 +529,36 @@ rmdir "$path"
                 return
         self.m.event('collection-event-cap', namespace=namespace, max_events=5000, more=True)
 
+    def collect_logs(self, namespace, pods):
+        errors = []
+        for pod in pods:
+            containers = pod.get('spec', {}).get('initContainers', []) + pod.get('spec', {}).get('containers', [])
+            for container in containers[:16]:
+                name = pod['metadata']['name']
+                collector = namespace + '/' + name + '/' + container['name']
+                try:
+                    result = self.kube_result('logs', name, '-n', namespace, '-c', container['name'],
+                                              '--tail=300', '--limit-bytes=65536', timeout=10)
+                    if not result.ok and not result.timed_out and not result.dropped_bytes:
+                        # Re-read this exact identity. Error spelling alone says
+                        # nothing about whether a container ever started.
+                        current = json.loads(self.kube_result('get', 'pod', name, '-n', namespace,
+                                             '--ignore-not-found=true', '-o', 'json', timeout=10).require().stdout or '{}')
+                        statuses = current.get('status', {}).get('containerStatuses', []) + current.get('status', {}).get('initContainerStatuses', [])
+                        status = next((s for s in statuses if s['name'] == container['name']), {})
+                        absent = current.get('metadata', {}).get('uid') != pod['metadata']['uid']
+                        unstarted = not status.get('containerID') and not status.get('lastState') and (
+                            'waiting' in status.get('state', {}) or (not status and current.get('status', {}).get('phase') == 'Pending'))
+                        if absent or unstarted:
+                            self.m.event('collector-blocked', collector=collector, reason='original Pod absent' if absent else 'container never started',
+                                         observation=self.pod_evidence(current) if not absent else current.get('metadata', {}))
+                            continue
+                    result.require()
+                    self.save_log(name + '-' + container['name'] + '.log', result.stdout + result.stderr, 65536)
+                except Exception as error:
+                    errors.append({'collector': collector, 'namespace': namespace, 'diagnostic': redact(str(error))})
+        return errors
+
     def collect(self):
         errors = []
         def blocked(requirement):
@@ -492,25 +574,49 @@ rmdir "$path"
         with self.commands.budget(300):
             for namespace in ('campaign-target', 'campaign-source', 'campaign-store', 'cnpg-system'):
                 try:
-                    pods = json.loads(self.kube('get', 'pods', '-n', namespace, '-o', 'json', timeout=10))['items']
-                    self.save_log(namespace + '-statuses.json', json.dumps([self.pod_evidence(p) for p in pods]))
-                    self.collect_events(namespace)
-                    for pod in sorted(pods, key=lambda p: p['metadata']['creationTimestamp'], reverse=True)[:24]:
-                        for container in self.pod_evidence(pod)['containers']:
-                            self.save_log(pod['metadata']['name'] + '-' + container['name'] + '.log', self.kube('logs', pod['metadata']['name'], '-n', namespace,
-                                          '-c', container['name'], '--tail=150', '--limit-bytes=65536', check=False, timeout=10), 65536)
+                    pods = json.loads(self.kube_result('get', 'pods', '-n', namespace, '-o', 'json', timeout=10).require().stdout)['items']
                 except Exception as error:
-                    errors.append({'namespace': namespace, 'diagnostic': redact(str(error))})
+                    pods = []
+                    errors.append({'namespace': namespace, 'collector': 'statuses', 'diagnostic': redact(str(error))})
+                    self.m.event('collector-blocked', collector=namespace + '/logs', reason='Pod inventory unavailable')
+                else:
+                    try:
+                        self.save_log(namespace + '-statuses.json', json.dumps([self.pod_evidence(p) for p in pods]))
+                    except Exception as error:
+                        errors.append({'namespace': namespace, 'collector': 'status-artifact', 'diagnostic': redact(str(error))})
+                try:
+                    self.collect_events(namespace)
+                except Exception as error:
+                    errors.append({'namespace': namespace, 'collector': 'events', 'diagnostic': redact(str(error))})
+                errors.extend(self.collect_logs(namespace, sorted(pods, key=lambda p: p['metadata']['creationTimestamp'], reverse=True)[:24]))
         self.save_log('collection.json', json.dumps({'errors': errors}))
         return errors
 
     def close(self):
+        actions = [('container-cleanup', lambda name=name: self.remove_tool(name))
+                   for name in list(getattr(self, 'containers', []))]
+        actions += [('container-cleanup', self.close_audit), ('child-reap', self.close_listener), ('teardown', self.close_node)]
+        report = (lambda error: self.m.failure(error, 'teardown')) if getattr(self, 'm', None) else None
+        # Each independent resource is attempted even if another cleanup fails.
+        # Inside close_node, backing/CRI prerequisites still fail closed.
+        with cleanup(actions, report):
+            pass
+        if self.WORK.exists():
+            shutil.rmtree(self.WORK)  # only private fixture data, never evidence
+        self.closed = True
+        self.record_ownership()
+
+    def close_audit(self):
         audit = self.NAME + '-image-audit'
         if self.container_exists(audit):
             labels = json.loads(self.run('docker', 'inspect', audit, '--format', '{{json .Config.Labels}}', timeout=10)) or {}
             if labels.get('cnpg-backup-fixture') != self.NAME:
                 raise CommandFailure('cleanup: audit container ownership mismatch')
             self.run('docker', 'rm', audit, timeout=30)
+        if self.container_exists(audit):
+            raise CommandFailure('cleanup: owned audit container remains')
+
+    def close_listener(self):
         listener = self.listener
         if listener:
             proc = Path('/proc') / str(listener['pid'])
@@ -524,6 +630,7 @@ rmdir "$path"
                     time.sleep(.1)
                 if proc.exists():
                     os.killpg(listener['pid'], signal.SIGKILL)
+    def close_node(self):
         # Stop kubelet and EVERY owned Pod sandbox before unmounting. containerd
         # remains alive to reap sandboxes, then finite filesystems are retired.
         if self.container_exists(self.NAME + '-control-plane'):
@@ -542,7 +649,3 @@ rmdir "$path"
                 raise CommandFailure('cleanup: owned kind container remains')
         elif any(a['state'] != 'retired' for a in self.allocations):
             raise CommandFailure('cleanup: node disappeared with unverified finite backing')
-        if self.WORK.exists():
-            shutil.rmtree(self.WORK)  # only private fixture data, never evidence
-        self.closed = True
-        self.record_ownership()

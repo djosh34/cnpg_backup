@@ -189,7 +189,7 @@
       "expression": "state != 'failed'",
       "id": "2e4bd87a80d1f1c5",
       "category": "eventual-outcome",
-      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "requirement": "design full capture: requested full backup completes successfully before dependent restore fixtures",
       "temporal_semantics": "Observe terminal capture outcome within full() 600s budget; terminal failed is immediately reported, never retried to green.",
       "failure_layer": "product"
     },
@@ -708,7 +708,7 @@
       "function": "completed",
       "expression": "op['state'] != 'uncertain'",
       "id": "d75da2f47d486740",
-      "category": "safety-invariant",
+      "category": "eventual-outcome",
       "requirement": "design \u00a75: ordinary unpaused completion must produce durable exact original Job/Pod proof and release only owned source holds; missing live objects are allowed",
       "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
       "failure_layer": "product"
@@ -945,7 +945,7 @@
     },
     {
       "file": "hack/recovery_cases.py",
-      "function": "archive_absent",
+      "function": "verify_archive",
       "expression": "self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == keys",
       "id": "d6c20261568c3f60",
       "category": "fixture-precondition",
@@ -1035,8 +1035,8 @@
     },
     {
       "file": "hack/recovery_cases.py",
-      "function": "fatal_replay",
-      "expression": "self.wal.control()['blocked'] > 0",
+      "function": "replay_failure",
+      "expression": "receipt['blocked'] <= 0 or not requested_seen",
       "id": "5bcaf46d858ac108",
       "category": "fixture-precondition",
       "requirement": "S1 fixture: requested fault actually fired during actual PG replay; a missed fault does not count",
@@ -1060,7 +1060,7 @@
       "id": "bef39bc6301a9e81",
       "category": "safety-invariant",
       "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
-      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "temporal_semantics": "Proxy fault receipt and actual requested filename must be established before outcome assertions; otherwise blocked, not a product finding. Local-bundle absence caller instead establishes archive/local withholding through replay.",
       "failure_layer": "product"
     },
     {
@@ -1070,7 +1070,7 @@
       "id": "88c7642a256b6e5e",
       "category": "safety-invariant",
       "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
-      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "temporal_semantics": "Proxy fault receipt and actual requested filename must be established before outcome assertions; otherwise blocked, not a product finding. Local-bundle absence caller instead establishes archive/local withholding through replay.",
       "failure_layer": "product"
     },
     {
@@ -1090,7 +1090,7 @@
       "id": "e1024a31848bf05f",
       "category": "safety-invariant",
       "requirement": "design \u00a75: effective required-WAL failure returns255 and prevents actual latest promotion",
-      "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
+      "temporal_semantics": "Proxy fault receipt and actual requested filename must be established before outcome assertions; otherwise blocked, not a product finding. Local-bundle absence caller instead establishes archive/local withholding through replay.",
       "failure_layer": "product"
     },
     {
@@ -1189,7 +1189,7 @@
       "expression": "not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']",
       "id": "514b2f52518ae625",
       "category": "fixture-precondition",
-      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "requirement": "testing source-disaster fixture: source namespace finalized and no source Pods remain before S3-only recovery",
       "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
       "failure_layer": "fixture"
     },
@@ -1266,7 +1266,7 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "case_bundle_duplicate_absent_local_fallback",
-      "expression": "self.barrier(negative['pod'], 'cnpg-exited', 300)",
+      "expression": "self.barrier(state['pod'], 'cnpg-exited', 300)",
       "id": "6eacdd7082f97351",
       "category": "eventual-outcome",
       "requirement": "testing named scenario case_bundle_duplicate_absent_local_fallback",
@@ -1496,7 +1496,7 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "case_pending_sidecar_task_same_incarnation_drain",
-      "expression": "request.wait(timeout=30) != 0",
+      "expression": "result.returncode != 0",
       "id": "bc262d1ca56982cd",
       "category": "safety-invariant",
       "requirement": "design \u00a73/5 and testing named family: pending-sidecar-task-same-incarnation-drain",
@@ -1506,7 +1506,7 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "case_pending_sidecar_task_same_incarnation_drain",
-      "expression": "request.wait(timeout=30)",
+      "expression": "request.result(timeout=30)",
       "id": "db5558c3f9774b9a",
       "category": "eventual-outcome",
       "requirement": "testing named scenario case_pending_sidecar_task_same_incarnation_drain",
@@ -1514,14 +1514,14 @@
       "failure_layer": "unresolved-timeout"
     },
     {
-      "file": "hack/recovery_cases.py",
-      "function": "case_pending_sidecar_task_same_incarnation_drain",
-      "expression": "request.wait(timeout=15)",
-      "id": "7f1ae1b170f65859",
-      "category": "eventual-outcome",
-      "requirement": "testing named scenario case_pending_sidecar_task_same_incarnation_drain",
-      "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",
-      "failure_layer": "unresolved-timeout"
+      "file": "hack/campaign_fixture.py",
+      "function": "tool",
+      "expression": "result.returncode != 2 or result.stdout.strip() != 'WAL rejected'",
+      "id": "shell-free-native-rejection",
+      "category": "fixture-precondition",
+      "requirement": "R0 negative command oracle: actual test driver exit2 plus exact WAL rejected receipt; Docker125/126/127, killed verifier, timeout and output overflow cannot establish rejection",
+      "temporal_semantics": "Only after original positive verification and explicit missing/corrupt WAL mutation; expected test-driver rejection is required separately for each negative invocation. Owned bounded container must be removed and absence verified even on cancellation.",
+      "failure_layer": "infrastructure"
     },
     {
       "file": "hack/recovery_cases.py",
@@ -1789,7 +1789,7 @@
       "expression": "self.forward.poll() is None",
       "id": "9ab259b39ab6b5c4",
       "category": "fixture-precondition",
-      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "requirement": "testing MinIO fixture: owned TLS port-forward remains alive through readiness",
       "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
       "failure_layer": "fixture"
     },
@@ -1809,7 +1809,7 @@
       "expression": "'<Error>' not in result and 'curl:' not in result",
       "id": "971b11f0f4ccf860",
       "category": "fixture-precondition",
-      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "requirement": "testing MinIO fixture: initialized object layer accepts creation of the fresh test bucket",
       "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
       "failure_layer": "fixture"
     },
@@ -1829,7 +1829,7 @@
       "expression": "re.fullmatch('[0-9A-F]{24}', name)",
       "id": "ae9ca59a1ae91c5f",
       "category": "fixture-precondition",
-      "requirement": "design \u00a73/4: exact full-size independently archived WAL identity",
+      "requirement": "testing WAL fault fixture: injection selects one syntactically valid complete WAL filename",
       "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
       "failure_layer": "fixture"
     },

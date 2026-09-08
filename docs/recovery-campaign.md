@@ -68,6 +68,13 @@ capture. `--case` selects a named dependency closure. `retirement-20` is a separ
 explicit diagnostic gate exercising twenty sequential negative/restore operations
 in one fixture, not a substitute for any of the33 full cases.
 
+Required branch records remain beneath those33 families: newest/explicit-base
+latest, inclusive/exclusive time/LSN/XID, earlier/explicit-too-new selection,
+R0 missing/corrupt WAL, intact-fallback/all-required255, and each same-file
+healthy/negative/fault variant. Independent unexecuted branches
+survive a sibling failure, but run only after verified disposal and fresh fixture
+certification. Failed branches are never retried; true dependents are blocked.
+
 `--layout grouped` uses separate fresh fixtures for targets/source loss, S1/WAL/R0,
 and ownership plus final exploration. Monolithic is the full-order default to
 expose accumulation/order defects. Local fixtures are serial under one cross-
@@ -83,7 +90,9 @@ A leaked fixture blocks slot reuse. An audited product requirement is not causal
 proof of a product defect: automatic assertion classifications are explicitly
 unadjudicated. Preserve the original first-failure record and add separately bound
 causal adjudication after checking fixture/caller inputs and actual state. Collection and teardown errors are additional
-failures and never obscure the primary error. Deadlines leave unexercised work
+failures and never obscure the primary error. Primary failures are saved before
+fault/object reset; every independent cleanup is attempted and recorded with its
+phase/association, including nested failures. Deadlines leave unexercised work
 blocked/incomplete. An unresolved timeout alone is not a demonstrated product bug.
 
 The exhaustive [assertion/barrier audit](campaign-assertion-audit.json) classifies
@@ -92,7 +101,10 @@ assumptions. A cheap AST completeness regression rejects unclassified assertions
 Keep exact SQL inclusion/exclusion, native WAL/hash/history endpoints, source
 holder identity, same-PID adoption/reaping and all-three-volume ownership checks.
 Readiness, deleted Pods, elapsed time and API projection spelling do not replace
-these requirements. CNPG source smart/stop shutdown is explicitly30/60 seconds;
+these requirements. Fatal-WAL assertions require an observed fault receipt and
+actual requested filename; absent prerequisites block the outcome assertions.
+R0 missing/corrupt controls require the native test driver's exit2 and exact
+`WAL rejected` receipt, never Docker invocation errors or killed verification. CNPG source smart/stop shutdown is explicitly30/60 seconds;
 namespace deletion waits for actual finalization within300 seconds. No finalizer
 stripping, marker clearing or invented completion proof is allowed.
 
@@ -129,7 +141,14 @@ Concurrent kubelet sandbox removal is accepted only after a fresh successful CRI
 list proves that exact sandbox absent, never because an error says NotFound. Unknown ownership or unmount failure is a reported leak.
 
 Commands preserve return code and bounded separate output; child groups are killed
-and reaped on deadline. Waits cap children by remaining case/run time and report
+and reaped on deadline. The pending exec uses that same bounded capture and
+TERM/KILL/reap path, independently of remote resets or an expired case budget.
+Standalone image-version/verifier containers have pre-recorded owned names and
+labels, 1CPU/512MiB/64PID limits, explicit forced removal and verified absence.
+Removal failure blocks fixture reuse; stale labeled containers also block a new
+run. Logs/events/status collectors proceed independently with typed results;
+unavailable logs are blocked only after fresh original-Pod absence or unstarted
+container evidence. Waits cap children by remaining case/run time and report
 last operation/status plus available scheduling/admission observations. Failures
 are collected before teardown. Fresh runs bind the120-minute budget into the immutable plan; only diagnostic
 runs can override it, and their actual budget is recorded. The campaign reserves five
@@ -155,7 +174,9 @@ Local/CI cheap gates are `./hack/test harness`, `race`, `fuzz-smoke` and
 `campaign-focused` (100 repetitions of focused API/actor/harness regressions).
 Production builds remain CGO-free; race uses test-only CGO. The full-fresh
 aggregator rejects partial, retained, failed, missing, mismatched and leaked
-attempts. Full G evidence still does **not** qualify H–K or a release.
+attempts, including missing/failed required child branches. Each run has a unique
+execution ID; duplicate executions cannot count as repeats. `campaign-compare`
+requires distinct local and hosted executions, not self-comparison. Full G evidence still does **not** qualify H–K or a release.
 
 Required repair evidence remains: exhaustive audit/red controls, all independent
 failure reporting and blocking, focused repeats, same immutable full local/hosted

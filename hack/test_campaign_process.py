@@ -219,5 +219,7 @@ class ProcessTests(unittest.TestCase):
             self.assertTrue(fixture.closed)
             self.assertFalse(fixture.WORK.exists())
             fixture.run.side_effect = CommandFailure('Docker authorization denied')
-            with self.assertRaises(CommandFailure):
+            with self.assertRaises(BaseExceptionGroup) as raised:
                 fixture.close()
+            self.assertTrue(all(isinstance(error, CommandFailure) and 'Docker authorization denied' in str(error)
+                                for error in raised.exception.exceptions))

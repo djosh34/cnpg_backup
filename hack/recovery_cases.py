@@ -9,13 +9,13 @@ from pathlib import Path
 import random
 import re
 import shutil
-import subprocess
 import time
 import tarfile
 import io
 import uuid
 import xml.etree.ElementTree as ET
 
+from campaign_process import cleanup, CommandFailure
 import backup_smoke
 import cnpg_smoke as h
 import wal_smoke
@@ -113,6 +113,13 @@ class Campaign:
         self.targets = []
         self.journal = []
 
+    def record_failure(self, error):
+        if self.m is not None:
+            return self.m.failure(error, 'case', getattr(self.m, 'current_case', None))
+
+    def cleanup(self, actions):
+        return cleanup(actions, self.record_failure)
+
     def event(self, event_name, **facts):
         h = self.h
         self.m.event(event_name, **facts)
@@ -164,8 +171,7 @@ class Campaign:
         # under the subject name, and never mistake a Docker config ID for digest.
         for flavor, image in [('manager', self.args.manager_image), ('pg18', self.args.data_image)]:
             h.run('docker', 'pull', '--platform=linux/amd64', image)
-            version = h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL',
-                            '--entrypoint=/usr/local/bin/cnpg-backup', image, 'version')
+            version = h.tool(image, '/usr/local/bin/cnpg-backup', 'version')
             assert 'revision=' + self.args.subject_sha + ' ' in version, 'selected image binary revision differs from subject SHA'
             # Kubelet pulls these SAME registry manifests using the scoped
             # imagePullSecret below. Never docker-save/import/re-tag a subject:
@@ -708,13 +714,20 @@ class Campaign:
             h.wait(lambda: plan['lifetime_hold_id'] not in {x['id'] for x in self.gate()['holders']},
                    'uninterrupted original observer releases stable lifetime after all terminations', 120)
         state['completion_pods'] = self.pods(state['name'])
-        for pod in state['completion_pods']:
-            for container in ('full-recovery', 'cnpg-backup'):
-                text = h.kube('logs', pod['metadata']['name'], '-n', TARGET, '-c', container,
-                              '--tail=300', '--limit-bytes=65536', check=False)
-                h.save_log(pod['metadata']['name'] + '-' + container + '.log', text, 65536)
+        self.collect_target_logs(state['completion_pods'])
         self.event('completion-evidence', cluster=state['name'], job_uids=[j['metadata']['uid'] for j in jobs],
                    pods=[h.pod_evidence(p) for p in state['completion_pods']])
+
+    def collect_target_logs(self, pods):
+        from campaign_fixture import Fixture
+        errors = Fixture.collect_logs(self.h, TARGET, pods)
+        if errors:
+            failures = []
+            for item in errors:
+                error = CommandFailure(item['collector'] + ': ' + item['diagnostic'])
+                error.campaign_phase = 'collection'
+                failures.append(error)
+            raise ExceptionGroup('target evidence collection failed', failures)
 
     def retire_target(self, state):
         # Bound live PostgreSQL/sidecar memory. Preserve status/log evidence first;
@@ -723,12 +736,7 @@ class Campaign:
         observed_pods = self.pods(state['name'])
         state['retired_pod_uids'] = sorted({p['metadata']['uid'] for p in observed_pods + state.get('completion_pods', [])}
                                            | ({state['pod_uid']} if 'pod_uid' in state else set()))
-        for pod in observed_pods:
-            for container in ('full-recovery', 'cnpg-backup', 'postgres'):
-                if not any(c['name'] == container for c in pod['spec'].get('containers', []) + pod['spec'].get('initContainers', [])):
-                    continue
-                text = h.kube('logs', pod['metadata']['name'], '-n', TARGET, '-c', container, '--tail=300', '--limit-bytes=65536', check=False)
-                h.save_log(pod['metadata']['name'] + '-' + container + '.log', text, 65536)
+        self.collect_target_logs(observed_pods)
         # Keep the operation object until the original observer records closure.
         # Deleting its Cluster first can GC that object before uncertainty is
         # durable, correctly retaining an in-memory fence/capacity indefinitely.
@@ -814,7 +822,10 @@ class Campaign:
         directory.mkdir(mode=0o700)
         keys = self.inventory('smoke/v1/' + SOURCE_ID + '/wal/')
         saved = []
-        try:
+        def verify_archive():
+            assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == keys
+        actions = [('fixture-restore', verify_archive)]
+        with self.cleanup(actions):
             for i, key in enumerate(keys):
                 payload, headers = directory / str(i), directory / (str(i) + '.headers')
                 d = self.wal.directory
@@ -828,18 +839,15 @@ class Campaign:
                         metadata += ['--header', line]
                 assert metadata, 'WAL integrity metadata snapshot missing'
                 saved.append((key, payload, metadata))
+                actions.insert(-1, ('fixture-restore', lambda key=key, payload=payload, metadata=metadata:
+                    h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
+                          '--config', self.wal.directory / 'curl-private.conf', '--cacert', self.wal.directory / 'ca.crt',
+                          '-X', 'PUT', '--upload-file', payload, *metadata, self.wal.endpoint + '/test-bucket/' + key)))
                 self.wal.s3('DELETE', key)
             assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == []
             self.event('effective-archive-removal', object_count=len(saved), source_namespace_deleted=True,
                        legitimate_GC_claim=False)
             yield
-        finally:
-            for key, payload, metadata in saved:
-                d = self.wal.directory
-                h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
-                      '--config', d / 'curl-private.conf', '--cacert', d / 'ca.crt', '-X', 'PUT', '--upload-file', payload,
-                      *metadata, self.wal.endpoint + '/test-bucket/' + key)
-            assert self.inventory('smoke/v1/' + SOURCE_ID + '/wal/') == keys
 
 
     def put_fixture(self, key, path):
@@ -857,7 +865,7 @@ class Campaign:
         h = self.h
         WORK = h.WORK
         commit = copy.deepcopy(self.same_commit)
-        d = WORK / 'same-padding'
+        d = WORK / ('same-padding-' + uuid.uuid4().hex[:12])
         d.mkdir(mode=0o700)
         prefix = 'smoke/v1/' + SOURCE_ID + '/backups/' + commit['backup_uid'] + '/'
         artifact = next(a for a in commit['artifacts'] if a['role'] == 'wal')
@@ -890,7 +898,8 @@ class Campaign:
         changed, changed_commit = d / 'padded-object', d / 'padded-commit'
         changed.write_bytes(stored)
         atomic_json(changed_commit, commit)
-        try:
+        with self.cleanup([('fixture-restore', lambda: self.put_fixture(key, old)),
+                      ('fixture-restore', lambda: self.put_fixture(prefix + 'commit.json', old_commit))]):
             self.put_fixture(key, changed)
             self.put_fixture(prefix + 'commit.json', changed_commit)
             self.event('same-segment-padding-arranged', filename=name, end_lsn=commit['bundled_wal_end_lsn'],
@@ -898,9 +907,6 @@ class Campaign:
                        synthetic_padding=True, original_object_sha256=hashlib.sha256(old.read_bytes()).hexdigest(),
                        padded_object_sha256=hashlib.sha256(stored).hexdigest())
             yield commit, name
-        finally:
-            self.put_fixture(key, old)
-            self.put_fixture(prefix + 'commit.json', old_commit)
 
     def same_segment_plan(self, state):
         h = self.h
@@ -926,26 +932,37 @@ class Campaign:
 
     def fatal_replay(self, state, requested, mode, family):
         h = self.h
-        self.wal.control(mode, requested)
-        try:
-            self.replay_failure(state, requested)
-            assert self.wal.control()['blocked'] > 0, 'ineffective fault injection is not product failure'
-            self.event('effective-fatal-WAL', family=family, filename=requested, proxy=self.wal.control())
-        finally:
-            self.wal.control('')
+        with self.cleanup([('fault-reset', lambda: self.wal.control(''))]):
+            self.wal.control(mode, requested)
+            self.replay_failure(state, requested, fault_family=family)
         self.retire_target(state)
 
-    def replay_failure(self, state, requested):
+    def replay_failure(self, state, requested, fault_family=None):
         h = self.h
-        self.release(state['pod'], 'release-response')
-        self.barrier(state['pod'], 'cnpg-exited', 240)
+        receipt = None
+        # Observe effectiveness even if terminal readiness itself fails.
+        def observe_fault():
+            nonlocal receipt
+            if fault_family:
+                receipt = self.wal.control()
+                self.event('fatal-WAL-fault-receipt', family=fault_family, filename=requested, proxy=receipt,
+                           outcome_assertions='eligible' if receipt['blocked'] > 0 else 'blocked')
+        with self.cleanup([('fault-observation', observe_fault)]):
+            self.release(state['pod'], 'release-response')
+            self.barrier(state['pod'], 'cnpg-exited', 240)
         logs = h.kube('logs', state['pod'], '-n', TARGET, '-c', 'full-recovery')
         trace = self.file(state['pod'], '/controller/campaign/rpc.jsonl')
         h.save_log(state['name'] + '-fatal-main.log', logs)
         h.save_log(state['name'] + '-fatal-rpc.jsonl', trace)
+        events = [json.loads(x) for x in trace.splitlines()]
+        if fault_family:
+            requested_seen = any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
+            self.event('fatal-WAL-outcome-prerequisites', filename=requested, requested_seen=requested_seen,
+                       outcome_assertions='eligible' if receipt['blocked'] > 0 and requested_seen else 'blocked')
+            if receipt['blocked'] <= 0 or not requested_seen:
+                raise RuntimeError('ineffective fault fixture: outcome assertions blocked; requested WAL/fault receipt not established')
         assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
         assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
-        events = [json.loads(x) for x in trace.splitlines()]
         assert any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
         assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events)
         self.holds(state, 'fatal-source-WAL')
@@ -1071,13 +1088,24 @@ class Campaign:
         with self.m.case('source-namespace-catalog-loss-S3-only'):
             self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
 
+    def variants(self, names):
+        branch = getattr(self.m, 'current_branch', None)
+        if isinstance(branch, str):
+            if branch not in names:
+                raise ValueError('unregistered branch: ' + branch)
+            return [branch]
+        return names
+
     def case_full_latest_remote_SQL(self):
         h = self.h
         with self.m.case('full-latest-remote-SQL'):
-            selected = self.restore({}, LATEST, ordinary=True)
-            newest = getattr(self, 'same_commit', self.newest)
-            assert selected['plan']['plan']['chain'][0]['backup_uid'] == newest['backup_uid']
-            self.restore({'backupID': self.base['backup_uid']}, LATEST)
+            for branch in self.variants(('newest', 'explicit-base')):
+                if branch == 'newest':
+                    selected = self.restore({}, LATEST, ordinary=True)
+                    newest = getattr(self, 'same_commit', self.newest)
+                    assert selected['plan']['plan']['chain'][0]['backup_uid'] == newest['backup_uid']
+                else:
+                    self.restore({'backupID': self.base['backup_uid']}, LATEST)
 
     def case_full_name_pre_DROP_SQL(self):
         h = self.h
@@ -1101,9 +1129,12 @@ class Campaign:
     def case_newest_base_too_new(self):
         h = self.h
         with self.m.case('newest-base-too-new'):
-            state = self.restore({'targetLSN': self.target['commit_lsn']}, INCLUSIVE, True)
-            assert state['plan']['plan']['chain'][0]['backup_uid'] == self.base['backup_uid']
-            self.reject({'backupID': self.newest['backup_uid'], 'targetLSN': self.target['commit_lsn']}, 'too-new-base')
+            for branch in self.variants(('earlier-base', 'reject-explicit-newest')):
+                if branch == 'earlier-base':
+                    state = self.restore({'targetLSN': self.target['commit_lsn']}, INCLUSIVE, True)
+                    assert state['plan']['plan']['chain'][0]['backup_uid'] == self.base['backup_uid']
+                else:
+                    self.reject({'backupID': self.newest['backup_uid'], 'targetLSN': self.target['commit_lsn']}, 'too-new-base')
 
     def case_target_unreached(self):
         h = self.h
@@ -1114,7 +1145,7 @@ class Campaign:
         h = self.h
         WORK = h.WORK
         with self.m.case('shell-free-original-verification'):
-            directory = WORK / 'original-verification'
+            directory = WORK / ('original-verification-' + uuid.uuid4().hex[:12])
             directory.mkdir(mode=0o700)
             exported = directory / 'subject.tar'
             name = h.NAME + '-image-audit'
@@ -1149,49 +1180,49 @@ class Campaign:
             driver = directory / 'verify'
             shutil.copy2(h.bundle['directory'] / 'verify', driver)
             def tool(entry, *args, failure=False):
-                return h.run('docker', 'run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--user', str(os.getuid()),
-                             '--mount', 'type=bind,source=' + str(directory) + ',target=/input,readonly', '--entrypoint', entry,
-                             self.args.data_image, *args, expect_failure=failure)
+                return h.tool(self.args.data_image, entry, *args,
+                              mounts=('--mount', 'type=bind,source=' + str(directory) + ',target=/input,readonly'), rejection=failure)
             tool('/usr/lib/postgresql/18/bin/pg_verifybackup', '--exit-on-error', '--no-parse-wal', '/input/tar')
             tool('/input/verify', '/input/tar/backup_manifest', '/input/wal')
             segment = next(p for p in wal_dir.iterdir() if re.fullmatch('[0-9A-F]{24}', p.name))
-            hidden = directory / 'withheld'
-            segment.rename(hidden)
-            try:
-                tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
-            finally:
-                hidden.rename(segment)
-            original = segment.read_bytes()
-            try:
-                segment.write_bytes(bytes(8192) + original[8192:])
-                tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
-            finally:
-                segment.write_bytes(original)
+            controls = self.variants(('missing-WAL', 'corrupt-WAL'))
+            for control in controls:
+                if control == 'missing-WAL':
+                    hidden = directory / 'withheld'
+                    segment.rename(hidden)
+                    with self.cleanup([('fixture-restore', lambda: hidden.rename(segment))]):
+                        tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
+                else:
+                    original = segment.read_bytes()
+                    with self.cleanup([('fixture-restore', lambda: segment.write_bytes(original))]):
+                        segment.write_bytes(bytes(8192) + original[8192:])
+                        tool('/input/verify', '/input/tar/backup_manifest', '/input/wal', failure=True)
             self.event('shell-free-original-native-verification', image=self.args.data_image,
-                       original_manifest_sha256=commit['manifest_sha256'], missing_and_corrupt_range_rejected=True,
+                       original_manifest_sha256=commit['manifest_sha256'], rejected_controls=list(controls),
                        data_image_has_shell=False, driver_sha256=hashlib.sha256(driver.read_bytes()).hexdigest())
 
     def case_bundle_duplicate_absent_local_fallback(self):
         h = self.h
         with self.m.case('bundle-duplicate-absent-local-fallback'):
             with self.archive_absent():
-                state = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
-                self.materialize(state)
-                assert not state['plan']['plan']['required_archive'], 'immediate no-archive fixture unexpectedly has remote-required intervals'
-                name = sorted(state['plan']['bundled'])[0]
-                self.helper(state, name, 1) # actual archive-first miss, NOT archive success
-                state['expect_promotion_partial'] = True
-                self.finish(state, BASE, True)
-                negative = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
-                self.materialize(negative)
-                self.release(negative['pod'], 'incorrect-all-fatal')
-                self.helper(negative, name, 255)
-                self.release(negative['pod'], 'release-response')
-                self.barrier(negative['pod'], 'cnpg-exited', 300)
-                trace = [json.loads(x) for x in self.file(negative['pod'], '/controller/campaign/rpc.jsonl').splitlines()]
-                assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in trace), 'all-required255 negative oracle was insensitive'
-                self.event('distinguishing-all-required255-negative', trace=trace)
-                self.retire_target(negative)
+                for control in self.variants(('intact-local-fallback', 'all-required-255')):
+                    state = self.start({'backupID': self.base['backup_uid'], 'targetImmediate': True})
+                    self.materialize(state)
+                    assert not state['plan']['plan']['required_archive'], 'immediate no-archive fixture unexpectedly has remote-required intervals'
+                    name = sorted(state['plan']['bundled'])[0]
+                    if control == 'intact-local-fallback':
+                        self.helper(state, name, 1) # actual archive-first miss, NOT archive success
+                        state['expect_promotion_partial'] = True
+                        self.finish(state, BASE, True)
+                    else:
+                        self.release(state['pod'], 'incorrect-all-fatal')
+                        self.helper(state, name, 255)
+                        self.release(state['pod'], 'release-response')
+                        self.barrier(state['pod'], 'cnpg-exited', 300)
+                        trace = [json.loads(x) for x in self.file(state['pod'], '/controller/campaign/rpc.jsonl').splitlines()]
+                        assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in trace), 'all-required255 negative oracle was insensitive'
+                        self.event('distinguishing-all-required255-negative', trace=trace)
+                        self.retire_target(state)
 
     def case_bundle_local_missing_fatal(self):
         h = self.h
@@ -1202,13 +1233,12 @@ class Campaign:
                 name = sorted(state['plan']['bundled'])[0]
                 source = '/var/lib/postgresql/wal/pg_wal/' + name
                 h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source, source + '.withheld')
-                try:
+                with self.cleanup([('fixture-restore', lambda: h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery',
+                              '--', 'mv', source + '.withheld', source))]):
                     # Both actual archive absence and local withholding survive
                     # the PG request, helper255 and terminal no-promotion proof.
                     self.replay_failure(state, name)
                     self.event('effective-local-bundle-absence', filename=name, pod=state['pod'])
-                finally:
-                    h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'mv', source + '.withheld', source)
                 # The intact exit1/SQL positive is the separate fresh target
                 # above, never this repaired negative attempt.
                 self.retire_target(state)
@@ -1218,7 +1248,13 @@ class Campaign:
         with self.m.case('same-bundled-segment-post-EndLSN-archive-preferred'):
             with self.padded_same_bundle() as (commit, name):
                 target = {'backupID': commit['backup_uid']}  # explicit-base/latest; no equality LSN target
-                for control in ('healthy', 'wrong-bundle', 'healthy-after-negative'):
+                for control in self.variants(('healthy', 'wrong-bundle', 'healthy-after-negative', 'missing-wal-get',
+                                              'corrupt-wal-get', 'auth-wal-get', 'reset-wal-get', 'tls-wal-get')):
+                    if control.endswith('-wal-get'):
+                        state = self.start(target)
+                        self.same_segment_plan(state)
+                        self.fatal_replay(state, name, control, 'same-segment-' + control)
+                        continue
                     state = self.start(target)
                     self.same_segment_plan(state)
                     if control == 'wrong-bundle':
@@ -1235,12 +1271,6 @@ class Campaign:
                         assert reached, 'latest recovery did not reach actual admitted archive frontier'
                     self.event('same-segment-endpoint-oracle', control=control, reached=reached,
                                endpoint=state['replay_endpoint'], frontier=state['same_segment_floor'])
-                # All faults act on this SAME required bundled filename and stay
-                # active through actual PostgreSQL replay/terminal observation.
-                for mode in ('missing-wal-get', 'corrupt-wal-get', 'auth-wal-get', 'reset-wal-get', 'tls-wal-get'):
-                    state = self.start(target)
-                    self.same_segment_plan(state)
-                    self.fatal_replay(state, name, mode, 'same-segment-' + mode)
 
     def case_negative_controls_EOF_and_bundle_as_success(self):
         h = self.h
@@ -1249,15 +1279,13 @@ class Campaign:
             state = self.start({'backupID': self.base['backup_uid']})
             self.materialize(state)
             self.release(state['pod'], 'incorrect-EOF')
-            self.wal.control('auth-wal-get', self.remote)
-            try:
+            with self.cleanup([('fault-reset', lambda: self.wal.control(''))]):
+                self.wal.control('auth-wal-get', self.remote)
                 self.release(state['pod'], 'release-response')
                 self.barrier(state['pod'], 'cnpg-exited', 300)
                 trace = [json.loads(x) for x in self.file(state['pod'], '/controller/campaign/rpc.jsonl').splitlines()]
                 assert self.wal.control()['blocked'] > 0
                 assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] == 0 for x in trace), 'unsafe EOF negative failed to reach false promotion'
-            finally:
-                self.wal.control('')
             # Deliberately faulty proxy allowed data loss. Query the actual
             # promoted cluster: the positive independent LATEST oracle rejects.
             self.finish(state, BASE, True)
@@ -1341,15 +1369,16 @@ class Campaign:
             self.materialize(state)
             self.no_retries(state)
             assert self.markers(state) == ['present'] * 3
-            self.wal.control('hold-wal-get-response', self.remote)
             command = [str(WORK / 'kubectl'), '--kubeconfig', str(WORK / 'kubeconfig'), 'exec', '-n', TARGET,
                        state['pod'], '-c', 'full-recovery', '--', '/cnpg-backup/bin/cnpg-backup', 'wal-fetch',
                        '--plan', '/cnpg-backup/state/recovery.json', '--', self.remote, 'pg_wal/RECOVERYXLOG']
-            log_path = OUT / (state['name'] + '-pending-helper.log')
             paused = None
-            with log_path.open('w') as log:
-                request = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
-                try:
+            def resume():
+                if paused:
+                    h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-CONT', str(paused))
+            with self.cleanup([('fault-reset', resume), ('fault-reset', lambda: self.wal.control(''))]):
+                self.wal.control('hold-wal-get-response', self.remote)
+                with h.commands.background(state['name'] + '-pending-helper', *command, save_log=h.save_log, report=self.record_failure) as request:
                     h.wait(lambda: self.wal.control()['blocked'] > 0, 'actual source WAL task response held', 60)
                     self.holds(state, 'WAL-reader-task-in-flight')
                     pid, cid = self.node_pid(state, 'cnpg-backup')
@@ -1368,15 +1397,10 @@ class Campaign:
                     assert self.markers(state) == ['absent'] * 3
                     reader = state['plan']['plan']['reader_hold_id']
                     assert reader not in {x['id'] for x in self.gate()['holders']}
-                    assert request.wait(timeout=30) != 0, 'canceled helper unexpectedly acknowledged a pending read'
-                finally:
-                    if paused:
-                        h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-CONT', str(paused), check=False)
-                    self.wal.control('')
-                    if request.poll() is None:
-                        request.terminate()
-                        request.wait(timeout=15)
-                    h.save_log(log_path.name, log_path.read_text())
+                    result = request.result(timeout=30)
+                    if result.timed_out or result.dropped_bytes:
+                        result.require()
+                    assert result.returncode != 0, 'canceled helper unexpectedly acknowledged a pending read'
             self.retire_target(state)
 
     def case_stale_tuple_rejected(self):
@@ -1395,16 +1419,14 @@ class Campaign:
         h = self.h
         with self.m.case('source-lifetime-and-reader-through-replay'):
             state = self.start({'backupID': self.base['backup_uid']}, hold_replay=True)
-            self.wal.control('hold-artifact-get-response')
-            try:
+            with self.cleanup([('fault-reset', lambda: self.wal.control(''))]):
+                self.wal.control('hold-artifact-get-response')
                 self.release(state['pod'], 'release-before')
                 h.wait(lambda: self.wal.control()['blocked'] > 0, 'source input read before materialization response', 180)
                 readers = [x for x in self.gate()['holders'] if x['target_cluster_uid'] == state['cluster_uid']]
                 assert {x['kind'] for x in readers} == {'restore-lifetime', 'restore-reader'}
                 assert len(readers) == 2
                 self.event('protected-before-source-input-read-completes', holders=readers, proxy=self.wal.control())
-            finally:
-                self.wal.control('')
             self.materialize(state)
             assert {x['id'] for x in readers} == {state['plan']['plan']['lifetime_hold_id'], state['plan']['plan']['reader_hold_id']}
             self.release(state['pod'], 'release-response')
@@ -1531,7 +1553,8 @@ class Campaign:
     def temporal_case(self, family, field, value):
         h = self.h
         with self.m.case(family):
-            for exclusive in (False, True):
+            for branch in self.variants(('inclusive', 'exclusive')):
+                exclusive = branch == 'exclusive'
                 self.restore({'backupID': self.base['backup_uid'], field: value, 'exclusive': exclusive},
                              BEFORE if exclusive else INCLUSIVE, True)
 

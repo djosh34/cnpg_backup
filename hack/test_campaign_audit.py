@@ -19,7 +19,11 @@ def required_records():
                 function = node.name
             if isinstance(node, ast.Assert):
                 records.append((file, function, ast.unparse(node.test)))
-            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ('wait', 'barrier'):
+            elif isinstance(node, ast.If) and ((function == 'tool' and 'result.returncode' in ast.unparse(node.test))
+                                               or (function == 'replay_failure' and 'receipt[' in ast.unparse(node.test))):
+                records.append((file, function, ast.unparse(node.test)))
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and (node.func.attr in ('wait', 'barrier') or
+                    (function == 'case_pending_sidecar_task_same_incarnation_drain' and node.func.attr == 'result')):
                 records.append((file, function, ast.unparse(node)))
             for child in ast.iter_child_nodes(node):
                 visit(child, function)
@@ -39,6 +43,21 @@ class AuditTests(unittest.TestCase):
         # Deliberate missing-audit control is rejected by the same completeness oracle.
         observed.subtract([next(iter(observed))])
         self.assertNotEqual(observed, required_records())
+
+    def test_conditional_and_fixture_requirement_mappings(self):
+        records = json.loads((ROOT / 'docs/campaign-assertion-audit.json').read_text())['assertions']
+        ordinary = next(r for r in records if r['id'] == 'd75da2f47d486740')
+        self.assertEqual(ordinary['category'], 'eventual-outcome')
+        source = next(r for r in records if r['id'] == '514b2f52518ae625')
+        self.assertIn('source namespace finalized', source['requirement'])
+        for r in records:
+            if r['function'] in ('ready', 'bucket_ready'):
+                self.assertNotIn('full-size independently archived WAL', r['requirement'])
+            if r['function'] == 'replay_failure' and r['failure_layer'] == 'product':
+                self.assertIn('fault receipt', r['temporal_semantics'])
+        tool = next(r for r in records if r['function'] == 'tool' and 'result.returncode' in r['expression'])
+        self.assertIn('exit2', tool['requirement'])
+        self.assertIn('WAL rejected', tool['requirement'])
 
     def test_all_registered_cases_resolve_to_real_oracles_and_explicit_requirements(self):
         for case in REGISTRY:

@@ -145,7 +145,7 @@ class CampaignTests(unittest.TestCase):
             self.assertTrue(predicate())
         with patch.object(campaign, 'pods', return_value=pods), patch.object(campaign, 'event'), \
              patch('recovery_cases.h.kube', return_value=json.dumps(jobs)), patch('recovery_cases.h.wait', side_effect=wait), \
-             patch('recovery_cases.h.pod_evidence', return_value={}), patch('recovery_cases.h.save_log'), \
+             patch.object(campaign, 'collect_target_logs'), patch('recovery_cases.h.save_log'), \
              patch.object(campaign, 'operation_state', return_value={'state': 'uncertain', 'lifetimeReleased': False}), \
              patch.object(campaign, 'gate', return_value={'holders': [{'id': 'stable'}, {'id': 'unrelated'}]}) as gate:
             campaign.terminated(state, stable_retained=True)
@@ -188,7 +188,7 @@ class CampaignTests(unittest.TestCase):
             self.fail('asynchronous Job condition did not arrive')
         with patch.object(campaign, 'pods', return_value=pods), patch.object(campaign, 'event'), \
              patch('recovery_cases.h.kube', side_effect=kube), patch('recovery_cases.h.wait', side_effect=wait), \
-             patch('recovery_cases.h.save_log'), patch('recovery_cases.h.pod_evidence', return_value={}), \
+             patch('recovery_cases.h.save_log'), patch.object(campaign, 'collect_target_logs'), \
              patch.object(campaign, 'gate', return_value={'holders': []}):
             campaign.terminated(state)
         self.assertEqual(len(queries), 2)

@@ -67,6 +67,8 @@ def failure_frames(error):
 def assertion_record(error):
     import ast
     audit = json.loads((ROOT / 'docs/campaign-assertion-audit.json').read_text())['assertions']
+    if getattr(error, 'campaign_oracle', None):
+        return next(a for a in audit if a['id'] == error.campaign_oracle)
     for frame in reversed(traceback.extract_tb(error.__traceback__)):
         path = Path(frame.filename)
         if path.name not in ('recovery_cases.py', 'recovery_campaign.py', 'wal_smoke.py'):
@@ -85,7 +87,7 @@ def classify(error, phase):
             return audit['failure_layer']
     if phase in ('setup', 'preflight'):
         return 'fixture' if isinstance(error, AssertionError) else 'infrastructure'
-    if phase in ('collection', 'teardown'):
+    if phase in ('collection', 'teardown', 'fault-reset', 'fault-observation', 'child-reap', 'container-cleanup', 'fixture-restore'):
         return 'infrastructure'
     if isinstance(error, AssertionError):
         if any(word in str(error).lower() for word in ('ineffective', 'injection', 'fixture', 'ambiguous')):
@@ -103,8 +105,10 @@ class Manifest:
             raise ValueError('duplicate scenario registration')
         self.directory, self.deadline = directory, deadline
         directory.mkdir(parents=True, exist_ok=True)
-        self.data = {'schema': 2, **inputs, 'release_qualified': False,
-                     'scenarios': {s: {'status': 'not_executed'} for s in names},
+        self.data = {'schema': 2, **inputs, 'execution_id': uuid.uuid4().hex, 'release_qualified': False,
+                     'scenarios': {s: {'status': 'not_executed', 'branches': {
+                         b: {'status': 'not_executed', 'required': True} for b in next((c.get('branches', ['main']) for c in REGISTRY if c['id'] == s), ['main'])}}
+                         for s in names},
                      'requested_scenarios': names,
                      'not_requested_scenarios': [s for s in (*MANDATORY, *SUPPLEMENTAL) if s not in names],
                      'remaining_mandatory': names, 'events': 0, 'failures': [], 'phase_timings': [],
@@ -136,17 +140,40 @@ class Manifest:
         self.data['events'] += 1
         self.save()
 
-    def failure(self, error, phase, scenario=None, fixture_requirement=None):
+    def failure(self, error, phase, scenario=None, fixture_requirement=None, caused_by=None):
+        # Mark the exception, not a long-lived map holding its traceback and
+        # potentially large archived fixture buffers alive for the entire run.
+        records = getattr(error, 'campaign_records', {})
+        identity = self.data.get('execution_id', str(id(self)))
+        if identity in records:
+            return records[identity]
+        phase = getattr(error, 'campaign_phase', phase)
+        if isinstance(error, BaseExceptionGroup):
+            first = None
+            for child in error.exceptions:
+                record = self.failure(child, phase, scenario, fixture_requirement, first['id'] if first else caused_by)
+                first = first or record
+            error.campaign_records = {**records, identity: first}
+            return first
+        # Preserve unexpected Python exception chains too (including finally
+        # masking), but never duplicate a primary already recorded above.
+        primary = getattr(error, 'campaign_primary', None)
+        context = primary or error.__cause__ or (None if error.__suppress_context__ else error.__context__)
+        if context is not None and (primary is not None or not isinstance(context, BaseExceptionGroup)):
+            prior = self.failure(context, phase, scenario, fixture_requirement)
+            caused_by = caused_by or prior['id']
         spec = next((c for c in REGISTRY if c['id'] == scenario), {})
         record = {'id': len(self.data['failures']) + 1, 'phase': phase, 'scenario': scenario,
-                  'fixture_requirement': fixture_requirement,
+                  'fixture_requirement': fixture_requirement, 'caused_by': caused_by,
+                  'branch': getattr(self, 'current_branch', None),
                   'classification': classify(error, phase),
                   'classification_status': 'unadjudicated-requirement-layer' if classify(error, phase) == 'product' else 'observed-harness-layer',
                   'product_defect_proven': False,
                   'requirement': spec.get('requirement', 'owned fixture lifecycle'),
                   'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:],
                   'frames': failure_frames(error), 'epoch': time.time(), 'fixture': self.data.get('active_fixture'),
-                  'assertion': assertion_record(error) if isinstance(error, AssertionError) else None}
+                  'assertion': assertion_record(error) if isinstance(error, AssertionError) or getattr(error, 'campaign_oracle', None) else None}
+        error.campaign_records = {**records, identity: record}
         self.data['failures'].append(record)
         first = self.directory / 'first-failure.json'
         if not first.exists():
@@ -180,7 +207,9 @@ class Manifest:
     @contextlib.contextmanager
     def case(self, name):
         self.budget()
-        result = self.data['scenarios'][name]
+        family = self.data['scenarios'][name]
+        branch = getattr(self, 'current_branch', None)
+        result = family['branches'][branch] if branch else family
         if result['status'] != 'not_executed':
             raise ValueError('duplicate scenario execution: ' + name)
         result.update(status='running', started_epoch=time.time(), fixture=self.data.get('active_fixture'))
@@ -196,8 +225,29 @@ class Manifest:
             result['status'] = 'passed'
         finally:
             result['finished_epoch'] = time.time()
+            if branch:
+                self.update_family(name)
+            else:
+                for child in family['branches'].values():
+                    child.update(status='passed' if result['status'] == 'passed' else 'blocked',
+                                 blocked_by=[] if result['status'] == 'passed' else [result.get('failure_id')])
             self.current_case = None
             self.save()
+
+    def update_family(self, name):
+        family = self.data['scenarios'][name]
+        states = {r['status'] for r in family['branches'].values()}
+        family['status'] = ('passed' if states == {'passed'} else 'failed' if 'failed' in states
+                            else 'blocked' if 'blocked' in states else 'running')
+
+    def block(self, name, reasons, branch=None, **facts):
+        family = self.data['scenarios'][name]
+        for key, result in family['branches'].items():
+            if result['status'] == 'not_executed' and (branch is None or key == branch):
+                result.update(status='blocked', classification='blocked', blocked_by=reasons, **facts)
+        family.update(blocked_by=reasons, **facts)
+        self.update_family(name)
+        self.save()
 
     def finish(self):
         self.data['finished_epoch'] = time.time()
@@ -347,13 +397,14 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                 if observed['errors']:
                     raise RuntimeError('; '.join(observed['errors']))
                 stale = commands.run('docker', 'ps', '-a', '--filter', 'label=io.x-k8s.kind.role=control-plane', '--format', '{{.Names}}').split()
+                stale += commands.run('docker', 'ps', '-a', '--filter', 'label=cnpg-backup-fixture', '--format', '{{.Names}}').split()
                 if any(name.startswith(('cb-repair-', 'cnpg-backup-campaign-')) for name in stale):
-                    raise ValueError('uncollected owned/retained campaign node blocks fresh slot')
+                    raise ValueError('uncollected owned/retained campaign container blocks fresh slot')
                 shutil.copyfile(ROOT / 'docs/campaign-assertion-audit.json', manifest.directory / 'assertion-audit.json')
         except Exception as error:
             failure = manifest.failure(error, 'preflight')
-            for result in manifest.data['scenarios'].values():
-                result.update(status='blocked', classification='blocked', blocked_by=[failure['id']])
+            for name in manifest.data['scenarios']:
+                manifest.block(name, [failure['id']])
             manifest.data['teardown_complete'] = True  # preflight provisions nothing
             manifest.finish()
             return 1
@@ -389,24 +440,23 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
             raise Deadline('campaign fault-generation deadline; collection/teardown reserve begins')
         old_handler = signal.signal(signal.SIGALRM, expired)
         signal.setitimer(signal.ITIMER_REAL, max(.01, manifest.deadline - time.monotonic()))
-        pending = deque(cases)
+        pending = deque((case, branch) for case in cases for branch in case.get('branches', ['main']))
         try:
             while pending:
-                case = pending.popleft()
+                case, branch = pending.popleft()
                 name = case['id']
-                if manifest.data['scenarios'][name]['status'] != 'not_executed':
+                manifest.current_branch = branch
+                if manifest.data['scenarios'][name]['branches'][branch]['status'] != 'not_executed':
                     continue
                 blocked = [d for d in case['requires'] if manifest.data['scenarios'][d]['status'] != 'passed']
                 if not healthy or blocked or time.monotonic() >= manifest.deadline:
-                    manifest.data['scenarios'][name] = {'status': 'blocked', 'classification': 'blocked',
-                        'blocked_by': blocked or ['owned cleanup failed' if not healthy else 'campaign deadline'],
-                        'requirement': case['requirement']}
-                    manifest.save()
+                    manifest.block(name, blocked or ['owned cleanup failed' if not healthy else 'campaign deadline'],
+                                   branch, requirement=case['requirement'])
                     continue
                 if fixture and plan['recipe']['layout'] == 'grouped' and group != case['group']:
                     dispose()
                     if not healthy:
-                        manifest.data['scenarios'][name] = {'status': 'blocked', 'blocked_by': ['owned cleanup failed']}
+                        manifest.block(name, ['owned cleanup failed'], branch)
                         continue
                 if fixture is None:
                     serial += 1
@@ -416,7 +466,7 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                                       plan['recipe']['resources'], manifest.deadline)
                     # First monolithic fixture gets the full declared closure;
                     # after a failure only prerequisites for remaining cases.
-                    needed = {f for c in cases if manifest.data['scenarios'][c['id']]['status'] == 'not_executed'
+                    needed = {f for c in cases if any(b['status'] == 'not_executed' for b in manifest.data['scenarios'][c['id']]['branches'].values())
                               and (plan['recipe']['layout'] != 'grouped' or c['group'] == case['group']) for f in c['fixtures']}
                     args = SimpleNamespace(profile=plan['recipe']['profile'], seed=plan['recipe']['seed'], fixtures=needed,
                                            subject_sha=plan['subject']['revision'], manager_image=plan['subject']['images']['manager'],
@@ -435,11 +485,15 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                             campaign.m = prerequisite
                             for dependency in dependencies:
                                 preparing_case = dependency
-                                with fixture.commands.budget(dependency['seconds']):
-                                    getattr(campaign, dependency['method'])()
+                                for required_branch in dependency.get('branches', ['main']):
+                                    prerequisite.current_branch = required_branch
+                                    with fixture.commands.budget(dependency['seconds']):
+                                        getattr(campaign, dependency['method'])()
                             if not prerequisite.finish():
                                 raise RuntimeError('fresh fixture prerequisite failed')
                             campaign.m = manifest
+                        manifest.event('fixture-certified', fixtures=sorted(needed), prerequisites='passed',
+                                       independent_branch=branch)
                     except Exception as error:
                         campaign.m = manifest
                         failed_fixture = 'same-segment' if any(f.name == 'capture_same_segment' for f in traceback.extract_tb(error.__traceback__)) else 'source'
@@ -447,16 +501,15 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                                                    preparing_case['id'] if preparing_case else None,
                                                    fixture_requirement=None if preparing_case else failed_fixture)
                         for dependent in cases:
-                            result = manifest.data['scenarios'][dependent['id']]
                             needs_failed = preparing_case['id'] in dependent['requires'] if preparing_case else failed_fixture in dependent['fixtures']
-                            if result['status'] == 'not_executed' and needs_failed:
-                                result.update(status='blocked', classification='blocked', blocked_by=[failure['id']],
-                                              failed_fixture=None if preparing_case else failed_fixture)
+                            if needs_failed:
+                                manifest.block(dependent['id'], [failure['id']],
+                                               failed_fixture=None if preparing_case else failed_fixture)
                         # A failure in an optional S1 prerequisite must not
                         # suppress independent source/target tests. Restart only
                         # unexercised work, without ever retrying the failed S1.
-                        if manifest.data['scenarios'][name]['status'] == 'not_executed':
-                            pending.appendleft(case)
+                        if manifest.data['scenarios'][name]['branches'][branch]['status'] == 'not_executed':
+                            pending.appendleft((case, branch))
                         dispose()
                         manifest.save()
                         continue
@@ -465,9 +518,10 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                     with fixture.commands.budget(case['seconds']):
                         getattr(campaign, case['method'])()
                 except Exception as error:
-                    if manifest.data['scenarios'][name]['status'] != 'failed':
+                    if manifest.data['scenarios'][name]['branches'][branch]['status'] != 'failed':
                         failure = manifest.failure(error, 'case', name)
-                        manifest.data['scenarios'][name] = {'status': 'failed', 'failure_id': failure['id']}
+                        manifest.data['scenarios'][name]['branches'][branch].update(status='failed', failure_id=failure['id'])
+                        manifest.update_family(name)
                     # Never continue fault generation on a possibly poisoned
                     # shared fixture. Independent cases get a new kind/source.
                     if retain:
@@ -579,7 +633,7 @@ def main(argv=None):
             return int(bool(errors))
     elif args.command == 'compare':
         left, right = json.loads(args.left.read_text()), json.loads(args.right.read_text())
-        print(json.dumps(validate_results(left['plan'], [left, right]), indent=2))
+        print(json.dumps(validate_results(left['plan'], [left, right], cross_environment=True), indent=2))
     elif args.command == 'aggregate':
         print(json.dumps(validate_results(json.loads(args.plan.read_text()), [json.loads(p.read_text()) for p in args.results]), indent=2))
     return 0

@@ -49,6 +49,21 @@ REGISTRY = (
     {'id': 'seeded-XID-2', 'method': 'case_seeded_XID_2', 'group': 'ownership', 'fixtures': ['source'], 'requires': [], 'seconds': 900, 'max_targets': 1, 'requirement': 'design §5 inclusive/exclusive XID; testing seeded supplement'},
 )
 
+BRANCHES = {
+    'full-latest-remote-SQL': ('newest', 'explicit-base'),
+    'full-time-inclusive-exclusive': ('inclusive', 'exclusive'),
+    'full-LSN-inclusive-exclusive': ('inclusive', 'exclusive'),
+    'full-XID-inclusive-exclusive': ('inclusive', 'exclusive'),
+    'newest-base-too-new': ('earlier-base', 'reject-explicit-newest'),
+    'shell-free-original-verification': ('missing-WAL', 'corrupt-WAL'),
+    'bundle-duplicate-absent-local-fallback': ('intact-local-fallback', 'all-required-255'),
+    'same-bundled-segment-post-EndLSN-archive-preferred': (
+        'healthy', 'wrong-bundle', 'healthy-after-negative', 'missing-wal-get',
+        'corrupt-wal-get', 'auth-wal-get', 'reset-wal-get', 'tls-wal-get'),
+}
+for case in REGISTRY:
+    case['branches'] = list(BRANCHES.get(case['id'], ('main',)))
+
 MANDATORY = tuple(c['id'] for c in REGISTRY if c['id'] not in SUPPLEMENTAL)
 REGISTRY += ({'id': 'retirement-20', 'method': 'case_retirement_20', 'group': 'ownership',
               'fixtures': ['source'], 'requires': [], 'seconds': 3600, 'max_targets': 20,
@@ -143,7 +158,7 @@ def make_plan(subject, harness, profile='recovery', seed=1806, requested=(), mod
 
 
 
-def validate_results(plan, results):
+def validate_results(plan, results, cross_environment=False):
     if plan['harness'].get('schema') != 2:
         raise ValueError('unsupported harness image-identity schema')
     expected = set(plan['cases'])
@@ -153,6 +168,11 @@ def validate_results(plan, results):
         raise ValueError('partial plan is ineligible for full-fresh aggregation')
     if not results:
         raise ValueError('no results')
+    identities = [r.get('execution_id') for r in results]
+    if any(not isinstance(i, str) or not re.fullmatch('[a-f0-9]{32}', i) for i in identities) or len(set(identities)) != len(identities):
+        raise ValueError('missing or duplicate execution identity')
+    if cross_environment and (len(results) != 2 or {r.get('host') for r in results} != {'local', 'hosted'}):
+        raise ValueError('comparison requires one local and one hosted execution')
     for result in results:
         if result.get('plan') != plan:
             raise ValueError('subject/harness/recipe/scenario inputs differ')
@@ -165,6 +185,12 @@ def validate_results(plan, results):
         scenarios = result.get('scenarios', {})
         if set(scenarios) != expected or any(r['status'] != 'passed' for r in scenarios.values()):
             raise ValueError('missing, duplicate or failed mandatory/supplemental evidence')
+        for case in REGISTRY:
+            if case['id'] not in expected:
+                continue
+            branches = scenarios[case['id']].get('branches', {})
+            if set(branches) != set(case['branches']) or any(b.get('status') != 'passed' for b in branches.values()):
+                raise ValueError('missing or failed required branch evidence')
         envelopes = result.get('fixture_envelopes', {})
         if not envelopes or any(set(limits) != {'node_cpus', 'node_memory_gib'} or any(v != plan['recipe']['resources'][k] for k, v in limits.items()) for limits in envelopes.values()):
             raise ValueError('missing or mismatched actual resource envelope')
