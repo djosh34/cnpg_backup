@@ -367,15 +367,9 @@ class Campaign:
                              "DROP TABLE h_recreated; CREATE TABLE h_recreated(id int); INSERT INTO h_recreated VALUES(3); "
                              "UPDATE h_space SET value='d2'")
         self.d2 = self.full('h-d2', 'differential')
-        commands = self.native_backup_commands(pod)
-        assert len(commands) == 3 and sum('INCREMENTAL' in c.upper() for c in commands) == 2, 'native F/D/D command oracle absent'
-        for c in (self.d1, self.d2):
-            assert c['kind'] == 'differential' and c['parent_backup_uid'] == c['root_backup_uid'] == self.base['backup_uid']
-            assert c['root_manifest_sha256'] == self.base['manifest_sha256'], 'not the exact original full manifest'
         sizes = {name: sum(a['stored_bytes'] for a in c['artifacts']) + c['manifest_bytes']
                  for name, c in (('F', self.base), ('D1', self.d1), ('D2', self.d2))}
-        assert sizes['D2'] < sizes['F'], 'largely unchanged fixture did not reduce actual S3 transfer'
-        self.event('differential-direct-F-transfers', stored_bytes=sizes, full=self.base['backup_uid'], d1=self.d1['backup_uid'], d2=self.d2['backup_uid'])
+        self.differential_sizes = sizes
         digest = hashlib.md5()
         count = 0
         for i in range(1, 60001):
@@ -426,7 +420,7 @@ class Campaign:
 
     def native_backup_commands(self, pod):
         # REQUIRED command oracle, not optional forensic collection. Positive
-        # F/D/D setup proves the log source distinguishes full from incremental.
+        # Each H branch proves this log distinguishes full from incremental.
         text = self.h.kube('logs', '-n', SOURCE, pod, '-c', 'postgres', '--limit-bytes=1048576')
         commands = [line for line in text.splitlines() if 'received replication command: BASE_BACKUP' in line]
         return commands
@@ -549,6 +543,15 @@ class Campaign:
     def case_differential_native(self):
         with self.m.case('differential-native'):
             for branch in self.variants(('reconstruction', 'remote-PITR-source-loss', 'missing-full', 'missing-summary', 'checksum', 'promotion', 'cancellation')):
+                commands = self.native_backup_commands(self.primary())
+                assert len(commands) == 3 and sum('INCREMENTAL' in c.upper() for c in commands) == 2, 'native F/D/D command oracle absent'
+                if branch == 'reconstruction':
+                    for c in (self.d1, self.d2):
+                        assert c['kind'] == 'differential' and c['parent_backup_uid'] == c['root_backup_uid'] == self.base['backup_uid']
+                        assert c['root_manifest_sha256'] == self.base['manifest_sha256'], 'not the exact original full manifest'
+                    sizes = self.differential_sizes
+                    assert sizes['D2'] < sizes['F'], 'largely unchanged fixture did not reduce actual S3 transfer'
+                    self.event('differential-direct-F-transfers', stored_bytes=sizes, full=self.base['backup_uid'], d1=self.d1['backup_uid'], d2=self.d2['backup_uid'])
                 if branch in ('reconstruction', 'remote-PITR-source-loss'):
                     self.differential_restore(remote=branch == 'remote-PITR-source-loss')
                 else:

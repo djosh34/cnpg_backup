@@ -1895,7 +1895,7 @@
     },
     {
       "file": "hack/recovery_cases.py",
-      "function": "make_differential_workload",
+      "function": "case_differential_native",
       "expression": "len(commands) == 3 and sum(('INCREMENTAL' in c.upper() for c in commands)) == 2",
       "id": "c07e1b8ed51da86d",
       "category": "fixture-precondition",
@@ -1905,7 +1905,7 @@
     },
     {
       "file": "hack/recovery_cases.py",
-      "function": "make_differential_workload",
+      "function": "case_differential_native",
       "expression": "c['kind'] == 'differential' and c['parent_backup_uid'] == c['root_backup_uid'] == self.base['backup_uid']",
       "id": "e6adc9fc5b9f2f41",
       "category": "safety-invariant",
@@ -1915,7 +1915,7 @@
     },
     {
       "file": "hack/recovery_cases.py",
-      "function": "make_differential_workload",
+      "function": "case_differential_native",
       "expression": "c['root_manifest_sha256'] == self.base['manifest_sha256']",
       "id": "8301e1e21b369a26",
       "category": "safety-invariant",
@@ -1925,7 +1925,7 @@
     },
     {
       "file": "hack/recovery_cases.py",
-      "function": "make_differential_workload",
+      "function": "case_differential_native",
       "expression": "sizes['D2'] < sizes['F']",
       "id": "7c7278546411d360",
       "category": "safety-invariant",

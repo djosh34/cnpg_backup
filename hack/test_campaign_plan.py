@@ -21,11 +21,13 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([c['id'] for c in cases[-2:]], ['seeded-XID-1', 'seeded-XID-2'])
         self.assertFalse(any('same-segment' in c['fixtures'] for c in selected('retry')))
 
-    def exercise_runner(self, directory, cleanup_failure=False, source_failure=False, setup_failure=False, collector_failure=False, optional_only=False, retain=False):
+    def exercise_runner(self, directory, cleanup_failure=False, source_failure=False, setup_failure=False, collector_failure=False, optional_only=False, retain=False, differential=None):
         source = 'source-namespace-catalog-loss-S3-only'
         cases = [dict(id=name, method=method, requires=requires, fixtures=['source'], group='targets', seconds=30, requirement='test independent SQL')
                  for name, method, requires in [(source, 'case_source_namespace_catalog_loss_S3_only', []),
                                                 ('a', 'a', []), ('b', 'b', ['a']), ('c', 'c', [])]]
+        if differential:
+            cases = [copy.deepcopy(c) for c in REGISTRY if c['id'] in ('differential-native', 'seeded-XID-1')]
         calls, closed = [], []
         class Commands:
             deadline = float('inf')
@@ -52,14 +54,42 @@ class PlanTests(unittest.TestCase):
                 closed.append(True)
                 if cleanup_failure:
                     raise RuntimeError('owned mount remains')
-        class Campaign:
+        class Campaign(RealCampaign):
             wal = None
             def __init__(self, args, manifest, fixture):
-                self.m, self.h = manifest, fixture
+                self.args, self.m, self.h = args, manifest, fixture
             def setup(self):
                 calls.append('fresh setup')
                 if setup_failure:
                     raise AssertionError('ineffective source fixture')
+                if differential and 'differential' in self.args.fixtures:
+                    self.make_differential_workload()
+            # External SQL/capture/recovery I/O only is stubbed. The H setup,
+            # product assertions, branch dispatch and run_plan are production
+            # harness code; these are accounting controls, not CNPG acceptance.
+            def primary(self):
+                return 'source-pod'
+            def sql(self, *args):
+                return getattr(self, 'differential_expected', '')
+            def acknowledge(self, *args):
+                pass
+            def full(self, name, backup_type='full'):
+                if differential == 'baseline' and name == 'h-d1':
+                    raise RuntimeError('differential baseline unavailable')
+                return dict(kind=backup_type, backup_uid=name, root_backup_uid='h-full',
+                            parent_backup_uid='h-d1' if differential == 'parent' and name == 'h-d2' else 'h-full',
+                            root_manifest_sha256='f' * 64, manifest_sha256='f' * 64,
+                            artifacts=[{'stored_bytes': 100 if backup_type == 'full' or differential == 'transfer' else 10}],
+                            manifest_bytes=1)
+            def native_backup_commands(self, pod):
+                return ['BASE_BACKUP', 'BASE_BACKUP INCREMENTAL', 'BASE_BACKUP INCREMENTAL']
+            def differential_restore(self, remote=False):
+                calls.append('remote-PITR-source-loss' if remote else 'reconstruction')
+            def differential_failed(self, fault):
+                calls.append(fault)
+            def case_seeded_XID_1(self):
+                with self.m.case('seeded-XID-1'):
+                    calls.append('seeded-XID-1')
             def prepare_recovery(self):
                 pass
             def case_source_namespace_catalog_loss_S3_only(self):
@@ -128,6 +158,35 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(len(result['failures']), 1)
             self.assertEqual(result['failures'][0]['classification'], 'fixture')
             self.assertTrue(all(r['status'] == 'blocked' for r in result['scenarios'].values()))
+
+    def test_H_product_oracles_fail_only_their_branch_and_independent_work_continues(self):
+        for fault in ('transfer', 'parent'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as d:
+                result, calls, closed = self.exercise_runner(Path(d) / 'run', differential=fault)
+                branches = result['scenarios']['differential-native']['branches']
+                self.assertEqual(branches['reconstruction']['status'], 'failed')
+                for branch, record in branches.items():
+                    if branch != 'reconstruction':
+                        self.assertEqual(record['status'], 'passed')
+                        self.assertIn(branch, calls)
+                self.assertEqual(result['scenarios']['seeded-XID-1']['status'], 'passed')
+                self.assertIn('seeded-XID-1', calls)
+                self.assertEqual(len(result['failures']), 1)
+                self.assertEqual(result['failures'][0]['phase'], 'case')
+                self.assertEqual(result['failures'][0]['classification'], 'product')
+                self.assertEqual(len(closed), 8)
+                self.assertTrue(result['teardown_complete'])
+
+    def test_H_baseline_failure_blocks_only_actual_differential_dependents(self):
+        with tempfile.TemporaryDirectory() as d:
+            result, calls, closed = self.exercise_runner(Path(d) / 'run', differential='baseline')
+            self.assertTrue(all(b['status'] == 'blocked' for b in result['scenarios']['differential-native']['branches'].values()))
+            self.assertEqual(result['scenarios']['seeded-XID-1']['status'], 'passed')
+            self.assertIn('seeded-XID-1', calls)
+            self.assertEqual(len(result['failures']), 1)
+            self.assertEqual(result['failures'][0]['fixture_requirement'], 'differential')
+            self.assertEqual(len(closed), 2)
+            self.assertTrue(result['teardown_complete'])
 
     def test_collector_deadlines_are_diagnostics_not_additional_failures(self):
         with tempfile.TemporaryDirectory() as d:

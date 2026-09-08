@@ -524,7 +524,9 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                                        independent_branch=branch)
                     except Exception as error:
                         campaign.m = manifest
-                        failed_fixture = 'same-segment' if any(f.name == 'capture_same_segment' for f in traceback.extract_tb(error.__traceback__)) else 'source'
+                        functions = {f.name for f in traceback.extract_tb(error.__traceback__)}
+                        failed_fixture = ('differential' if 'make_differential_workload' in functions else
+                                          'same-segment' if 'capture_same_segment' in functions else 'source')
                         failure = manifest.failure(error, 'prerequisite' if preparing_case else 'setup',
                                                    preparing_case['id'] if preparing_case else None,
                                                    fixture_requirement=None if preparing_case else failed_fixture)
@@ -533,9 +535,9 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
                             if needs_failed:
                                 manifest.block(dependent['id'], [failure['id']],
                                                failed_fixture=None if preparing_case else failed_fixture)
-                        # A failure in an optional S1 prerequisite must not
-                        # suppress independent source/target tests. Restart only
-                        # unexercised work, without ever retrying the failed S1.
+                        # S1/H-only prerequisite failures cannot suppress other
+                        # independent sources. Restart only unexercised work,
+                        # without ever retrying a failed prerequisite.
                         if manifest.data['scenarios'][name]['branches'][branch]['status'] == 'not_executed':
                             pending.appendleft((case, branch))
                         dispose()

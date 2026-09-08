@@ -21,8 +21,14 @@ class DifferentialCampaignTests(unittest.TestCase):
 
     def test_each_branch_dispatches_its_distinguishing_actual_case_only(self):
         for branch in selected('recovery', ['differential-native'])[0]['branches']:
-            manifest = SimpleNamespace(current_branch=branch, case=lambda name: contextlib.nullcontext())
+            manifest = SimpleNamespace(current_branch=branch, case=lambda name: contextlib.nullcontext(), event=lambda *args, **kwargs: None)
             campaign = Campaign(SimpleNamespace(), manifest, fixture=object())
+            campaign.primary = lambda: 'source-pod'
+            campaign.native_backup_commands = lambda pod: ['BASE_BACKUP', 'BASE_BACKUP INCREMENTAL', 'BASE_BACKUP INCREMENTAL']
+            campaign.base = {'backup_uid': 'full', 'manifest_sha256': 'f' * 64}
+            campaign.d1, campaign.d2 = [dict(kind='differential', backup_uid=uid, parent_backup_uid='full',
+                                           root_backup_uid='full', root_manifest_sha256='f' * 64) for uid in ('d1', 'd2')]
+            campaign.differential_sizes = {'F': 100, 'D1': 10, 'D2': 10}
             calls = []
             campaign.differential_restore = lambda remote=False: calls.append(('restore', remote))
             campaign.differential_failed = lambda fault: calls.append(('fault', fault))
