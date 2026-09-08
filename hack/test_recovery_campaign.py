@@ -13,6 +13,7 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(c.scenarios('recovery'), c.MANDATORY)
         self.assertEqual(c.scenarios('qualification'), c.MANDATORY)
         self.assertEqual(c.scenarios('smoke'), c.SMOKE)
+        self.assertEqual(c.scenarios('retry'), ('source-namespace-catalog-loss-S3-only', 'controller-all-Job-retry-Pods-terminated'))
         selected = c.scenarios('ownership')
         self.assertEqual(len(selected), 13)
         self.assertIn('source-namespace-catalog-loss-S3-only', selected)
@@ -53,6 +54,23 @@ class CampaignTests(unittest.TestCase):
             self.assertGreater(deletion.kwargs['timeout'], 1200)
             self.assertEqual(calls, ['source-restore', 'ownership', 'drain', 'protection'])
             self.assertFalse(m.finish())  # Mocked methods are not actual coverage.
+
+    def test_retry_slice_uses_actual_retry_method_after_source_loss(self):
+        from recovery_cases import Campaign
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            m = c.Manifest(out, {'profile': 'retry'}, c.scenarios('retry'))
+            campaign = Campaign(SimpleNamespace(profile='retry'), m)
+            campaign.base = {'backup_uid': 'original'}
+            calls = []
+            with patch('recovery_cases.OUT', out), patch.object(campaign, 'inventory', return_value=[]), \
+                 patch('recovery_cases.h.kube', return_value='{"items":[]}'), \
+                 patch.object(campaign, 'restore', side_effect=lambda *a: calls.append('source-restore')), \
+                 patch.object(campaign, 'controller_retry', side_effect=lambda: calls.append('retry')):
+                campaign.run()
+            self.assertEqual(calls, ['source-restore', 'retry'])
+            self.assertFalse(m.finish())
 
     def test_subject_is_exact_and_does_not_accept_other_registry_or_tag(self):
         good = 'ghcr.io/djosh34/cnpg-backup-manager@sha256:' + 'a' * 64

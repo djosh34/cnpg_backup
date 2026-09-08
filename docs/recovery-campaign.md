@@ -46,6 +46,8 @@ recovery prerequisite and all 12 guard/crash/drain/protection families using the
 same setup, methods and oracles. Its manifest lists the 18 unrequested families
 and cannot claim all-G coverage. Run `--profile recovery` afterward for the full
 mandatory gate; hosted candidate and qualification defaults are unchanged.
+`--profile retry` narrows this further to source-loss recovery plus the actual
+Job-retry family (29 unrequested), using the same retry method as the full gate.
 
 The reusable/manual `.github/workflows/recovery-campaign.yml` has `contents: read`,
 pinned Actions, a 150-minute job deadline and an earlier process-group deadline.
@@ -116,6 +118,13 @@ provide no full coverage, frontier or latest-timeline evidence and are retained
 conservatively, without GC pruning. This compatibility correction leaves all31
 families, source isolation and fatal255 rules intact; earlier campaign captures
 do not qualify the corrected image.
+
+Lifecycle uses Kubernetes `fsGroupChangePolicy: OnRootMismatch` on injected
+Pods/Job templates. Initial volume ownership setup remains enabled; a remount
+whose root already matches must not recursively widen the guard's private
+`.cnpg-backup` directory/permanent lock. Guard permission checks stay strict;
+existing unsafe/poisoned targets are not chmod-repaired or reused. The clean
+failed-before-preflight Job retry is the actual regression for this wiring.
 
 The socket observer mounts the full plugin volume outside `/plugins`, verifies
 both aliases identify the original socket, and renames via two paths on that

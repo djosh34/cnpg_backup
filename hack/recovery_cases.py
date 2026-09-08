@@ -194,7 +194,7 @@ class Campaign:
         self.pool(3)
         # One fresh capture workspace per source/target identity; the local
         # ownership slice needs fewer than the full matrix, never smaller quotas.
-        workspace_count = {'smoke': 16, 'ownership': 32}.get(self.args.profile, 80)
+        workspace_count = {'smoke': 16, 'retry': 16, 'ownership': 40}.get(self.args.profile, 80)
         backup_smoke.bounded_capture_workspaces(h, count=workspace_count)
         install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', SOURCE,
                                     ['s3-auth', 'database-ca', 'database-replication'])
@@ -726,6 +726,9 @@ class Campaign:
             h.kube('delete', 'namespace', SOURCE, '--wait=true', '--timeout=1200s', timeout=1220)
             assert not json.loads(h.kube('get', 'pods', '-n', SOURCE, '-o', 'json'))['items']
             self.restore({'backupID': self.base['backup_uid'], 'targetName': 'g_pre_drop'}, BEFORE, True)
+        if self.args.profile == 'retry':
+            self.controller_retry()
+            return
         if self.args.profile == 'ownership':
             self.ownership()
             self.process_drain()
@@ -1289,6 +1292,9 @@ class Campaign:
             self.finish(state, LATEST, stable_retained=True)
             ours = {state['plan']['plan']['lifetime_hold_id'], state['plan']['plan']['reader_hold_id']}
             assert old_holders - ours <= {x['id'] for x in self.gate()['holders']}, 'completion erased another process holder'
+        self.controller_retry()
+
+    def controller_retry(self):
         with self.m.case('controller-all-Job-retry-Pods-terminated'):
             state = self.start({'backupID': self.base['backup_uid']})
             jobs = json.loads(h.kube('get', 'jobs', '-n', TARGET, '-l', 'cnpg.io/cluster=' + state['name'], '-o', 'json'))['items']

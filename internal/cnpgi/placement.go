@@ -33,7 +33,7 @@ type patch struct {
 }
 
 // Place builds fresh CREATE/EVALUATE templates, never admitted live Pod updates.
-// It patches the container/volume lists and owned metadata. EVALUATE gives CNPG
+// It patches container/volume lists, remount policy and owned metadata. EVALUATE gives CNPG
 // the desired image/config snapshot for its normal rolling replacement policy.
 func Place(ctx context.Context, api *API, c Cluster, object []byte, image string) ([]byte, error) {
 	if err := api.VerifyCluster(ctx, c); err != nil {
@@ -83,7 +83,7 @@ func Place(ctx context.Context, api *API, c Cluster, object []byte, image string
 	for _, field := range []struct {
 		name          string
 		before, after any
-	}{{"initContainers", before.InitContainers, spec.InitContainers}, {"containers", before.Containers, spec.Containers}, {"volumes", before.Volumes, spec.Volumes}} {
+	}{{"initContainers", before.InitContainers, spec.InitContainers}, {"containers", before.Containers, spec.Containers}, {"volumes", before.Volumes, spec.Volumes}, {"securityContext", before.SecurityContext, spec.SecurityContext}} {
 		if !reflect.DeepEqual(field.before, field.after) {
 			changes = append(changes, patch{"add", base + "/" + field.name, field.after})
 		}
@@ -349,6 +349,10 @@ func inject(ctx context.Context, api *API, c Cluster, spec *core.PodSpec, metada
 		}
 		sidecarMounts = append(sidecarMounts, mount)
 	}
+	// A retry/ordinary remount must not recursively chmod the guard's private
+	// fence directory and permanent lock. First-mount fsGroup setup still runs
+	// when needed; matching roots preserve the existing inner permissions.
+	spec.SecurityContext.FSGroupChangePolicy = ptr(core.FSGroupChangeOnRootMismatch)
 	mode := "instance"
 	if recovery {
 		mode = "recovery-job"

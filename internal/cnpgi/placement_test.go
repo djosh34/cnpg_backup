@@ -107,6 +107,28 @@ func apply(t *testing.T, object, patch []byte) []byte {
 	}
 	return result
 }
+func TestPlacementPreservesPrivateFencesOnExplicitAlwaysRemount(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		api, c, pod := fixture(t, recovery)
+		pod.Spec.SecurityContext.FSGroupChangePolicy = ptr(core.FSGroupChangeAlways)
+		original := raw(pod)
+		patch, err := Place(context.Background(), api, c, original, "test-only-image")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actual core.Pod
+		if err := json.Unmarshal(apply(t, original, patch), &actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Spec.SecurityContext.FSGroupChangePolicy == nil || *actual.Spec.SecurityContext.FSGroupChangePolicy != core.FSGroupChangeOnRootMismatch {
+			t.Fatal("explicit Always permits recursive chmod of private target fences")
+		}
+		if *actual.Spec.SecurityContext.FSGroup != *pod.Spec.SecurityContext.FSGroup || *actual.Spec.SecurityContext.RunAsUser != *pod.Spec.SecurityContext.RunAsUser {
+			t.Fatal("changed workload identity instead of remount policy")
+		}
+	}
+}
+
 func TestPlacementGoldenIdempotencyAndRecoveryFence(t *testing.T) {
 	for _, recovery := range []bool{false, true} {
 		t.Run(map[bool]string{false: "instance", true: "recovery"}[recovery], func(t *testing.T) {
@@ -121,6 +143,9 @@ func TestPlacementGoldenIdempotencyAndRecoveryFence(t *testing.T) {
 			var actual core.Pod
 			if err := json.Unmarshal(changed, &actual); err != nil {
 				t.Fatal(err)
+			}
+			if actual.Spec.SecurityContext.FSGroupChangePolicy == nil || *actual.Spec.SecurityContext.FSGroupChangePolicy != core.FSGroupChangeOnRootMismatch {
+				t.Fatal("kubelet remount would recursively widen private target fences")
 			}
 			if !reflect.DeepEqual(actual.Spec.InitContainers[0], pod.Spec.InitContainers[0]) {
 				t.Fatal("bootstrap container modified")

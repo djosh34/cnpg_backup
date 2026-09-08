@@ -51,6 +51,8 @@ MANDATORY = SMOKE + (
 def scenarios(profile):
     if profile == 'smoke':
         return SMOKE
+    if profile == 'retry':
+        return ('source-namespace-catalog-loss-S3-only', 'controller-all-Job-retry-Pods-terminated')
     if profile == 'ownership':
         # Local diagnostic slice; source loss remains a real prerequisite.
         return ('source-namespace-catalog-loss-S3-only',) + MANDATORY[MANDATORY.index('guard-before-RPC-same-PVC-no-mutation'):]
@@ -199,7 +201,7 @@ def collect():
 
 def options(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--profile', choices=('smoke', 'ownership', 'recovery', 'qualification'), default='recovery')
+    p.add_argument('--profile', choices=('smoke', 'retry', 'ownership', 'recovery', 'qualification'), default='recovery')
     p.add_argument('--seed', type=int, default=1806)
     p.add_argument('--duration-minutes', type=int, default=120)
     p.add_argument('--subject-sha', required=True)
