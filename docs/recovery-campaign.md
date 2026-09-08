@@ -77,7 +77,10 @@ overwritten. Failed prerequisites mark dependent work **blocked**, not falsely
 exercised or a cascading product failure. Independent remaining cases run only on
 a fresh kind/source/MinIO fixture after successful owned teardown. Their fresh
 prerequisites have separate records; prior failed cases are not retried to green.
-A leaked fixture blocks slot reuse. Collection and teardown errors are additional
+A leaked fixture blocks slot reuse. An audited product requirement is not causal
+proof of a product defect: automatic assertion classifications are explicitly
+unadjudicated. Preserve the original first-failure record and add separately bound
+causal adjudication after checking fixture/caller inputs and actual state. Collection and teardown errors are additional
 failures and never obscure the primary error. Deadlines leave unexercised work
 blocked/incomplete. An unresolved timeout alone is not a demonstrated product bug.
 
@@ -117,12 +120,15 @@ durable completed/uncertain closure, then delete the Cluster, verify no consumer
 and retire exact PVC/PV/backing identities. Source holders are not cleared. Never
 rebind a poisoned target. Normal teardown stops owned sandboxes, verifies exact
 loop/backing associations, unmounts/detaches only owned backing and removes the
-owned node/private data. Unknown ownership or unmount failure is a reported leak.
+owned node/private data. After stopping kubelet and removing every CRI sandbox,
+whole-node disposal explicitly unmounts residual binds of verified owned devices
+under kubelet Pod volume roots; it does not wait for a stopped kubelet to act. Unknown ownership or unmount failure is a reported leak.
 
 Commands preserve return code and bounded separate output; child groups are killed
 and reaped on deadline. Waits cap children by remaining case/run time and report
 last operation/status plus available scheduling/admission observations. Failures
-are collected before teardown. The default120-minute campaign reserves five
+are collected before teardown. Fresh runs bind the120-minute budget into the immutable plan; only diagnostic
+runs can override it, and their actual budget is recorded. The campaign reserves five
 minutes each for collection and teardown; hosted jobs have a150-minute hard cap.
 Progress is incremental. Hard runner death cannot guarantee final collection and
 never counts as success. Evidence uploads cap at100MiB with explicit truncation/

@@ -110,7 +110,7 @@ def make_plan(subject, harness, profile='recovery', seed=1806, requested=(), mod
         raise ValueError('invalid fixture mode/layout')
     cases = selected(profile, requested)
     return {'schema': 2, 'subject': subject, 'harness': harness,
-            'recipe': {'seed': seed, 'profile': profile, 'fixture_mode': mode, 'layout': layout,
+            'recipe': {'seed': seed, 'profile': profile, 'fixture_mode': mode, 'layout': layout, 'duration_minutes': 120,
                        'registry_hash': digest(REGISTRY), 'resources': {'node_cpus': 4, 'node_memory_gib': 5,
                        'host_headroom_gib': 2, 'disk_start_gib': 14, 'disk_floor_gib': 5,
                        'target_gib': 3, 'capture_gib': 8, 'capture_spares': 2},
@@ -133,6 +133,8 @@ def validate_results(plan, results):
             raise ValueError('subject/harness/recipe/scenario inputs differ')
         if result.get('fixture_mode') != 'fresh' or plan['recipe'].get('fixture_mode') != 'fresh':
             raise ValueError('retained/imported/diagnostic fixtures are ineligible')
+        if result.get('duration_minutes') != plan['recipe']['duration_minutes']:
+            raise ValueError('actual run deadline differs from immutable recipe')
         if not result.get('scope_passed') or not result.get('teardown_complete') or result.get('failures'):
             raise ValueError('failed/incomplete/leaked attempt')
         scenarios = result.get('scenarios', {})

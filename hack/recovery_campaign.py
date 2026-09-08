@@ -140,7 +140,10 @@ class Manifest:
         spec = next((c for c in REGISTRY if c['id'] == scenario), {})
         record = {'id': len(self.data['failures']) + 1, 'phase': phase, 'scenario': scenario,
                   'fixture_requirement': fixture_requirement,
-                  'classification': classify(error, phase), 'requirement': spec.get('requirement', 'owned fixture lifecycle'),
+                  'classification': classify(error, phase),
+                  'classification_status': 'unadjudicated-requirement-layer' if classify(error, phase) == 'product' else 'observed-harness-layer',
+                  'product_defect_proven': False,
+                  'requirement': spec.get('requirement', 'owned fixture lifecycle'),
                   'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:],
                   'frames': failure_frames(error), 'epoch': time.time(), 'fixture': self.data.get('active_fixture'),
                   'assertion': assertion_record(error) if isinstance(error, AssertionError) else None}
@@ -206,7 +209,8 @@ class Manifest:
         text = 'CI REPAIR: ' + ('PASS scoped' if passed else 'FAIL/incomplete') + '\n'
         text += f"Failures: {len(self.data['failures'])}; unproved scenarios: {len(self.data['remaining_mandatory'])}; release_qualified=false\n"
         for failure in self.data['failures']:
-            text += f"- {failure['classification']}/{failure['phase']} {failure['scenario']}: {failure['diagnostic']}\n"
+            label = 'unadjudicated product-requirement assertion' if failure['classification'] == 'product' else failure['classification']
+            text += f"- {label}/{failure['phase']} {failure['scenario']}: {failure['diagnostic']}\n"
         (self.directory / 'summary.md').write_text(text)
         return passed
 
@@ -305,6 +309,8 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
     if bundle['content_hash'] != plan['harness']['content_hash'] or {k: v for k, v in bundle.items() if k != 'directory'} != plan['harness']:
         raise ValueError('selected harness bundle differs from plan')
     recipe = plan['recipe']
+    if recipe['fixture_mode'] == 'fresh' and duration != recipe['duration_minutes']:
+        raise ValueError('fresh execution cannot change the immutable run deadline')
     canonical = make_plan(plan['subject'], plan['harness'], recipe['profile'], recipe['seed'], plan['cases'], recipe['fixture_mode'], recipe['layout'])
     if plan != canonical:
         raise ValueError('plan differs from the canonical immutable recipe')
@@ -323,7 +329,7 @@ def run_plan(plan, directory, bundle, duration=120, retain=False):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         end = time.monotonic() + duration * 60
         manifest = Manifest(directory / 'evidence', {'plan': plan, 'profile': plan['recipe']['profile'],
-                            'fixture_mode': plan['recipe']['fixture_mode'], 'seed': plan['recipe']['seed'],
+                            'fixture_mode': plan['recipe']['fixture_mode'], 'seed': plan['recipe']['seed'], 'duration_minutes': duration,
                             'host': os.getenv('GITHUB_ACTIONS') and 'hosted' or 'local'}, plan['cases'], end - 600)
         commands = Commands(manifest.directory, cwd=ROOT, deadline=end - 600)
         try:

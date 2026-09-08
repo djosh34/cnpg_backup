@@ -129,9 +129,9 @@ class PlanTests(unittest.TestCase):
         images = {name: {'id': name + '-immutable'} for name in ('minio', 'walproxy', 'recoveryactor')}
         limits = {'node_cpus': 4, 'node_memory_gib': 5}
         plan = {'subject': {'digest': 'same'}, 'harness': {'digest': 'same', 'images': images},
-                'recipe': {'seed': 1806, 'registry_hash': digest(REGISTRY), 'fixture_mode': 'fresh', 'resources': limits},
+                'recipe': {'seed': 1806, 'registry_hash': digest(REGISTRY), 'fixture_mode': 'fresh', 'resources': limits, 'duration_minutes': 120},
                 'cases': [c['id'] for c in selected('recovery')]}
-        result = {'plan': plan, 'fixture_mode': 'fresh', 'scope_passed': True, 'teardown_complete': True,
+        result = {'plan': plan, 'fixture_mode': 'fresh', 'scope_passed': True, 'teardown_complete': True, 'duration_minutes': 120,
                   'fixture_envelopes': {'owned-node': limits}, 'fixture_images': images,
                   'scenarios': {s: {'status': 'passed'} for s in plan['cases']}}
         validate_results(plan, [result])
@@ -139,6 +139,7 @@ class PlanTests(unittest.TestCase):
                        lambda r: r['scenarios'].pop('seeded-XID-2'),
                        lambda r: r['plan']['recipe'].update(seed=1807),
                        lambda r: r.update(teardown_complete=False),
+                       lambda r: r.update(duration_minutes=135),
                        lambda r: r['fixture_images']['minio'].update(id='wrong'),
                        lambda r: r['fixture_envelopes'].update(other={'node_cpus': 8, 'node_memory_gib': 5}),
                        lambda r: r.update(failures=[{'diagnostic': 'hidden failure'}])):

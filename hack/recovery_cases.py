@@ -790,13 +790,19 @@ class Campaign:
 
     def helper(self, state, name, expected):
         h = self.h
-        text = h.kube('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'sh', '-c',
+        result = h.kube_result('exec', '-n', TARGET, state['pod'], '-c', 'full-recovery', '--', 'sh', '-c',
                       '"$@"; code=$?; printf "\\nCAMPAIGN_EXIT=%s\\n" "$code"', 'capture-helper-exit',
                       '/cnpg-backup/bin/cnpg-backup', 'wal-fetch', '--plan', '/cnpg-backup/state/recovery.json',
-                      '--', name, 'pg_wal/RECOVERYXLOG')
-        match = re.search(r'CAMPAIGN_EXIT=([0-9]+)\s*$', text)
-        assert match and int(match[1]) == expected, 'actual product helper exit differs: ' + text[-1000:]
-        self.event('actual-helper-exit', pod=state['pod'], name=name, exit=expected)
+                      '--', name, 'pg_wal/RECOVERYXLOG', timeout=300)
+        result.require()
+        # stderr is a separate stream, not text after the shell's stdout marker.
+        # A missing marker is an ineffective fixture, not product exit evidence.
+        match = re.search(r'CAMPAIGN_EXIT=([0-9]+)\s*$', result.stdout)
+        assert match, 'fixture helper exit marker missing from stdout'
+        observed = int(match[1])
+        self.event('actual-helper-exit', pod=state['pod'], name=name, exit=observed, expected=expected,
+                   stderr=result.stderr, destination='pg_wal/RECOVERYXLOG')
+        assert observed == expected, f'actual product helper exit differs: expected={expected} observed={observed}; ' + result.stderr[-1000:]
 
     @contextlib.contextmanager
     def archive_absent(self):

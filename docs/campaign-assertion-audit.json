@@ -891,8 +891,18 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "helper",
-      "expression": "match and int(match[1]) == expected",
-      "id": "859b546e88585df4",
+      "expression": "match",
+      "id": "30c534e12e2c2ce1",
+      "category": "fixture-precondition",
+      "requirement": "design \u00a75 S1: actual Unix-RPC helper exit0/1/255 classification, not stock CNPG exit1",
+      "temporal_semantics": "Fixture fact must be positively observed; failure blocks dependent steps and does not prove a recovery defect.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "helper",
+      "expression": "observed == expected",
+      "id": "ff1a4f61cfcb96d9",
       "category": "safety-invariant",
       "requirement": "design \u00a75 S1: actual Unix-RPC helper exit0/1/255 classification, not stock CNPG exit1",
       "temporal_semantics": "Check only after the explicit recorded prerequisite/barrier in this function/caller; no elapsed-time unlock or inference from absence.",
@@ -1861,8 +1871,8 @@
     {
       "file": "hack/campaign_fixture.py",
       "function": "retire_backing",
-      "expression": "self.commands.wait(consumers_gone, 'no remaining consumer mounts for ' + path, 60)",
-      "id": "6fea356680e72b66",
+      "expression": "self.commands.wait(lambda: mounts() in ([path], []), 'no remaining consumer mounts for ' + path, 60)",
+      "id": "f975e94a24ef745e",
       "category": "eventual-outcome",
       "requirement": "testing named scenario retire_backing",
       "temporal_semantics": "Readiness-only polling; each child command is capped by remaining barrier, case and run budget. Default wait180s/barrier300s; explicit call argument overrides. These are fixture support/diagnostic bounds, never safety expiry. On exhaustion preserve last command status, target events and mark dependent work blocked.",

@@ -335,19 +335,35 @@ findmnt -n -o SOURCE,FSTYPE,SIZE --target "$path"
         else:
             if associated != [device]:
                 raise CommandFailure('cleanup: finite backing association differs from ownership ledger')
-            def consumers_gone():
+            def mounts():
                 text = self.run('docker', 'exec', self.NAME + '-control-plane', 'sh', '-ec',
                     'numbers=$(cat "/sys/class/block/${1##*/}/dev"); findmnt -rn -o MAJ:MIN,TARGET | awk -v d="$numbers" \'$1 == d {print $2}\'',
                     'observe-owned-mounts', device, timeout=10)
-                return text.splitlines() in ([path], [])
+                return text.splitlines()
+            if getattr(self, 'quiesced', False):
+                # Whole-node disposal has stopped kubelet AND removed every CRI
+                # sandbox. Kubelet cannot now unmount its residual bind mounts.
+                # Remove only mounts of this exact verified backing beneath the
+                # owned node's Kubernetes Pod volume roots, deepest first.
+                targets = [target for target in mounts() if target != path]
+                pattern = (r'/var/lib/kubelet/pods/[a-f0-9-]{36}/(?:'
+                           r'volumes/kubernetes.io~local-volume/campaign-[0-9]+|'
+                           r'volume-subpaths/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+/[0-9]+)')
+                if any(not re.fullmatch(pattern, target) for target in targets):
+                    raise CommandFailure('cleanup: unexpected consumer mount; refusing unowned unmount')
+                for target in sorted(targets, key=len, reverse=True):
+                    self.run('docker', 'exec', self.NAME + '-control-plane', 'umount', '--', target, timeout=15)
+                    self.m.event('owned-bind-unmounted', device=device, path=target, cri_quiesced=True)
             # Kubernetes API deletion is not an unmount oracle. CRI consumers
             # have been stopped; wait for kubelet's remaining bind mounts too.
-            self.commands.wait(consumers_gone, 'no remaining consumer mounts for ' + path, 60)
+            self.commands.wait(lambda: mounts() in ([path], []), 'no remaining consumer mounts for ' + path, 60)
             script = '''set -eu
 path="$1"; device="$2"
 test "$(losetup -n -O BACK-FILE "$device")" = "$path.img"
 if mountpoint -q "$path"; then umount "$path"; fi
 losetup -d "$device"
+remaining=$(losetup -j "$path.img" -n -O NAME)
+test -z "$remaining"
 rm -- "$path.img"
 rmdir "$path"
 '''
@@ -400,10 +416,16 @@ rmdir "$path"
 
     def collect(self):
         errors = []
-        if not (self.WORK / 'kubeconfig').is_file():
-            self.save_log('collection.json', json.dumps({'errors': [], 'status': 'blocked', 'required': 'fixture kubeconfig was not created'}))
-            self.m.event('collection-blocked', requirement='fixture kubeconfig', caused_by=[f['id'] for f in self.m.data.get('failures', []) if f['phase'] == 'setup'])
+        def blocked(requirement):
+            self.save_log('collection.json', json.dumps({'errors': [], 'status': 'blocked', 'required': requirement}))
+            self.m.event('collection-blocked', requirement=requirement, caused_by=[f['id'] for f in self.m.data.get('failures', []) if f['phase'] in ('setup', 'teardown')])
             return errors
+        if not (self.WORK / 'kubeconfig').is_file():
+            return blocked('fixture kubeconfig')
+        if not self.container_exists(self.NAME + '-control-plane'):
+            return blocked('owned Kubernetes node')
+        if not self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=10).strip():
+            return blocked('Kubernetes sandboxes (already stopped during disposal)')
         with self.commands.budget(300):
             for namespace in ('campaign-target', 'campaign-source', 'campaign-store', 'cnpg-system'):
                 try:
@@ -447,6 +469,9 @@ rmdir "$path"
             for identity in ids:
                 self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'stopp', identity, timeout=30)
                 self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'rmp', identity, timeout=30)
+            if self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'pods', '-q', timeout=30).strip():
+                raise CommandFailure('cleanup: CRI sandboxes remain; no backing may be unmounted')
+            self.quiesced = True
             for allocation in self.allocations:
                 if allocation['state'] in ('mounted', 'allocating'):
                     self.retire_backing(allocation)

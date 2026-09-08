@@ -51,6 +51,19 @@ class ProcessTests(unittest.TestCase):
                 commands.run(sys.executable, '-c', 'import time; time.sleep(30)',
                              expect_failure=True, timeout=.1)
 
+    def test_actual_helper_255_with_stderr_keeps_exit_marker_in_stdout(self):
+        from recovery_cases import Campaign
+        with tempfile.TemporaryDirectory() as d:
+            result = Commands(Path(d)).command('actual-helper-output-control', sys.executable, '-c',
+                'import sys; print("wal-fetch: recovery fetch failed", file=sys.stderr); print("\\nCAMPAIGN_EXIT=255")')
+            fixture = Mock()
+            fixture.kube.return_value = result.stdout + result.stderr
+            fixture.kube_result.return_value = result
+            campaign = Campaign(None, Mock(), fixture)
+            campaign.helper({'pod': 'owned-negative'}, '000000010000000000000003', 255)
+            with self.assertRaisesRegex(AssertionError, 'helper exit differs'):
+                campaign.helper({'pod': 'owned-negative'}, '000000010000000000000003', 1)
+
     def test_container_absence_requires_successful_list_not_error_spelling(self):
         from campaign_fixture import Fixture
         fixture = Fixture.__new__(Fixture)
@@ -64,6 +77,42 @@ class ProcessTests(unittest.TestCase):
         fixture.run.side_effect = CommandFailure('daemon unavailable, empty stdout')
         with self.assertRaises(CommandFailure):
             fixture.container_exists(name)
+
+    def test_quiesced_owned_bind_disposal_and_unknown_mount_rejection(self):
+        from campaign_fixture import Fixture
+        from types import SimpleNamespace
+        for foreign in (False, True):
+            fixture = Fixture.__new__(Fixture)
+            fixture.NAME = 'cb-repair-aaaaaaaaaaaa'
+            fixture.quiesced = True
+            path, device = '/var/local/cnpg-backup-work-1', '/dev/loop105'
+            bind = '/unowned/data' if foreign else '/var/lib/kubelet/pods/1c0a27c8-00da-4e6a-bf00-0c677b62ef90/volumes/kubernetes.io~local-volume/campaign-1'
+            calls = []
+            def run(*args, **kwargs):
+                if 'losetup' in args:
+                    return device
+                if 'observe-owned-mounts' in args:
+                    return path + ('\n' + bind if not calls else '')
+                if 'umount' in args:
+                    calls.append(('unmount', args[-1]))
+                if 'retire-owned' in args:
+                    calls.append(('retired', path))
+                return ''
+            def wait(predicate, *args):
+                if not predicate():
+                    raise CommandFailure('consumer bind remains')
+            fixture.run = run
+            fixture.commands = SimpleNamespace(wait=wait)
+            fixture.m, fixture.record_ownership = Mock(), Mock()
+            allocation = {'path': path, 'device': device, 'state': 'mounted'}
+            if foreign:
+                with self.assertRaisesRegex(CommandFailure, 'unexpected.*mount'):
+                    fixture.retire_backing(allocation)
+                self.assertEqual(calls, [])
+            else:
+                fixture.retire_backing(allocation)
+                self.assertEqual(calls, [('unmount', bind), ('retired', path)])
+                self.assertEqual(allocation['state'], 'retired')
 
     def test_missing_kubeconfig_blocks_dependent_collectors_without_fake_failures(self):
         from campaign_fixture import Fixture
