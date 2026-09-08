@@ -2186,6 +2186,16 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "differential_checksum_change",
+      "expression": "h.wait(resumed, 'actual source Pod ready after checksum transition', 360)",
+      "id": "c928a2519a21d861",
+      "category": "fixture-precondition",
+      "requirement": "PR H checksum fixture: actual recreated source primary Pod is Ready before SQL; stale Cluster Ready is not source readiness.",
+      "temporal_semantics": "Bounded observation of the source Pod after complete hibernation and successful offline checksum change; no sleep or product-oracle relaxation.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "differential_checksum_change",
       "expression": "changed['status']['phase'] == 'Succeeded'",
       "id": "ca85c58107560e62",
       "category": "fixture-precondition",

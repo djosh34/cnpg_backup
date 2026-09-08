@@ -39,21 +39,38 @@ class DifferentialCampaignTests(unittest.TestCase):
 
     def test_checksum_helper_requests_fit_shared_node_without_changing_limits(self):
         pods = []
+        resumed = False
+        resumed_reads = 0
         def kube(*args, **kwargs):
+            nonlocal resumed, resumed_reads
+            if args and args[0] == 'annotate' and 'cnpg.io/hibernation-' in args:
+                resumed = True
             if args[:3] == ('get', 'pod', 'source-pod'):
                 return json.dumps({'spec': {'volumes': [{'name': 'pgdata', 'persistentVolumeClaim': {'claimName': 'source-data'}}]}})
             if args[:3] == ('get', 'pod', 'h-checksums'):
                 return json.dumps({'status': {'phase': 'Succeeded'}})
             if args[:2] == ('get', 'pods'):
-                return json.dumps({'items': []})
+                if not resumed:
+                    return json.dumps({'items': []})
+                resumed_reads += 1
+                # Cluster Ready is stale while the replacement is absent, then
+                # Pending. Only the actual ready source Pod admits SQL again.
+                return json.dumps({'items': [] if resumed_reads == 1 else [
+                    {'metadata': {'name': 'source-pod'}, 'status': {'conditions': [
+                        {'type': 'Ready', 'status': 'True' if resumed_reads >= 3 else 'False'}]}}]})
             return ''
+        def wait(predicate, *args):
+            for _ in range(4):
+                if predicate():
+                    return
+            self.fail('fixture readiness barrier never observed')
         fixture = SimpleNamespace(kube=kube, quiesce_pods=lambda namespace: None,
-                                  apply=pods.append, LOCK={'database': 'pinned-PG18'},
-                                  wait=lambda predicate, *args: self.assertTrue(predicate()))
+                                  apply=pods.append, LOCK={'database': 'pinned-PG18'}, wait=wait)
         campaign = Campaign(SimpleNamespace(), SimpleNamespace(event=lambda *args, **kwargs: None), fixture=fixture)
         campaign.primary = lambda: 'source-pod'
         campaign.image_pull_secrets = []
         campaign.differential_checksum_change()
+        self.assertEqual(resumed_reads, 3, 'stale Cluster Ready admitted missing/unready source Pod')
         resources = pods[0]['spec']['containers'][0]['resources']
         self.assertEqual(resources['limits'], {'memory': '128Mi', 'cpu': '1'})
         # Missing requests default to the1-CPU limit and the actual4-CPU fixture

@@ -540,7 +540,13 @@ class Campaign:
         assert changed['status']['phase'] == 'Succeeded', 'offline checksum tool failed'
         h.kube('delete', 'pod', name, '-n', SOURCE, '--wait=true', '--timeout=120s')
         h.kube('annotate', 'cluster/database', '-n', SOURCE, 'cnpg.io/hibernation-', '--overwrite')
-        h.kube('wait', '-n', SOURCE, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
+        # Cluster Ready can still describe the pre-hibernation incarnation.
+        # Observe the actual recreated primary Pod before issuing source SQL.
+        def resumed():
+            pods = json.loads(h.kube('get', 'pods', '-n', SOURCE, '-l', 'cnpg.io/cluster=database', '-o', 'json'))['items']
+            return any(p['metadata']['name'] == self.primary() and
+                       any(c['type'] == 'Ready' and c['status'] == 'True' for c in p.get('status', {}).get('conditions', [])) for p in pods)
+        h.wait(resumed, 'actual source Pod ready after checksum transition', 360)
         self.event('actual-checksum-transition', old=1, new=0, source_restart=True)
 
     def case_differential_native(self):
