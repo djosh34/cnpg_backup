@@ -172,11 +172,29 @@ def scan_coverage(report, packages):
         raise ValueError('scanner omitted linked Go binary')
 
 
-def trivy_gate(report):
+def trivy_gate(report, scopes=(), dispositions=None):
     blockers = []
+    # Independently adjudicated SSH/OpenPGP identities only. Reconfirm affected
+    # package absence from THIS image's producing executable build closure.
+    absent = {'CVE-2026-56855': 'golang.org/x/crypto/ssh',
+              'CVE-2026-78662': 'golang.org/x/crypto/ssh',
+              'GO-2026-5932': 'golang.org/x/crypto/openpgp'}
+    crypto = [m for m in scopes if m.get('path') == 'golang.org/x/crypto'
+              and m.get('version') == 'v0.55.0' and 'executable' in m.get('scopes', [])]
+    paths = crypto[0].get('executable_packages', []) if len(crypto) == 1 else []
     for result in report.get('Results', []):
         for vuln in result.get('Vulnerabilities', []):
             if vuln.get('Severity') in ('HIGH', 'CRITICAL', 'UNKNOWN'):
+                package = absent.get(vuln['VulnerabilityID'])
+                if (package and result.get('Type') == 'gobinary' and result.get('Target') == 'usr/local/bin/cnpg-backup'
+                        and vuln['PkgName'] == 'golang.org/x/crypto' and vuln['InstalledVersion'] == 'v0.55.0'
+                        and paths and all(p.startswith('golang.org/x/crypto/') for p in paths)
+                        and not any(p == package or p.startswith(package + '/') for p in paths)
+                        and dispositions is not None):
+                    dispositions.append({'id': vuln['VulnerabilityID'], 'package': vuln['PkgName'],
+                                         'version': vuln['InstalledVersion'], 'absent_package': package,
+                                         'reason': 'vulnerable_code_not_present', 'executable_packages': paths})
+                    continue
                 blockers.append({'kind': 'vulnerability', 'id': vuln['VulnerabilityID'],
                                  'package': vuln['PkgName'], 'version': vuln['InstalledVersion'],
                                  'severity': vuln['Severity']})
@@ -222,7 +240,7 @@ def scan(args):
     save(OUT / 'subject.json', selected)
     save(OUT / 'tool-pins.json', PINS)
     os.environ['PATH'] = str(WORK / 'bin') + ':' + os.environ['PATH']
-    blockers, packages = [], []
+    blockers, packages, dispositions = [], [], []
     for tool in ('syft', 'trivy'):
         run(tool, 'version', output=OUT / (tool + '-version.txt'))
     # Fresh cache per hosted run; never --skip-db-update or a repo ignore file.
@@ -263,7 +281,10 @@ def scan(args):
         run('trivy', 'image', '--distro', 'ubuntu/24.04', '--cache-dir', cache, '--scanners', 'vuln,secret', '--ignorefile', '/dev/null',
             '--parallel', '2', '--timeout', '15m', '--list-all-pkgs', '--format', 'json', '--output', raw, image)
         report = json.loads(raw.read_text())
-        blockers.extend({'subject': flavor, **b} for b in trivy_gate(report))
+        scopes = json.loads((OUT / (flavor + '-go-dependency-scopes.json')).read_text())
+        image_dispositions = []
+        blockers.extend({'subject': flavor, **b} for b in trivy_gate(report, scopes, image_dispositions))
+        dispositions.extend({'subject': flavor, **d} for d in image_dispositions)
         save(OUT / (flavor + '-trivy.json'), report)
         raw.unlink()
         scan_coverage(report, image_packages)
@@ -278,7 +299,7 @@ def scan(args):
     if code or linked:
         blockers.append({'subject': 'binary', 'kind': 'linked-go', 'findings': linked})
     sources(packages, selected['revision'])
-    save(OUT / 'gate.json', {'passed': not blockers, 'blockers': blockers, 'release_qualified': False,
+    save(OUT / 'gate.json', {'passed': not blockers, 'blockers': blockers, 'dispositions': dispositions, 'release_qualified': False,
                             'checkmarx': 'unavailable: no configured license/credentials/pipeline; not passed'})
     # Do not publish possibly credential-bearing binaries on a failed scan.
     if blockers:

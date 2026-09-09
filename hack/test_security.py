@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import campaign_ci
+import godeps
 import native_metadata as native
 import security as s
 
@@ -75,6 +76,41 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(len(s.trivy_gate({'Results': []})), 0)
         report['Results'][0]['Vulnerabilities'][0]['Severity'] = 'UNKNOWN'
         self.assertEqual(len(s.trivy_gate(report)), 2)
+
+    def test_absence_dispositions_require_this_executable_closure_and_exact_finding(self):
+        scope = {'path': 'golang.org/x/crypto', 'version': 'v0.55.0', 'scopes': ['executable'],
+                 'executable_packages': ['golang.org/x/crypto/argon2', 'golang.org/x/crypto/blake2b']}
+        for identity, affected in [('CVE-2026-56855', 'ssh'), ('CVE-2026-78662', 'ssh'), ('GO-2026-5932', 'openpgp')]:
+            vuln = {'VulnerabilityID': identity, 'PkgName': scope['path'], 'InstalledVersion': scope['version'], 'Severity': 'UNKNOWN'}
+            result = {'Target': 'usr/local/bin/cnpg-backup', 'Type': 'gobinary', 'Vulnerabilities': [vuln]}
+            report = {'Results': [result]}
+            dispositions = []
+            self.assertEqual(s.trivy_gate(report, [scope], dispositions), [])
+            self.assertEqual(dispositions[0]['id'], identity)
+            self.assertEqual(dispositions[0]['reason'], 'vulnerable_code_not_present')
+            for bad in ([], [{k: v for k, v in scope.items() if k != 'executable_packages'}],
+                        [{**scope, 'executable_packages': []}], [{**scope, 'scopes': ['tests']}],
+                        [{**scope, 'executable_packages': scope['executable_packages'] + ['golang.org/x/crypto/' + affected + '/packet']} ]):
+                self.assertEqual(len(s.trivy_gate(report, bad, [])), 1)
+            for field, value in [('VulnerabilityID', 'CVE-new'), ('PkgName', 'other/module'), ('InstalledVersion', 'v0.54.0')]:
+                self.assertEqual(len(s.trivy_gate({'Results': [{**result, 'Vulnerabilities': [{**vuln, field: value}]}]}, [scope], [])), 1)
+            self.assertEqual(len(s.trivy_gate({'Results': [{**result, 'Target': 'other-binary'}]}, [scope], [])), 1)
+            self.assertEqual(len(s.trivy_gate(report, [scope])), 1, 'unrecorded disposition cannot pass')
+
+    def test_build_inventory_carries_executable_not_test_only_packages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module = root / 'module'; module.mkdir()
+            (module / 'LICENSE').write_text('upstream license')
+            out = root / 'out'; out.mkdir()
+            def package(name):
+                return {'ImportPath': 'golang.org/x/crypto/' + name,
+                        'Module': {'Path': 'golang.org/x/crypto', 'Version': 'v0.55.0', 'Dir': str(module)}}
+            executable = '\n'.join(json.dumps(package(p)) for p in ('argon2', 'blake2b'))
+            with patch.object(godeps.subprocess, 'check_output', side_effect=[executable, executable, executable + '\n' + json.dumps(package('ssh'))]):
+                inventory = godeps.inventory(out)
+            self.assertEqual(inventory[0]['executable_packages'], ['golang.org/x/crypto/argon2', 'golang.org/x/crypto/blake2b'])
+            self.assertEqual(json.loads((out / 'go-dependency-scopes.json').read_text()), inventory)
 
     def test_no_findings_is_not_proof_scanner_saw_native_packages(self):
         p = {'name': 'libpq5', 'version': '18.6-3.pgdg24.04+1'}
