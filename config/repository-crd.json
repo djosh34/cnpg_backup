@@ -557,6 +557,39 @@
                     "type": "string",
                     "format": "date-time"
                   },
+                  "retention": {
+                    "type": "object",
+                    "properties": {
+                      "checkedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "nextRun": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "configurationHash": {
+                        "type": "string"
+                      },
+                      "operationID": {
+                        "type": "string"
+                      },
+                      "planned": {
+                        "type": "integer",
+                        "format": "int64",
+                        "default": 0,
+                        "minimum": 0,
+                        "maximum": 128
+                      },
+                      "dryRun": {
+                        "type": "boolean"
+                      },
+                      "lastWarningTime": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  },
                   "conditions": {
                     "type": "array",
                     "items": {

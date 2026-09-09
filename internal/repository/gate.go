@@ -81,6 +81,13 @@ func sameHolder(a, b Holder) bool {
 	}
 	return *a.ProcessID == *b.ProcessID
 }
+
+// ObserveGate is diagnostic only. A snapshot is never acknowledged admission.
+func (r *Repository) ObserveGate(ctx context.Context) (Gate, error) {
+	g, _, e := r.readGate(ctx)
+	return g, e
+}
+
 func (r *Repository) readGate(ctx context.Context) (Gate, s3store.Info, error) {
 	var g Gate
 	b, i, e := r.store.Read(ctx, r.root+"gate.json", gateLimit)

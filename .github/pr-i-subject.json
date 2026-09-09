@@ -1,0 +1,10 @@
+{
+  "revision": "430db6e0bc236946e4b405af879317dc09827629",
+  "images": {
+    "manager": "ghcr.io/djosh34/cnpg-backup-manager@sha256:d1e63ed008890c89307faec0232e8ca4eb3b700916f9b8e51ee028ba1af78463",
+    "pg18": "ghcr.io/djosh34/cnpg-backup-pg18@sha256:865ada2fd1d88423e3c9c45c4ea84b165353ba81d89d9e12cf107d5b47f65c40"
+  },
+  "publication": {
+    "run": "https://github.com/djosh34/cnpg_backup/actions/runs/34296616652"
+  }
+}

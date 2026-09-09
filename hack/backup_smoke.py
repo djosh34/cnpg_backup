@@ -227,14 +227,19 @@ def capture_faults(h, wal, report, metrics, control):
             return wal.sql(pod, 'SELECT count(*) FROM pg_stat_progress_basebackup') == '1'
         h.wait(active, 'actual native pg_basebackup active: ' + name, 180)
         return backup(name)
-    def restart_count():
+    def sidecar():
         p = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
-        return next(c['restartCount'] for c in p['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
-    def restarted(before):
+        return p['metadata']['uid'], next(c for c in p['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+    def restarted(uid, before):
         # Repeated same-PVC deaths now reach kubelet's normal 300s maximum
         # CrashLoopBackOff. Bound the observation above that delay; still require
         # an actual new incarnation and probe, never treat elapsed time as one.
-        h.wait(lambda: restart_count() > before, 'actual sidecar process restart', 360)
+        def replacement():
+            current_uid, current = sidecar()
+            assert current_uid == uid, 'native fault Pod was replaced'
+            return (current['restartCount'] > before['restartCount'] and
+                    current.get('containerID') and current['containerID'] != before['containerID'])
+        h.wait(replacement, 'actual sidecar process restart', 360)
         h.wait(lambda: h.kube('exec', '-n', h.NS, pod, '-c', 'cnpg-backup', '--', '/usr/local/bin/cnpg-backup',
                               'instance', '--probe', check=False) == '', 'replacement native sidecar socket')
     def no_commit(uid):
@@ -250,7 +255,8 @@ def capture_faults(h, wal, report, metrics, control):
         b = start_native(name)
         processes = json.loads(act('native'))
         assert processes, 'native subprocess not alive before signal'
-        count = restart_count()
+        pod_uid, original = sidecar()
+        container_id = original['containerID'].split('://')[1]
         postmaster = wal.sql(pod, 'SELECT pg_postmaster_start_time()')
         oom = None
         scratch = None
@@ -272,24 +278,37 @@ def capture_faults(h, wal, report, metrics, control):
             assert all(p == '/cnpg-backup/work/native.lock' for p in scratch['native_locks'].values()), 'native child did not inherit workspace exclusion'
             remote_holders = [holder for holder in json.loads(wal.s3('GET', 'smoke/v1/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/gate.json'))['holders'] if holder['kind'] == 'backup']
             assert any(holder['operation_id'] == b['metadata']['uid'] for holder in remote_holders), 'capture holder not observed'
-            observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
-            sidecar = next(c for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
-            container_id = sidecar['containerID'].split('://')[1]
             pid = int(json.loads(h.run('docker', 'exec', h.NAME + '-control-plane', 'crictl', 'inspect', container_id))['info']['pid'])
             assert pid > 1
             h.run('docker', 'exec', h.NAME + '-control-plane', 'kill', '-9', str(pid))
             report['full_kill_precondition'] = {'container_id': container_id, 'node_pid': pid, 'native_paused': True}
         else:
             act('signal-sidecar', signal, check=False)
-        restarted(count)  # prove the fault actually hit before judging outcome
-        failed(name)
         if signal in ('KILL', 'OOM'):
-            observed = json.loads(h.kube('get', 'pod', pod, '-n', h.NS, '-o', 'json'))
-            last = next(c['lastState']['terminated'] for c in observed['status']['initContainerStatuses'] if c['name'] == 'cnpg-backup')
+            # A replacement's API lastState may be empty (observed in kind).
+            # Capture the ORIGINAL CRI container before waiting for restart or
+            # CNPG status, while its exit record is still available. Missing
+            # records/timeouts fail this proof; a restart alone never passes it.
+            last = None
+            def terminated():
+                nonlocal last
+                status = json.loads(h.run('docker', 'exec', h.NAME + '-control-plane',
+                                          'crictl', 'inspect', container_id, timeout=10))['status']
+                assert status['id'] == container_id, 'native fault container identity changed'
+                if status['state'] != 'CONTAINER_EXITED':
+                    return False
+                last = status
+                return True
+            h.wait(terminated, 'original native sidecar CRI termination', 60)
             assert last['exitCode'] == 137, 'native sidecar was not killed'
             if signal == 'OOM':
                 assert last['reason'] == 'OOMKilled', 'native sidecar was not actually OOM-killed'
-                oom['termination'] = {k: last.get(k) for k in ('reason', 'exitCode', 'signal')}
+                oom['termination'] = {k: last.get(k) for k in ('reason', 'exitCode')}
+            report.setdefault('full_native_terminations', []).append({
+                'case': case, 'pod_uid': pod_uid, 'container_id': container_id,
+                'exitCode': last['exitCode'], 'reason': last['reason']})
+        restarted(pod_uid, original)  # prove the fault actually hit before judging outcome
+        failed(name)
         assert wal.sql(pod, 'SELECT pg_postmaster_start_time()') == postmaster, 'fault accidentally restarted source PostgreSQL'
         assert not json.loads(act('native')), 'native child survived sidecar process death'
         if scratch is not None:

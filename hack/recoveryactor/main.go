@@ -73,6 +73,9 @@ func copyFile(src, dst string) { b, e := os.ReadFile(src); must(e); must(os.Writ
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "retention":
+			retentionBatch()
+			return
 		case "webhook":
 			webhook()
 			return

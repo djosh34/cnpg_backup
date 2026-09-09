@@ -230,6 +230,7 @@ func RunManager(ctx context.Context, revision string) error {
 	go api.RunRepositoryStatus(statusCtx)
 	go api.runRecoveryOperations(statusCtx)
 	go api.runBackupHistory(statusCtx, metrics)
+	go api.runRetention(statusCtx, metrics)
 	go newBackupObserver(api, metrics).run(statusCtx)
 	defer server.Stop()
 	served := make(chan error, 2)

@@ -2226,7 +2226,7 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "differential_failed",
-      "expression": "actor.stat().st_size < 32 << 20",
+      "expression": "actor.stat().st_size < 64 << 20",
       "id": "b949b68fbe58d28d",
       "category": "fixture-precondition",
       "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
@@ -2281,6 +2281,216 @@
       "category": "safety-invariant",
       "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",
       "temporal_semantics": "Positively establish actor/child/container identity before injection. After cancellation require terminal failed Backup, source replication drainage and actual replacement readiness; elapsed time alone never proves drainage.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retention_batch",
+      "expression": "h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', path).split()[0] == h.bundle['files']['actor']",
+      "id": "a05de3622e68b91b",
+      "category": "fixture-precondition",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retention_warning",
+      "expression": "h.wait(observed, 'actual manager RetentionBlocked Warning during protected replay', 180)",
+      "id": "52071f1b73fcc808",
+      "category": "eventual-outcome",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retention_warning",
+      "expression": "any((c['type'] == 'RetentionBlocked' and c['status'] == 'True' for c in repository['status']['conditions']))",
+      "id": "f9a94b1d99418188",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "lsn(point) > lsn(self.d2['bundled_wal_end_lsn'])",
+      "id": "c5e5089c21725a5f",
+      "category": "fixture-precondition",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "dry['error'] == '' and dry['result']['Planned'] > 0",
+      "id": "216a86462c7796b3",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.inventory('smoke/v1/' + SOURCE_ID + '/backups/') == before",
+      "id": "614a6953ffa038db",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.inventory('smoke/v1/' + SOURCE_ID + '/backups/') == before",
+      "id": "614a6953ffa038db",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.base['backup_uid'] in decision['Keep'] and self.d2['backup_uid'] in decision['Keep']",
+      "id": "661749cab719e6e5",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.d1['backup_uid'] in decision['Expire']",
+      "id": "ea01d7178df0ec1b",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "result['error'] == '' and self.gate()['owner'] is None",
+      "id": "3f1c611ecd0b13f1",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "prefix + 'retired.json' in keys and prefix + 'commit.json' in keys and (prefix + 'request.json' in keys)",
+      "id": "58d1102b70664c30",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "not any(('/data/' in k or k.endswith('/manifest.pg.json') for k in keys))",
+      "id": "c060510c660befb9",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "plan['plan']['required_archive']",
+      "id": "aa33d36523a0a475",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.retention_batch(cutoff)['error'] == 'RepositoryAdmissionBlocked'",
+      "id": "20355ad7f2f616a5",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.retention_batch(cutoff)['error'] == 'RepositoryAdmissionBlocked'",
+      "id": "20355ad7f2f616a5",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.barrier(state['pod'], 'replay-held')",
+      "id": "2e5125986fd2a640",
+      "category": "eventual-outcome",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "h.wait(lambda: self.main_terminated(state), 'actual killed guard termination', 60)",
+      "id": "81314250c15e4e4a",
+      "category": "eventual-outcome",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.markers(state) == ['present'] * 3",
+      "id": "31df7d1e958c8b12",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "h.wait(lambda: self.operation_state(state)['state'] == 'uncertain', 'manager restart retains uncertain replay lifetime', 180)",
+      "id": "44fac0bb700cde06",
+      "category": "eventual-outcome",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "self.retention_batch(future)['error'] == 'RepositoryAdmissionBlocked'",
+      "id": "224284f62541ddde",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_retention_runtime",
+      "expression": "protected.intersection((x['id'] for x in self.gate()['holders']))",
+      "id": "7c1de937406e0095",
+      "category": "safety-invariant",
+      "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
+      "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
       "failure_layer": "product"
     }
   ]

@@ -62,8 +62,10 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
                 'securityContext': security, 'resources': {'requests': {'cpu': '50m', 'memory': '64Mi'}, 'limits': {'cpu': '500m', 'memory': '256Mi'}},
                 'volumeMounts': [{'name': 'config', 'mountPath': '/cnpg-backup/manager', 'readOnly': True},
                                  {'name': 'tls', 'mountPath': '/cnpg-backup/tls', 'readOnly': True},
-                                 {'name': 'control', 'mountPath': '/cnpg-backup/control'}]}],
+                                 {'name': 'control', 'mountPath': '/cnpg-backup/control'},
+                                 {'name': 'retention', 'mountPath': '/cnpg-backup/retention'}]}],
             'volumes': [{'name': 'control', 'emptyDir': {'sizeLimit': '16Mi'}},
+                        {'name': 'retention', 'emptyDir': {'sizeLimit': '512Mi'}},
                         {'name': 'config', 'configMap': {'name': 'cnpg-backup-manager', 'defaultMode': 0o440}},
                         {'name': 'tls', 'projected': {'defaultMode': 0o440, 'sources': [
                             {'secret': {'name': 'cnpg-backup-server-tls', 'items': [{'key': 'tls.crt', 'path': 'tls.crt'}, {'key': 'tls.key', 'path': 'tls.key'}]}},

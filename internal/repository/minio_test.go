@@ -41,6 +41,9 @@ func TestMinIORepository(t *testing.T) {
 		t.Run(sig, func(t *testing.T) {
 			c.Signature = sig
 			c.Prefix = "repository-" + sig
+			retentionConfig := c
+			retentionConfig.Prefix += "-retention"
+			t.Run("retention-batches", func(t *testing.T) { minioRetentionBatches(t, retentionConfig) })
 			s, e := s3store.New(c)
 			if e != nil {
 				t.Fatal(e)

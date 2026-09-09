@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository-owned G/H candidate publication, never version/release publication."""
+"""Repository-owned G/H/I candidate publication, never version/release publication."""
 import argparse
 import json
 import os
@@ -15,7 +15,7 @@ OUT = Path('artifacts/candidate')
 
 def trust(env, head, origin):
     if (env.get('GITHUB_REPOSITORY') != REPO or env.get('GITHUB_EVENT_NAME') != 'push'
-            or env.get('GITHUB_REF') not in (BRANCH, 'refs/heads/implementation/pr-h')
+            or env.get('GITHUB_REF') not in (BRANCH, 'refs/heads/implementation/pr-h', 'refs/heads/implementation/pr-i')
             or env.get('GITHUB_WORKFLOW_REF') != REPO + '/.github/workflows/pr-g-candidate.yml@' + env.get('GITHUB_REF', '')
             or not re.fullmatch('[0-9a-f]{40}', head) or env.get('GITHUB_SHA') != head
             or env.get('GITHUB_WORKFLOW_SHA') != head
@@ -41,7 +41,7 @@ def require_absent(result):
 
 def reuse_subject(head, branch=BRANCH):
     """Reuse only an explicitly recorded candidate with unchanged build inputs."""
-    record = Path('.github/pr-h-subject.json') if branch == 'refs/heads/implementation/pr-h' else Path('.github/ci-repair-subject.json')
+    record = Path('.github/pr-i-subject.json') if branch == 'refs/heads/implementation/pr-i' else (Path('.github/pr-h-subject.json') if branch == 'refs/heads/implementation/pr-h' else Path('.github/ci-repair-subject.json'))
     if not record.exists():
         return None
     subject = json.loads(record.read_text())
