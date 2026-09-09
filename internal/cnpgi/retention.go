@@ -31,6 +31,7 @@ type retentionObservation struct {
 	result           retention.Result
 	holders          int
 	admissionBlocked bool
+	gateObserved     bool
 }
 type retentionRunner func(context.Context, string, string, configuration.Spec, time.Time) (retentionObservation, error)
 
@@ -44,7 +45,7 @@ func (a *API) retentionBatch(ctx context.Context, namespace, writer string, spec
 		return out, e
 	}
 	defer store.Close()
-	dir, e := os.MkdirTemp("/cnpg-backup/control", "retention-")
+	dir, e := newRetentionWorkspace(retentionWorkspacePath)
 	if e != nil {
 		return out, e
 	}
@@ -57,12 +58,16 @@ func (a *API) retentionBatch(ctx context.Context, namespace, writer string, spec
 		return out, repository.ErrIdentity
 	}
 	window, _ := time.ParseDuration(spec.Retention.Window)
-	out.result, err = retention.Run(ctx, r, wal.Files{Repository: r, Store: store, Workspace: dir}, now, retention.Options{Enabled: spec.Retention.Enabled, DryRun: spec.Retention.DryRun, Window: window, MinimumFulls: spec.Retention.MinimumFulls})
+	out.result, err = retention.Run(ctx, r, wal.Files{Repository: r, Store: store, Workspace: dir, Compression: spec.Compression}, now, retention.Options{Enabled: spec.Retention.Enabled, DryRun: spec.Retention.DryRun, Window: window, MinimumFulls: spec.Retention.MinimumFulls})
 	// Diagnostics after work; failed observation cannot change request ownership
 	// or turn successfully completed destruction into a failed destructive batch.
 	if gate, e := r.ObserveGate(ctx); e == nil {
+		out.gateObserved = true
 		out.holders = len(gate.Holders)
 		out.admissionBlocked = gate.Owner != nil
+		if gate.Owner != nil {
+			out.result.OperationID = gate.Owner.OperationID
+		}
 	}
 	return out, err
 }
@@ -120,7 +125,11 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 			reason, message = "DryRun", "Exclusive inventory planned without deleting data."
 		}
 		if observation.result.Decision.Shortened {
-			message += " No usable pre-cutoff anchor; recovery window is shortened."
+			if observation.result.Decision.Current == 0 {
+				message += " No usable backups; recovery window is unavailable. Only proven orphan cleanup is eligible; WAL is untouched."
+			} else {
+				message += " No usable pre-cutoff anchor; recovery window is shortened."
+			}
 		}
 		if e == nil && !spec.Retention.DryRun && observation.result.Planned > 0 {
 			next.NextRun = metav1.NewTime(time.Now().Add(time.Second))
@@ -135,18 +144,23 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 		condition = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RetentionBlocked", Status: condition, Reason: reason, Message: message, ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
-	admission := metav1.ConditionFalse
-	if observation.admissionBlocked {
-		admission = metav1.ConditionTrue
+	admission, admissionReason := metav1.ConditionUnknown, "GateUnobserved"
+	admissionMessage := "Gate was not observed. Disabling retention or failed diagnostics never clears an owner or establishes admission."
+	if observation.gateObserved {
+		admission, admissionReason = metav1.ConditionFalse, "GateObservation"
+		admissionMessage = "A set GC owner excludes new protected work; a lost or uncertain owner never expires."
+		if observation.admissionBlocked {
+			admission = metav1.ConditionTrue
+		}
 	}
-	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RepositoryAdmissionBlocked", Status: admission, Reason: "GateObservation", Message: "A set GC owner excludes new protected work; a lost or uncertain owner never expires.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
+	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RepositoryAdmissionBlocked", Status: admission, Reason: admissionReason, Message: admissionMessage, ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
 	warn := blocked && (next.LastWarningTime == nil || !now.Before(next.LastWarningTime.Add(5*time.Minute)))
 	if warn {
 		stamp := metav1.NewTime(now)
 		next.LastWarningTime = &stamp
 	}
 	state.Retention = next
-	m.retention(labels, blocked, observation.admissionBlocked, observation.holders, now)
+	m.retention(labels, blocked, observation.admissionBlocked, observation.gateObserved, observation.holders, now)
 	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"resourceVersion": object.GetResourceVersion()}, "status": state})
 	_, e = a.Client.Resource(repositories).Namespace(object.GetNamespace()).Patch(ctx, object.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}, "status")
 	if e != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,7 @@ type GCOwner struct {
 	r                           *Repository
 	owner                       Owner
 	started                     time.Time
+	catalog                     *os.File
 	requests                    int
 	closed, uncertain, executed bool
 }
@@ -83,10 +85,13 @@ func (r *Repository) AcquireGC(ctx context.Context) (*GCOwner, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &GCOwner{r: r, owner: o, started: time.Now()}, nil
+	return &GCOwner{r: r, owner: o}, nil
 }
 func (g *GCOwner) OperationID() string { return g.owner.OperationID }
 func (g *GCOwner) check(ctx context.Context) error {
+	if e := ctx.Err(); e != nil {
+		return e
+	}
 	if g.closed {
 		return ErrClosed
 	}
@@ -114,15 +119,24 @@ func (g *GCOwner) Inventory(ctx context.Context, l CatalogLimits, visit func(Ent
 	if e := l.validate(); e != nil {
 		return e
 	}
-	if visit == nil {
+	if visit == nil || g.executed || g.catalog != nil {
 		return ErrInvalid
+	}
+	if l.MaxSpoolBytes > GCCatalogBytes {
+		return ErrCapacity
 	}
 	f, e := g.r.spoolCatalog(ctx, l)
 	if e != nil {
 		return e
 	}
-	defer removeFile(f)
-	return scanEntries(ctx, f, visit)
+	if e = scanEntries(ctx, f, visit); e != nil {
+		removeFile(f)
+		return e
+	}
+	// This owner excludes backup writers and all other GC. Keep its validated
+	// snapshot for dependency checks, rather than downloading every input twice.
+	g.catalog = f
+	return nil
 }
 func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 	g.mu.Lock()
@@ -144,11 +158,13 @@ func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 		return ErrInvalid
 	}
 	// No effect until the entire list/graph and all victim shapes are valid.
-	f, e := g.r.spoolCatalog(ctx, CatalogLimits{MaxCatalogRecords, 1 << 40})
-	if e != nil {
-		return e
+	var e error
+	if g.catalog == nil {
+		g.catalog, e = g.r.spoolCatalog(ctx, CatalogLimits{MaxCatalogRecords, GCCatalogBytes})
+		if e != nil {
+			return e
+		}
 	}
-	defer removeFile(f)
 	retired := map[string]bool{}
 	walRetirement := false
 	for _, v := range p.Victims {
@@ -166,7 +182,7 @@ func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 		}
 		if v.Kind == "retire-backup" {
 			uid := *v.BackupUID
-			e = scanEntries(ctx, f, func(en Entry) error {
+			e = scanEntries(ctx, g.catalog, func(en Entry) error {
 				if !en.Retired && en.Commit.ParentBackupUID != nil && *en.Commit.ParentBackupUID == uid && !retired[en.Commit.BackupUID] {
 					return ErrBlocked
 				}
@@ -189,12 +205,19 @@ func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 		}
 		return e
 	}
+	// One destructive-phase budget, not time spent proving inventory and not
+	// a fresh allowance per request. The caller's deadline still bounds reads.
 	for _, v := range p.Victims {
-		if g.requests >= 128 || time.Since(g.started) >= 30*time.Second {
+		if g.requests >= 128 {
 			return ErrCapacity
 		}
 		if e = g.check(ctx); e != nil {
 			return e
+		}
+		if g.started.IsZero() {
+			g.started = time.Now()
+		} else if time.Since(g.started) >= 30*time.Second {
+			return ErrCapacity
 		}
 		g.requests++
 		e = g.destroy(ctx, v)
@@ -346,6 +369,10 @@ func (g *GCOwner) Close(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.closed = true
+	if g.catalog != nil {
+		removeFile(g.catalog)
+		g.catalog = nil
+	}
 	g.r.gcMu.Lock()
 	g.r.gcNotBefore = time.Now().Add(time.Second)
 	g.r.gcMu.Unlock()

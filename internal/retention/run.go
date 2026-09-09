@@ -60,7 +60,7 @@ func Run(ctx context.Context, r *repository.Repository, files wal.Files, now tim
 		}
 		return nil
 	}
-	e = g.Inventory(ctx, repository.CatalogLimits{MaxRecords: repository.MaxCatalogRecords, MaxSpoolBytes: 256 << 20}, func(en repository.Entry) error {
+	e = g.Inventory(ctx, repository.CatalogLimits{MaxRecords: repository.MaxCatalogRecords, MaxSpoolBytes: repository.GCCatalogBytes}, func(en repository.Entry) error {
 		if en.Retired {
 			return nil
 		}
@@ -160,9 +160,16 @@ func Run(ctx context.Context, r *repository.Repository, files wal.Files, now tim
 		}
 		in.Paths = append(in.Paths, converted)
 	}
-	result.Decision, e = Plan(in, now.Add(-o.Window), o.MinimumFulls, o.FirstRequired)
-	if e != nil {
-		return result, e
+	if len(in.Backups) == 0 {
+		// A fully validated empty live catalog has no recovery promise and no
+		// WAL-retirement entitlement. It can still have conclusively abandoned
+		// claimed attempts. Cleanup below must finish every list/validation.
+		result.Decision = Decision{Shortened: true}
+	} else {
+		result.Decision, e = Plan(in, now.Add(-o.Window), o.MinimumFulls, o.FirstRequired)
+		if e != nil {
+			return result, e
+		}
 	}
 	// Complete cleanup discovery is a prerequisite even when retirements fill
 	// this batch. Partial MPU lists never authorize unrelated destruction.
