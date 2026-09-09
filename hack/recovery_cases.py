@@ -28,6 +28,9 @@ BEFORE = BASE + [(2, 'before')]
 INCLUSIVE = BEFORE + [(3, 'target')]
 LATEST = INCLUSIVE + [(4, 'after')]
 MAX_TARGETS = 64
+# Replace via a new inode: a prior verified0555 actor cannot be truncated by
+# the non-root PostgreSQL user. No mutation of a running executable's bytes.
+RETENTION_ACTOR_INSTALL = 'base64 -d > "$1.next"; chmod 0555 "$1.next"; mv "$1.next" "$1"'
 
 
 def target_secret_names():
@@ -572,7 +575,7 @@ class Campaign:
         actor = h.bundle['directory'] / 'actor'
         path = '/var/lib/postgresql/data/i-retention-actor'
         h.kube('exec', '-i', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
-               'base64 -d > ' + path + '; chmod 0555 ' + path, input=base64.b64encode(actor.read_bytes()).decode())
+               RETENTION_ACTOR_INSTALL, 'retention-install', path, input=base64.b64encode(actor.read_bytes()).decode())
         assert h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', path).split()[0] == h.bundle['files']['actor']
         result = json.loads(h.kube('exec', '-n', SOURCE, pod, '-c', 'cnpg-backup', '--', path, 'retention', cutoff, mode, timeout=120))
         self.event('actual-retention-batch', **result)

@@ -63,6 +63,22 @@ class RetentionCampaignTests(unittest.TestCase):
                 with self.assertRaisesRegex(CommandFailure, 'emergency free-space floor'):
                     f.account(force=True, maintain=False)
 
+    def test_repeated_actor_install_keeps_verified_executable_bytes(self):
+        # Actual non-root POSIX regression for local I failure3: the first
+        # install chmod0555 made the second direct truncation fail EACCES.
+        import base64
+        import subprocess
+        from recovery_cases import RETENTION_ACTOR_INSTALL
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / 'actor'
+            for body in (b'first verified actor', b'next verified actor'):
+                result = subprocess.run(['sh', '-ec', RETENTION_ACTOR_INSTALL, 'retention-install', str(target)],
+                                        input=base64.b64encode(body), capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(target.read_bytes(), body)
+                self.assertEqual(target.stat().st_mode & 0o777, 0o555)
+            self.assertFalse(target.with_name('actor.next').exists())
+
     def test_retention_is_actual_explicit_fixture_scope(self):
         cases = selected('recovery', ['retention-runtime'])
         self.assertEqual([c['id'] for c in cases], ['retention-runtime'])
