@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -53,7 +52,7 @@ func (a *API) reconcileRecoveryOperation(ctx context.Context, c Cluster, metrics
 	known := false
 	defer func() { metrics.restore(c, state, known, now) }()
 	cm, err := a.Get(ctx, coreResource("configmaps"), c.Metadata.Namespace, operationName(c))
-	if apierrors.IsNotFound(err) || err != nil {
+	if err != nil {
 		return
 	}
 	state, err = operationFrom(cm, c)

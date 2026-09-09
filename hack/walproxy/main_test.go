@@ -100,8 +100,30 @@ func TestResetIsConnectionAbortNotOrdinaryMissing(t *testing.T) {
 	injectWAL(httptest.NewRecorder(), httptest.NewRequest("GET", "https://fixture/wal/name", nil), "reset-wal-get", &faults{})
 }
 
+func TestSlowBodyCountsActualBoundedReadsAndDrains(t *testing.T) {
+	state := &faults{}
+	release, done := make(chan struct{}), make(chan struct{})
+	close(release)
+	body := &slowBody{ReadCloser: io.NopCloser(bytes.NewReader(bytes.Repeat([]byte("x"), 128<<10))), state: state, release: release, done: done}
+	buffer := make([]byte, 256<<10)
+	n, err := body.Read(buffer)
+	if err != nil || n != 64<<10 || state.transferred != int64(n) {
+		t.Fatal(n, err, state.transferred)
+	}
+	n, err = body.Read(buffer)
+	if err != nil || n != 64<<10 || state.transferred != 128<<10 {
+		t.Fatal(n, err, state.transferred)
+	}
+	cancelled := make(chan struct{})
+	close(cancelled)
+	body.done, body.release = cancelled, make(chan struct{})
+	if _, err = body.Read(buffer); err != io.ErrClosedPipe {
+		t.Fatal("canceled transfer did not fail", err)
+	}
+}
+
 func TestControlRejectsArbitraryFaultCommands(t *testing.T) {
-	for _, mode := range []string{"", "hold-wal-put", "hold-commit-response", "tls-wal-get", "hold-wal-get-response", "hold-artifact-get-response"} {
+	for _, mode := range []string{"", "slow-artifact-put", "hold-wal-put", "hold-commit-response", "tls-wal-get", "hold-wal-get-response", "hold-artifact-get-response"} {
 		if !validMode(mode) {
 			t.Fatal(mode)
 		}
