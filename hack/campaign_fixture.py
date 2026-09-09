@@ -497,7 +497,10 @@ rmdir "$path"
             observed['node_accounting'] = self.run('docker', 'exec', self.NAME + '-control-plane', 'sh', '-c',
                 'du -B1 -c /var/local/cnpg-backup-*.img 2>/dev/null | tail -n1; '
                 'for f in memory.current memory.max memory.events cpu.stat; do echo "$f"; cat /sys/fs/cgroup/$f; done; '
-                'df -B1 -i /var/local; losetup -l -n | wc -l', timeout=10)
+                # Global host loop enumeration is unrelated to this fixture
+                # and can stall behind another device's I/O. Owned associations
+                # are already recorded/verified at allocation and retirement.
+                'df -B1 -i /var/local', timeout=10)
         self.commands.record({'resources': observed})
         if observed['disk_available'] < self.resources['disk_floor_gib'] * GIB:
             raise CommandFailure('infrastructure/disk: emergency free-space floor; no new faults')

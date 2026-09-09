@@ -41,6 +41,28 @@ class RetentionCampaignTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             samples(text.replace('cluster="c"', 'cluster="c",operation_id="unbounded"'))
 
+    def test_periodic_accounting_does_not_scan_unrelated_host_loop_devices(self):
+        # Observed local I failure: all du/cgroup/df output arrived, then the
+        # global losetup enumeration exhausted the10s sample budget. Actual
+        # owned device association/teardown and the disk floor remain required.
+        from campaign_fixture import Fixture
+        from campaign_process import CommandFailure
+        from recovery_campaign import Manifest
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            m = Manifest(root / 'evidence', {}, [])
+            f = Fixture(root / 'fixture', 'cb-repair-123456789abc', m, {}, {'disk_floor_gib': 5}, float('inf'))
+            f.allocations = [{'state': 'mounted', 'device': '/dev/loop-owned'}]
+            def run(*args, **kwargs):
+                if 'losetup -l -n' in args[-1]:
+                    raise CommandFailure('observed global-loop enumeration deadline')
+                return 'owned backing bytes and cgroup/df observations'
+            with patch('campaign_fixture.snapshot', return_value={'disk_available': 6 << 30}), patch.object(f, 'run', side_effect=run):
+                f.account(force=True, maintain=False)
+            with patch('campaign_fixture.snapshot', return_value={'disk_available': 4 << 30}), patch.object(f, 'run', side_effect=run):
+                with self.assertRaisesRegex(CommandFailure, 'emergency free-space floor'):
+                    f.account(force=True, maintain=False)
+
     def test_retention_is_actual_explicit_fixture_scope(self):
         cases = selected('recovery', ['retention-runtime'])
         self.assertEqual([c['id'] for c in cases], ['retention-runtime'])
