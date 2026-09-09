@@ -18,7 +18,7 @@ jobs:
       id-token: write
       attestations: write
     env:
-      DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth
+      DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth/.docker
       GOMAXPROCS: '2'
     outputs:
       sha: ${{ steps.subject.outputs.sha }}
@@ -65,6 +65,9 @@ jobs:
       - name: Sign exact manager build digest
         if: steps.subject.outputs.reuse == 'false'
         id: manager_provenance
+        # Pinned @sigstore/oci reads HOME/.docker, ignoring DOCKER_CONFIG.
+        env:
+          HOME: ${{ github.workspace }}/.work/registry-auth
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-name: ghcr.io/djosh34/cnpg-backup-manager
@@ -73,6 +76,8 @@ jobs:
       - name: Sign exact PG18 build digest
         if: steps.subject.outputs.reuse == 'false'
         id: pg18_provenance
+        env:
+          HOME: ${{ github.workspace }}/.work/registry-auth
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-name: ghcr.io/djosh34/cnpg-backup-pg18
