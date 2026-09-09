@@ -43,7 +43,9 @@ jobs:
                   'service': 'ghcr.io', 'scope': 'repository:' + repo + ':pull,push'}),
                   {'Authorization': 'Basic ' + basic})
               headers = {'Authorization': 'Bearer ' + json.loads(body)['token'],
-                  'Accept': 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}
+                  'Accept': ', '.join(['application/vnd.docker.distribution.manifest.v2+json',
+                      'application/vnd.oci.image.manifest.v1+json', 'application/vnd.oci.image.index.v1+json',
+                      'application/vnd.docker.distribution.manifest.list.v2+json'])}
               base = 'https://ghcr.io/v2/' + repo + '/manifests/'
               _, raw = request(base + digest, headers)
               assert 'sha256:' + hashlib.sha256(raw).hexdigest() == digest
