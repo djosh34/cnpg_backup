@@ -1,0 +1,13 @@
+{
+  "apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster",
+  "metadata": {"name": "database", "namespace": "database"},
+  "spec": {
+    "instances": 2,
+    "imageName": "ghcr.io/cloudnative-pg/postgresql:18.6@sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4",
+    "storage": {"size": "64Gi"},
+    "walStorage": {"size": "16Gi"},
+    "tablespaces": [{"name": "fast_space", "storage": {"size": "32Gi"}}],
+    "postgresql": {"parameters": {"summarize_wal": "on", "wal_summary_keep_time": "14d", "archive_timeout": "60s"}},
+    "plugins": [{"name": "cnpg-backup.djosh34.github.io", "isWALArchiver": true, "parameters": {"repository": "destination"}}]
+  }
+}

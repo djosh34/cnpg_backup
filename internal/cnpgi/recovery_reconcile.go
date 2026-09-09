@@ -4,7 +4,8 @@ import (
 	"context"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
+
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -12,11 +13,10 @@ import (
 // A restart may finish a DURABLY recorded terminal release, but never recreate
 // its predecessor's active observer or clear a process-reader from API status.
 // One Cluster per turn bounds API/storage work and namespace memory.
-func (a *API) runRecoveryOperations(ctx context.Context) {
+func (a *API) runRecoveryOperations(ctx context.Context, metrics *backupMetrics) {
 	if len(a.Namespaces) == 0 {
 		return
 	}
-	coordinator := a.recoveryState()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	ns, cursor := 0, ""
@@ -26,38 +26,10 @@ func (a *API) runRecoveryOperations(ctx context.Context) {
 		if e == nil {
 			for _, o := range list.Items {
 				c, e := ParseCluster([]byte(jsonText(o.Object)))
-				if e != nil || c.Spec.Bootstrap.Recovery == nil {
-					continue
-				}
-				cm, e := a.Get(pass, coreResource("configmaps"), c.Metadata.Namespace, operationName(c))
-				if apierrors.IsNotFound(e) {
-					continue
-				}
-				if e != nil {
-					break
-				}
-				state, e := operationFrom(cm, c)
 				if e != nil {
 					continue
 				}
-				if state.State == "active" && state.ObserverID != coordinator.process {
-					state.State = "uncertain"
-					if a.writeOperation(pass, c, cm, state) == nil {
-						a.recoveryWarning(pass, c, "RetentionBlocked")
-					}
-				}
-				if state.State != "completed" || state.LifetimeReleased || state.CompletedJobUID == "" || len(state.TerminatedPodUIDs) == 0 {
-					continue
-				}
-				source, e := a.Repository(pass, c.Metadata.Namespace, state.Placement.Source)
-				if e != nil || source.Hash() != state.Placement.SourceConfigSHA256 {
-					continue
-				}
-				if e = a.changeRecoveryLifetime(pass, c, source, true); e != nil {
-					continue
-				}
-				state.LifetimeReleased = true
-				_ = a.writeOperation(pass, c, cm, state)
+				a.reconcileRecoveryOperation(pass, c, metrics, time.Now())
 			}
 			cursor = list.GetContinue()
 		} else {
@@ -74,6 +46,60 @@ func (a *API) runRecoveryOperations(ctx context.Context) {
 		}
 	}
 }
+
+// Observe only validated durable state. Failed reads/persistence become Unknown;
+// diagnostics cannot supply the uninterrupted observer's termination evidence.
+func (a *API) reconcileRecoveryOperation(ctx context.Context, c Cluster, metrics *backupMetrics, now time.Time) {
+	owned := false
+	if recovery := c.Spec.Bootstrap.Recovery; recovery != nil {
+		for _, source := range c.Spec.ExternalClusters {
+			if source.Name == recovery.Source && source.Plugin != nil && source.Plugin.Name == recoveryguard.PluginName {
+				owned = true
+				break
+			}
+		}
+	}
+	if !owned {
+		// Destination archival or an unused external declaration does not make
+		// another plugin's restore ours. Evict stale labels on Cluster-name reuse.
+		metrics.forgetRestore(c)
+		return
+	}
+	state := recoveryOperation{}
+	known := false
+	defer func() { metrics.restore(c, state, known, now) }()
+	cm, err := a.Get(ctx, coreResource("configmaps"), c.Metadata.Namespace, operationName(c))
+	if err != nil {
+		return
+	}
+	state, err = operationFrom(cm, c)
+	if err != nil {
+		return
+	}
+	if state.State == "active" && state.ObserverID != a.recoveryState().process {
+		state.State = "uncertain"
+		if a.writeOperation(ctx, c, cm, state) != nil {
+			return
+		}
+		a.recoveryWarning(ctx, c, "RetentionBlocked")
+	}
+	known = state.State == "active" || state.State == "uncertain" || state.State == "completed"
+	if state.State != "completed" || state.LifetimeReleased || state.CompletedJobUID == "" || len(state.TerminatedPodUIDs) == 0 {
+		return
+	}
+	source, err := a.Repository(ctx, c.Metadata.Namespace, state.Placement.Source)
+	if err != nil || source.Hash() != state.Placement.SourceConfigSHA256 {
+		return
+	}
+	if a.changeRecoveryLifetime(ctx, c, source, true) != nil {
+		return
+	}
+	state.LifetimeReleased = true
+	if a.writeOperation(ctx, c, cm, state) != nil {
+		known = false
+	}
+}
+
 func (a *API) recoveryWarning(ctx context.Context, c Cluster, reason string) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	event := &unstructured.Unstructured{Object: map[string]any{

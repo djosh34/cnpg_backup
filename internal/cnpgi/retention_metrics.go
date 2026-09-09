@@ -8,9 +8,10 @@ import (
 )
 
 type retentionSeries struct {
-	Blocked, Admission, Observed bool
-	Holders                      int
-	Checked                      time.Time
+	Blocked, Admission, Observed          bool
+	Holders                               int
+	Checked                               time.Time
+	WorkspaceObserved, WorkspaceAvailable bool
 }
 
 func (m *backupMetrics) retention(labels backupLabels, blocked, admission, observed bool, holders int, now time.Time) {
@@ -29,8 +30,18 @@ func (m *backupMetrics) retention(labels backupLabels, blocked, admission, obser
 	if _, ok := m.retentionSeries[labels]; !ok && len(m.retentionSeries) >= 4096 {
 		return
 	}
-	m.retentionSeries[labels] = retentionSeries{blocked, admission, observed, holders, now}
+	m.retentionSeries[labels] = retentionSeries{Blocked: blocked, Admission: admission, Observed: observed, Holders: holders, Checked: now}
 }
+func (m *backupMetrics) retentionWorkspace(labels backupLabels, observed, available bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	labels.Type = ""
+	if s, ok := m.retentionSeries[labels]; ok {
+		s.WorkspaceObserved, s.WorkspaceAvailable = observed, available
+		m.retentionSeries[labels] = s
+	}
+}
+
 func (m *backupMetrics) writeRetention(w io.Writer) {
 	m.mu.Lock()
 	values := make(map[backupLabels]retentionSeries, len(m.retentionSeries))
@@ -45,11 +56,14 @@ func (m *backupMetrics) writeRetention(w io.Writer) {
 		labels = append(labels, k)
 	}
 	sort.Slice(labels, func(i, j int) bool { return labels[i].text() < labels[j].text() })
-	for _, name := range []string{"cnpg_backup_retention_blocked", "cnpg_backup_repository_admission_blocked", "cnpg_backup_repository_holders"} {
+	for _, name := range []string{"cnpg_backup_retention_blocked", "cnpg_backup_repository_admission_blocked", "cnpg_backup_repository_holders", "cnpg_backup_retention_workspace_available", "cnpg_backup_retention_checked_timestamp_seconds"} {
 		fmt.Fprintf(w, "# HELP %s Last periodic gate/retention observation; diagnostics never authorize admission.\n# TYPE %s gauge\n", name, name)
 		for _, l := range labels {
 			s := values[l]
-			if name != "cnpg_backup_retention_blocked" && !s.Observed {
+			if (name == "cnpg_backup_repository_admission_blocked" || name == "cnpg_backup_repository_holders") && !s.Observed {
+				continue
+			}
+			if name == "cnpg_backup_retention_workspace_available" && !s.WorkspaceObserved {
 				continue
 			}
 			v := 0
@@ -62,6 +76,12 @@ func (m *backupMetrics) writeRetention(w io.Writer) {
 				if s.Admission {
 					v = 1
 				}
+			case "cnpg_backup_retention_workspace_available":
+				if s.WorkspaceAvailable {
+					v = 1
+				}
+			case "cnpg_backup_retention_checked_timestamp_seconds":
+				v = int(s.Checked.Unix())
 			default:
 				v = s.Holders
 			}

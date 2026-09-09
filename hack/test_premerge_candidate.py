@@ -1,6 +1,7 @@
 """Trust/publication/auth unit controls, not actual campaign acceptance."""
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -41,7 +42,7 @@ class CandidateTests(unittest.TestCase):
         def command(*args):
             return SimpleNamespace(stdout=changed)
         with patch.object(Path, 'read_text', return_value=json.dumps(subject)), patch.object(c, 'run', side_effect=command) as run:
-            changed = 'docs/recovery-campaign.md\nhack/recovery_cases.py\nhack/test_new.py\n.github/workflows/pr-g-candidate.yml\n'
+            changed = 'docs/recovery-campaign.md\nhack/recovery_cases.py\nhack/backup_metrics_smoke.py\nhack/test_new.py\n.github/workflows/pr-g-candidate.yml\n'
             self.assertEqual(c.reuse_subject('c' * 40), subject)
             self.assertIn(unittest.mock.call('git', 'merge-base', '--is-ancestor', 'a' * 40, 'c' * 40), run.call_args_list)
             for path in ('cmd/new.go', 'internal/cnpgi/restore.go', 'pkg/new.go',
@@ -55,6 +56,41 @@ class CandidateTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 c.reuse_subject('c' * 40)
 
+    def test_J_reuses_post_build_scanner_fix_but_not_native_or_build_inputs(self):
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                os.chdir(directory)
+                def git(*args):
+                    return subprocess.run(['git', *args], check=True, capture_output=True,
+                                          text=True, timeout=15).stdout.strip()
+                def commit():
+                    git('add', '.')
+                    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                        'commit', '-qm', 'fixture change')
+                    return git('rev-parse', 'HEAD')
+                git('init', '-q')
+                Path('hack').mkdir(); Path('.github').mkdir()
+                paths = ('hack/security.py', 'hack/native_metadata.py', 'hack/build.py')
+                for path in paths:
+                    Path(path).write_text('original input\n')
+                revision = commit()
+                subject = {'revision': revision, 'images': {
+                    f: 'ghcr.io/djosh34/cnpg-backup-' + f + '@sha256:' + 'b' * 64
+                    for f in ('manager', 'pg18')}}
+                Path('.github/pr-j-subject.json').write_text(json.dumps(subject))
+                Path('hack/security.py').write_text('post-build scanner correction\n')
+                branch = 'refs/heads/implementation/pr-j'
+                self.assertEqual(c.reuse_subject(commit(), branch), subject)
+                for path in paths[1:]:
+                    with self.subTest(path=path):
+                        Path(path).write_text('changed product build input\n')
+                        self.assertIsNone(c.reuse_subject(commit(), branch))
+                        Path(path).write_text('original input\n')
+                        self.assertEqual(c.reuse_subject(commit(), branch), subject)
+            finally:
+                os.chdir(previous)
+
     def test_H_requires_its_own_explicit_subject_record(self):
         with patch.object(Path, 'exists', return_value=False), patch.object(c, 'run') as run:
             self.assertIsNone(c.reuse_subject('c' * 40, 'refs/heads/implementation/pr-h'))
@@ -64,6 +100,20 @@ class CandidateTests(unittest.TestCase):
         with patch.object(Path, 'exists', return_value=True), patch.object(Path, 'read_text', return_value=json.dumps(subject)), \
              patch.object(c, 'run', return_value=SimpleNamespace(stdout='docs/recovery-campaign.md\n')):
             self.assertEqual(c.reuse_subject('c' * 40, 'refs/heads/implementation/pr-h'), subject)
+
+    def test_J_has_no_implicit_I_reuse_and_requires_trusted_push(self):
+        branch = 'refs/heads/implementation/pr-j'
+        sha = 'a' * 40
+        env = dict(GITHUB_REPOSITORY=c.REPO, GITHUB_EVENT_NAME='push', GITHUB_REF=branch,
+                   GITHUB_WORKFLOW_REF=c.REPO + '/.github/workflows/pr-g-candidate.yml@' + branch,
+                   GITHUB_SHA=sha, GITHUB_WORKFLOW_SHA=sha)
+        c.trust(env, sha, 'https://github.com/' + c.REPO + '.git')
+        self.assertEqual(c.SUBJECT_RECORDS[branch], '.github/pr-j-subject.json')
+        with patch.object(Path, 'exists', return_value=False), patch.object(c, 'run') as run:
+            self.assertIsNone(c.reuse_subject(sha, branch))
+            run.assert_not_called()
+        with self.assertRaises(RuntimeError):
+            c.reuse_subject(sha, 'refs/heads/implementation/pr-j-security')
 
     def test_private_auth_is_scoped_and_removed_even_on_failure(self):
         with tempfile.TemporaryDirectory() as d:

@@ -54,6 +54,26 @@ def snapshot(path):
             'pressure': {n: (Path('/proc/pressure') / n).read_text() for n in ('cpu', 'memory', 'io')}}
 
 
+def resource_values(text):
+    values = dict(line.split('=', 1) for line in text.splitlines())
+    required = {'rss_kib', 'hwm_kib', 'memory.current', 'memory.peak', 'memory.max',
+                'oom', 'oom_kill', 'blocks', 'available', 'free', 'block_size', 'native_processes', 'native_work_groups'}
+    if set(values) != required or any(not re.fullmatch('[0-9]+', v) for v in values.values()):
+        raise CommandFailure('incomplete or unbounded product resource observation')
+    v = {k: int(n) for k, n in values.items()}
+    if not 0 < v['rss_kib'] <= v['hwm_kib'] or not 0 < v['memory.current'] <= v['memory.peak'] or v['memory.max'] <= 0:
+        raise CommandFailure('invalid kernel resource observation')
+    if not 0 <= v['available'] <= v['free'] <= v['blocks'] or v['block_size'] <= 0:
+        raise CommandFailure('invalid filesystem observation')
+    return {'go_rss_bytes': v['rss_kib'] * 1024, 'go_hwm_bytes': v['hwm_kib'] * 1024,
+            'cgroup_current_bytes': v['memory.current'], 'cgroup_peak_bytes': v['memory.peak'],
+            'cgroup_limit_bytes': v['memory.max'], 'oom': v['oom'], 'oom_kill': v['oom_kill'],
+            'native_processes': v['native_processes'], 'native_work_groups': v['native_work_groups'],
+            'workspace_capacity_bytes': v['blocks'] * v['block_size'],
+            'workspace_available_bytes': v['available'] * v['block_size'],
+            'workspace_used_bytes': (v['blocks'] - v['free']) * v['block_size']}
+
+
 def preflight(resources, path, commands):
     endpoint = os.environ.get('DOCKER_HOST', 'unix:///var/run/docker.sock')
     if endpoint != 'unix:///var/run/docker.sock' or os.environ.get('DOCKER_CONTEXT', 'default') != 'default':
@@ -484,7 +504,7 @@ rmdir "$path"
             name = claim['metadata']['name']
             if any(v.get('persistentVolumeClaim', {}).get('claimName') == name for p in pods for v in p['spec'].get('volumes', [])):
                 raise CommandFailure('cleanup: target PVC still has a consumer')
-            self.kube('delete', 'pvc', name, '-n', 'campaign-target', '--wait=true', '--timeout=60s')
+            self.kube('delete', 'pvc', name, '-n', 'campaign-target', '--ignore-not-found=true', '--wait=true', '--timeout=60s')
         self.reclaim()
 
     def account(self, force=False, maintain=True):
@@ -506,6 +526,64 @@ rmdir "$path"
             raise CommandFailure('infrastructure/disk: emergency free-space floor; no new faults')
         if self.captures_enabled and maintain:
             self.reclaim()
+
+    def product_resources(self, namespace, pod, container, workspace):
+        """Required per-process/cgroup evidence, read from the owned node only.
+
+        No exec shell in the product image, metrics-server dependency or host-RAM
+        proxy for process RSS. Kernel HWM/peak complement periodic observations.
+        """
+        if workspace not in ('/cnpg-backup/work', '/cnpg-backup/retention'):
+            raise ValueError('unsupported resource observation mount')
+        document = json.loads(self.kube('get', 'pod', pod, '-n', namespace, '-o', 'json'))
+        statuses = document['status'].get('containerStatuses', []) + document['status'].get('initContainerStatuses', [])
+        status = next(s for s in statuses if s['name'] == container)
+        if not status.get('state', {}).get('running'):
+            raise CommandFailure('resource subject is not running')
+        cid = status['containerID'].removeprefix('containerd://')
+        if not re.fullmatch('[a-f0-9]{64}', cid):
+            raise CommandFailure('missing original CRI container identity')
+        inspect = json.loads(self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'inspect', cid, timeout=10))
+        pid = int(inspect['info']['pid'])
+        if pid <= 1:
+            raise CommandFailure('invalid live product PID')
+        text = self.run('docker', 'exec', self.NAME + '-control-plane', 'sh', '-ec',
+            'p=$1; root=/proc/$p; test "$(basename "$(readlink "$root/exe")")" = cnpg-backup; '
+            'awk \'/^VmRSS:/ {print "rss_kib=" $2} /^VmHWM:/ {print "hwm_kib=" $2}\' "$root/status"; '
+            'cg=/sys/fs/cgroup$(awk -F: \'$1 == "0" {print $3}\' "$root/cgroup"); '
+            'for pair in memory.current memory.peak memory.max; do printf "%s=" "$pair"; cat "$cg/$pair"; done; '
+            'awk \'$1 == "oom" || $1 == "oom_kill" {print $1 "=" $2}\' "$cg/memory.events"; '
+            'n=0; groups=""; for child in $(cat "$cg/cgroup.procs"); do '
+            'comm=$(cat /proc/$child/comm 2>/dev/null || true); '
+            'case "$comm" in pg_basebackup|pg_verifybackup|pg_combinebackup|pg_combinebacku|pg_waldump|pg_controldata|psql) n=$((n+1));; esac; '
+            # pg_basebackup -X stream forks a WAL receiver in the SAME native
+            # process group. One backup/reconstruction is not one OS process.
+            'case "$comm" in pg_basebackup|pg_verifybackup|pg_combinebackup|pg_combinebacku|pg_waldump) '
+            'groups="$groups $(awk \'{print $5}\' /proc/$child/stat 2>/dev/null || true)";; esac; done; '
+            'printf "native_processes=%s\\n" "$n"; '
+            'printf "native_work_groups=%s\\n" "$(printf \'%s\\n\' $groups | awk \'NF {g[$1]=1} END {print length(g)}\')"; '
+            'stat -f -c "blocks=%b\navailable=%a\nfree=%f\nblock_size=%S" "$root/root$2"',
+            'product-resource-observation', str(pid), workspace, timeout=15)
+        observed = resource_values(text)
+        observed.update(namespace=namespace, pod_uid=document['metadata']['uid'], container_id=cid,
+                        container=container, workspace=workspace, observed_epoch=time.time())
+        self.commands.record({'product_resources': observed})
+        return observed
+
+    def projection_digest(self, namespace, pod, relative):
+        if relative not in ('destination/accessKey', 'destination/ca.crt'):
+            raise ValueError('unsupported projection observation')
+        document = json.loads(self.kube('get', 'pod', pod, '-n', namespace, '-o', 'json'))
+        cid = next(s['containerID'] for s in document['status']['initContainerStatuses'] if s['name'] == 'cnpg-backup').removeprefix('containerd://')
+        if not re.fullmatch('[a-f0-9]{64}', cid):
+            raise CommandFailure('invalid projection container identity')
+        pid = int(json.loads(self.run('docker', 'exec', self.NAME + '-control-plane', 'crictl', 'inspect', cid))['info']['pid'])
+        # Only a digest leaves the private projection. Never log Secret values.
+        value = self.run('docker', 'exec', self.NAME + '-control-plane', 'sha256sum',
+                         f'/proc/{pid}/root/cnpg-backup/projection/' + relative).split()[0]
+        if not re.fullmatch('[a-f0-9]{64}', value):
+            raise CommandFailure('invalid projection digest')
+        return value
 
     def collect_events(self, namespace):
         # Paginate at the API, not kubectl's auto-aggregated list. Full campaigns

@@ -28,10 +28,11 @@ type retentionStatus struct {
 	LastWarningTime   *metav1.Time `json:"lastWarningTime,omitempty"`
 }
 type retentionObservation struct {
-	result           retention.Result
-	holders          int
-	admissionBlocked bool
-	gateObserved     bool
+	result                                retention.Result
+	holders                               int
+	admissionBlocked                      bool
+	gateObserved                          bool
+	workspaceObserved, workspaceAvailable bool
 }
 type retentionRunner func(context.Context, string, string, configuration.Spec, time.Time) (retentionObservation, error)
 
@@ -46,6 +47,8 @@ func (a *API) retentionBatch(ctx context.Context, namespace, writer string, spec
 	}
 	defer store.Close()
 	dir, e := newRetentionWorkspace(retentionWorkspacePath)
+	out.workspaceObserved = e == nil || errors.Is(e, repository.ErrCapacity)
+	out.workspaceAvailable = e == nil
 	if e != nil {
 		return out, e
 	}
@@ -154,6 +157,14 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 		}
 	}
 	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RepositoryAdmissionBlocked", Status: admission, Reason: admissionReason, Message: admissionMessage, ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
+	workspace, workspaceReason := metav1.ConditionUnknown, "NotObserved"
+	if observation.workspaceObserved {
+		workspace, workspaceReason = metav1.ConditionFalse, "CapacityUnavailable"
+		if observation.workspaceAvailable {
+			workspace, workspaceReason = metav1.ConditionTrue, "ReservationPassed"
+		}
+	}
+	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RetentionWorkspaceAvailable", Status: workspace, Reason: workspaceReason, Message: "Last retention workspace reservation only; not current free space or native backup workspace capacity. Failed reads remain Unknown.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
 	warn := blocked && (next.LastWarningTime == nil || !now.Before(next.LastWarningTime.Add(5*time.Minute)))
 	if warn {
 		stamp := metav1.NewTime(now)
@@ -161,6 +172,7 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 	}
 	state.Retention = next
 	m.retention(labels, blocked, observation.admissionBlocked, observation.gateObserved, observation.holders, now)
+	m.retentionWorkspace(labels, observation.workspaceObserved, observation.workspaceAvailable)
 	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"resourceVersion": object.GetResourceVersion()}, "status": state})
 	_, e = a.Client.Resource(repositories).Namespace(object.GetNamespace()).Patch(ctx, object.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}, "status")
 	if e != nil {

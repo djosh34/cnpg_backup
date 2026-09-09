@@ -52,6 +52,8 @@ def inventory(out):
             entry = modules.setdefault(key, {'path': module['Path'], 'version': module['Version'],
                                             'dir': module['Dir'], 'scopes': set()})
             entry['scopes'].add(scope)
+            if scope == 'executable':
+                entry.setdefault('executable_packages', []).append(package['ImportPath'])
     dest = out / 'go-notices'
     dest.mkdir()
     result = []

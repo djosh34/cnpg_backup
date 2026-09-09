@@ -16,8 +16,8 @@ from recovery_cases import Campaign as RealCampaign
 class PlanTests(unittest.TestCase):
     def test_full_includes_both_supplementals_and_dependency_is_not_implicit_s1(self):
         cases = selected('recovery')
-        self.assertEqual(len(cases), 35)
-        self.assertEqual(len({c['id'] for c in cases}), 35)
+        self.assertEqual(len(cases), 37)
+        self.assertEqual(len({c['id'] for c in cases}), 37)
         self.assertEqual([c['id'] for c in cases[-2:]], ['seeded-XID-1', 'seeded-XID-2'])
         self.assertFalse(any('same-segment' in c['fixtures'] for c in selected('retry')))
 

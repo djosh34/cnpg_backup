@@ -2,7 +2,13 @@
 
 A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for S3-compatible deployments that satisfy the documented capability contract. Claims are limited to tested behavior and stated capability requirements.
 
-**Status:** [READY](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5564016816) authorized implementation. Repository/storage primitives, CNPG lifecycle and [synchronous WAL Archive/Restore](docs/wal-implementation.md) are implemented. Full backup capture and primary restore/PITR remain unimplemented and unadvertised; no qualified release is claimed.
+**Status:** [READY](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5564016816) authorized implementation. Repository/storage primitives, CNPG lifecycle and [synchronous WAL Archive/Restore](docs/wal-implementation.md) are implemented. Native full/differential capture, protected primary restore/PITR and conservative retention are implemented. Operational/security acceptance is in progress; no qualified release is claimed.
+
+## Operate
+
+- [Install, backup, fresh-cluster recovery, rotation, update and resource runbook](docs/operations.md)
+- [Backup monitoring](docs/backup-monitoring.md) and [operational alerts](config/operational-alerts.yaml)
+- [Install renderer](config/render.py), [fresh recovery renderer](config/recovery.py), and [network-policy example](config/network-policy-example.json)
 
 ## Build and test
 

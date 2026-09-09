@@ -14,13 +14,30 @@ from campaign_plan import make_plan, validate_results
 INPUTS = Path('artifacts/repair-inputs')
 
 
+def prior_release_subject(tag, sha, images, ref):
+    """Only a reviewed default-branch release record can select prior bytes.
+
+    No first-release fixture is invented here: absent records/tags fail closed.
+    The harness still validates actual image revision/digests when consumed.
+    """
+    if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag) or ref != 'main':
+        raise ValueError('prior release requires a version tag and trusted main')
+    record = json.loads(subprocess.check_output([
+        'git', 'show', 'refs/remotes/origin/main:.github/release-subjects/' + tag + '.json'], text=True))
+    if record['revision'] != sha or record['images'] != images:
+        raise ValueError('prior-release revision/digests differ from trusted record')
+    subprocess.run(['git', 'merge-base', '--is-ancestor', sha, 'refs/tags/' + tag + '^{commit}'], check=True)
+    subprocess.run(['git', 'merge-base', '--is-ancestor', 'refs/tags/' + tag + '^{commit}', 'refs/remotes/origin/main'], check=True)
+    return record
+
+
 def prepare():
     if os.environ.get('GITHUB_REPOSITORY') != 'djosh34/cnpg_backup':
         raise ValueError('repository-owned execution required')
-    if os.environ.get('GITHUB_REF') not in ('refs/heads/main', 'refs/heads/implementation/pr-g', 'refs/heads/implementation/pr-h', 'refs/heads/implementation/pr-i', 'refs/heads/implementation/ci-reliability'):
+    if os.environ.get('GITHUB_REF') not in ('refs/heads/main', 'refs/heads/implementation/pr-g', 'refs/heads/implementation/pr-h', 'refs/heads/implementation/pr-i', 'refs/heads/implementation/pr-j', 'refs/heads/implementation/ci-reliability'):
         raise ValueError('untrusted harness branch')
     ref = os.environ['TRUSTED_REF']
-    if ref not in ('main', 'implementation/pr-g', 'implementation/pr-h', 'implementation/pr-i', 'implementation/ci-reliability'):
+    if ref not in ('main', 'implementation/pr-g', 'implementation/pr-h', 'implementation/pr-i', 'implementation/pr-j', 'implementation/ci-reliability'):
         raise ValueError('untrusted subject branch')
     sha = os.environ['SUBJECT_SHA']
     if not re.fullmatch('[a-f0-9]{40}', sha):
@@ -30,6 +47,8 @@ def prepare():
               'pg18': subject_image(os.environ['DATA_IMAGE'], 'pg18')}
     subject = {'revision': sha, 'images': images,
                'publication': {'run': 'https://github.com/djosh34/cnpg_backup/actions/runs/' + os.environ['GITHUB_RUN_ID']}}
+    if os.environ.get('PRIOR_RELEASE'):
+        subject = prior_release_subject(os.environ['PRIOR_RELEASE'], sha, images, ref)
     if os.environ.get('GITHUB_REF') == 'refs/heads/implementation/ci-reliability':
         frozen = json.loads(Path('.github/ci-repair-subject.json').read_text())
         if frozen['revision'] != sha or frozen['images'] != images:

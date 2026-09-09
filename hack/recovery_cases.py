@@ -193,13 +193,22 @@ class Campaign:
         self.image_pull_secrets = registry_pull_secrets(h)
         h.apply({'apiVersion': 'storage.k8s.io/v1', 'kind': 'StorageClass', 'metadata': {'name': 'campaign-target'},
                  'provisioner': 'kubernetes.io/no-provisioner', 'volumeBindingMode': 'WaitForFirstConsumer'})
-        self.pool(3)
+        self.pool(6 if 'ops-upgrade' in self.args.fixtures else 3)
         # One fresh capture workspace per source/target identity; the local
         # ownership slice needs fewer than the full matrix, never smaller quotas.
         h.capture_workspaces()
-        install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', SOURCE,
+        initial_images = {'manager': self.args.manager_image, 'pg18': self.args.data_image}
+        if 'ops-upgrade' in self.args.fixtures:
+            self.initial_candidate = json.loads((h.ROOT / 'hack/testdata/initial-candidate.json').read_text())
+            initial_images = self.initial_candidate['images']
+            for image in initial_images.values():
+                h.run('docker', 'pull', '--platform=linux/amd64', image)
+                version = h.tool(image, '/usr/local/bin/cnpg-backup', 'version')
+                assert 'revision=' + self.initial_candidate['revision'] + ' ' in version, 'old candidate input binary mismatch'
+            assert initial_images['pg18'] != self.args.data_image, 'annotation-only restart is not an image update'
+        install = h.renderer.render(initial_images['manager'], initial_images['pg18'], 'cnpg-system', SOURCE,
                                     ['s3-auth', 'database-ca', 'database-replication'])
-        target_install = h.renderer.render(self.args.manager_image, self.args.data_image, 'cnpg-system', TARGET, target_secret_names())
+        target_install = h.renderer.render(initial_images['manager'], initial_images['pg18'], 'cnpg-system', TARGET, target_secret_names())
         install['items'] += [obj for obj in target_install['items'] if obj['metadata']['namespace'] == TARGET]
         cm = next(obj for obj in install['items'] if obj['kind'] == 'ConfigMap')
         conf = json.loads(cm['data']['config.json'])
@@ -209,6 +218,7 @@ class Campaign:
         for obj in install['items']:
             if obj['kind'] == 'Deployment':
                 obj['spec']['template']['spec']['imagePullSecrets'] = self.image_pull_secrets
+        self.install = copy.deepcopy(install)
         h.apply(install)
         h.kube('wait', '-n', 'cnpg-system', '--for=condition=Ready', 'certificate/cnpg-backup-server',
                'certificate/cnpg-backup-client', '--timeout=180s')
@@ -225,6 +235,12 @@ class Campaign:
         ca = (self.wal.directory / 'ca.crt').read_text()
         for ns in (SOURCE, TARGET):
             self.install_namespace(ns, ca)
+        if 'ops-rotation' in self.args.fixtures:
+            credentials = self.wal.session_credentials()
+            self.initial_access_digest = hashlib.sha256(credentials['access'].encode()).hexdigest()
+            for ns in (SOURCE, TARGET):
+                h.apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 's3-auth', 'namespace': ns}, 'stringData': credentials})
+            storage['sessionTokenSecret'] = {'name': 's3-auth', 'key': 'token'}
         self.repository = {'apiVersion': 'backup.cnpg-backup.djosh34.github.io/v1alpha1', 'kind': 'Repository',
                            'metadata': {'name': 'destination', 'namespace': SOURCE}, 'spec': {
                                'repositoryID': SOURCE_ID, 's3': {**storage, 'bucket': 'test-bucket', 'prefix': 'smoke',
@@ -232,20 +248,24 @@ class Campaign:
                                    'secretKeySecret': {'name': 's3-auth', 'key': 'secret'}},
                                'workspace': {'storageClassName': 'cnpg-backup-capture', 'size': '8Gi'},
                                'native': {'maxBackupBytes': 256 << 20, 'maxBootstrapWALBytes': 128 << 20, 'maxRestoredBytes': 512 << 20}}}
+        if 'ops-rotation' in self.args.fixtures:
+            self.repository['spec']['compression'] = 'none'
+            self.repository['spec']['native'].update(maxBackupBytes=512 << 20, maxRestoredBytes=1 << 30)
         h.apply(self.repository)
         source = copy.deepcopy(self.repository)
         source['metadata'] = {'name': 'source', 'namespace': TARGET}
         h.apply(source)
-        self.cluster = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster', 'metadata': {'name': 'database', 'namespace': SOURCE},
-                        'spec': {'instances': 1, 'imageName': h.LOCK['database'],
-                                 'smartShutdownTimeout': 30, 'stopDelay': 60,
-                                 'imagePullSecrets': self.image_pull_secrets,
-                                 'storage': {'size': '3Gi', 'storageClass': 'campaign-target'},
-                                 'walStorage': {'size': '3Gi', 'storageClass': 'campaign-target'},
-                                 'tablespaces': [{'name': 'fast_space', 'storage': {'size': '3Gi', 'storageClass': 'campaign-target'}}],
-                                 'postgresql': {'parameters': {'summarize_wal': 'on', 'wal_summary_keep_time': '14d',
-                                                              'archive_timeout': '60s', 'track_commit_timestamp': 'on'}},
-                                 'plugins': [{'name': PLUGIN, 'isWALArchiver': True, 'parameters': {'repository': 'destination'}}]}}
+        # Exercise the published consumer template through ACTUAL CNPG admission.
+        # Only disposable placement/capacity/observation settings differ; never
+        # replace its image reference with a hidden developer-only working value.
+        self.cluster = json.loads((h.ROOT / 'config/cluster-example.json').read_text())
+        self.cluster['metadata'] = {'name': 'database', 'namespace': SOURCE}
+        self.cluster['spec'].update(instances=2 if 'ops-upgrade' in self.args.fixtures else 1,
+                                    smartShutdownTimeout=30, stopDelay=60, imagePullSecrets=self.image_pull_secrets,
+                                    storage={'size': '3Gi', 'storageClass': 'campaign-target'},
+                                    walStorage={'size': '3Gi', 'storageClass': 'campaign-target'},
+                                    tablespaces=[{'name': 'fast_space', 'storage': {'size': '3Gi', 'storageClass': 'campaign-target'}}])
+        self.cluster['spec']['postgresql']['parameters']['track_commit_timestamp'] = 'on'
         if 'differential' in getattr(self.args, 'fixtures', []):
             self.cluster['spec']['postgresql']['parameters']['log_replication_commands'] = 'on'
             # Pace only this disposable workload's checkpoints within the fixed
@@ -254,12 +274,22 @@ class Campaign:
         h.wait(lambda: h.admission_ready(h.kube('apply', '--server-side', '--dry-run=server', '-f', '-',
                                                 input=json.dumps(self.cluster), check=False)), 'actual mTLS discovery')
         h.apply(self.cluster)
-        h.kube('wait', '-n', SOURCE, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
+        self.wait_source_ready()
         self.install_observer()
         if 'differential' in getattr(self.args, 'fixtures', []):
             self.make_differential_workload()
         else:
             self.make_workload()
+
+    def wait_source_ready(self):
+        # Keep the existing finite-workspace replenishment active while CNPG
+        # creates initdb/primary/join/standby Pods. A blocking kubectl wait would
+        # consume both initial capture PVs and starve the pending standby join.
+        def ready():
+            cluster = json.loads(self.h.kube('get', 'cluster', 'database', '-n', SOURCE, '-o', 'json'))
+            return any(c.get('type') == 'Ready' and c.get('status') == 'True'
+                       for c in cluster.get('status', {}).get('conditions', []))
+        self.h.wait(ready, 'CNPG Cluster ready with finite workspace replenishment', 360)
 
     def install_observer(self):
         h = self.h
@@ -599,6 +629,241 @@ class Campaign:
         assert any(c['type'] == 'RetentionBlocked' and c['status'] == 'True' for c in repository['status']['conditions'])
         self.event('actual-manager-retention-blocked', holders=self.gate()['holders'])
 
+    def operational_sample(self, pod, idle=False, namespace=SOURCE):
+        observed = self.h.product_resources(namespace, pod, 'cnpg-backup', '/cnpg-backup/work')
+        assert observed['go_rss_bytes'] < (128 if idle else 256) << 20, 'actual Go RSS exceeds agreed ceiling'
+        assert observed['go_hwm_bytes'] < 256 << 20, 'kernel Go high-water RSS exceeds transfer ceiling'
+        assert observed['cgroup_peak_bytes'] <= min(3 << 30, observed['cgroup_limit_bytes']), 'whole sidecar/native cgroup exceeded ceiling'
+        assert observed['oom'] == observed['oom_kill'] == 0, 'OOM is not a passing resource measurement'
+        assert observed['native_work_groups'] <= 1, 'native backup/reconstruction process groups overlapped'
+        assert 0 < observed['workspace_capacity_bytes'] <= 8 << 30, 'workspace is not a finite supported filesystem'
+        return observed
+
+    def wal_during_transfer(self, pod, wal):
+        # Call the real Unix WAL RPC, not an ephemeral PostgreSQL .done marker:
+        # high WAL turnover may recycle archive_status entries. Durable return,
+        # identical retry and independent remote/restored bytes are the oracle.
+        self.sql(SOURCE, pod, "SELECT pg_create_restore_point('j_transfer_wal')")
+        segment = self.sql(SOURCE, pod, 'SELECT pg_walfile_name(pg_switch_wal())')
+        self.event('transfer-WAL-requested', segment=segment)
+        started = time.monotonic()
+        wal.rpc(pod, 'archive', segment)
+        latency = time.monotonic() - started
+        wal.rpc(pod, 'archive', segment)
+        wal.verify(pod, segment)
+        self.event('transfer-WAL-durable-and-identical', segment=segment, callback_seconds=latency)
+        return segment, latency
+
+    def case_operational_rotation_resources(self):
+        h = self.h
+        with self.m.case('operational-rotation-resources'):
+            pod = self.primary()
+            manager = json.loads(h.kube('get', 'pods', '-n', 'cnpg-system', '-l', 'app=cnpg-backup', '-o', 'json'))['items'][0]
+            idle_manager = h.product_resources('cnpg-system', manager['metadata']['name'], 'manager', '/cnpg-backup/retention')
+            assert idle_manager['go_rss_bytes'] < 128 << 20 and idle_manager['oom_kill'] == 0, 'idle manager RSS/OOM gate'
+            samples = [self.operational_sample(pod, idle=True)]
+            for _ in range(2):
+                time.sleep(1)  # short steady idle resource samples, not a readiness oracle
+                samples.append(self.operational_sample(pod, idle=True))
+            # STORAGE EXTERNAL prevents PostgreSQL TOAST compression from turning
+            # repeated fixture bytes into a below-buffer-size database.
+            self.sql(SOURCE, pod, 'CREATE TABLE j_load(n integer, payload text); '
+                'ALTER TABLE j_load ALTER COLUMN payload SET STORAGE EXTERNAL; '
+                'INSERT INTO j_load SELECT n,repeat(md5(n::text),128) FROM generate_series(1,40000)n')
+            fixture_bytes = int(self.sql(SOURCE, pod, "SELECT pg_total_relation_size('j_load')"))
+            assert fixture_bytes > 128 << 20, 'large fixture does not exceed two 64MiB multipart parts'
+            tls = self.wal.overlap_certificate()
+            credentials = self.wal.session_credentials()
+            new_digest = hashlib.sha256(credentials['access'].encode()).hexdigest()
+            assert new_digest != self.initial_access_digest, 'rotation did not create a distinct valid principal'
+            wal = copy.copy(self.wal)
+            wal.namespace = SOURCE
+            wal.install_driver(pod)
+            name = 'j-large-overlap'
+            self.wal.control('slow-artifact-put')
+            with self.cleanup([('fixture-restore', lambda: self.wal.control(''))]):
+                definition = backup_smoke.definition(h, name)
+                definition['metadata']['namespace'] = SOURCE
+                h.apply(definition)
+                started = time.monotonic()
+                def transferring():
+                    samples.append(self.operational_sample(pod))
+                    control = self.wal.control()
+                    return control['active_transfers'] > 0 and control['transferred_bytes'] > 1 << 20
+                h.wait(transferring, 'sustained real multipart transfer larger than buffers', 600)
+                before = self.wal.control()
+                for ns in (SOURCE, TARGET):
+                    h.apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 's3-auth', 'namespace': ns}, 'stringData': credentials})
+                    h.apply({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'wal-minio-ca', 'namespace': ns}, 'data': {'ca.crt': tls['ca.crt']}})
+                h.apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'wal-minio-tls', 'namespace': STORE}, 'stringData': tls})
+                def projected():
+                    samples.append(self.operational_sample(pod))
+                    assert self.wal.control()['active_transfers'] > 0, 'old transfer drained before rotation was observed'
+                    return (h.projection_digest(SOURCE, pod, 'destination/accessKey') == new_digest and
+                            h.projection_digest(SOURCE, pod, 'destination/ca.crt') == hashlib.sha256(tls['ca.crt'].encode()).hexdigest())
+                h.wait(projected, 'complete new valid credential and overlapping CA snapshot during old transfer', 120)
+                # New-root-only TLS validation proves the served leaf really
+                # changed, not just that a ConfigMap or image label changed.
+                def new_leaf():
+                    result = h.commands.command('new-root-TLS-oracle', 'curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '3',
+                                '--cacert', self.wal.directory / 'new-ca.crt', self.wal.endpoint + '/minio/health/ready', timeout=5)
+                    return result.ok
+                h.wait(new_leaf, 'actual server TLS handshake trusted by new independent private root', 120)
+                assert self.wal.control()['active_transfers'] > 0, 'no sustained transfer at WAL callback admission'
+                backlog_before = int(self.sql(SOURCE, pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n LIKE '%.ready'"))
+                segment, latency = self.wal_during_transfer(pod, wal)
+                after = self.wal.control()
+                assert after['active_transfers'] > 0 and after['transferred_bytes'] > before['transferred_bytes'], 'WAL did not overlap sustained body progress'
+                assert after['principal_requests'].get(new_digest, 0) > 0, 'new operation did not use the new valid principal'
+                backlog_after = int(self.sql(SOURCE, pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n LIKE '%.ready'"))
+                samples.append(self.operational_sample(pod))
+                self.wal.control('')
+                def complete():
+                    samples.append(self.operational_sample(pod))
+                    b = json.loads(h.kube('get', 'backup', name, '-n', SOURCE, '-o', 'json'))
+                    assert b.get('status', {}).get('phase') != 'failed', 'old snapshot capture failed during VALID overlap'
+                    return b.get('status', {}).get('phase') == 'completed'
+                h.wait(complete, 'old operation snapshot drains to durable backup commit', 600)
+                b = json.loads(h.kube('get', 'backup', name, '-n', SOURCE, '-o', 'json'))
+                commit = json.loads(self.wal.s3('GET', 'smoke/v1/' + SOURCE_ID + '/backups/' + b['metadata']['uid'] + '/commit.json'))
+                stored = sum(a['stored_bytes'] for a in commit['artifacts'])
+                assert stored > 128 << 20, 'transferred bytes did not exceed combined multipart part size'
+                final = self.wal.control()
+                assert final['principal_requests'].get(self.initial_access_digest, 0) > after['principal_requests'].get(self.initial_access_digest, 0), 'old snapshot did not issue final durable publication after new projection'
+                assert not self.gate()['holders'], 'successful backup did not drain its source protection'
+                self.event('operational-transfer-resources', fixture_bytes=fixture_bytes, transferred_artifact_bytes=stored,
+                           capture_seconds=time.monotonic()-started, wal_callback_seconds=latency,
+                           backlog_before=backlog_before, backlog_after=backlog_after,
+                           maximum_observed_native_work_groups=max(s['native_work_groups'] for s in samples),
+                           manager_idle=idle_manager, samples=samples, snapshot_drainage=True,
+                           valid_distinct_principals=True, new_private_root_handshake=True,
+                           fixed_fault_RPO_claim=False)
+            self.destroy_source()
+            restore_started = time.monotonic()
+            state = self.start({'backupID': commit['backup_uid'], 'targetImmediate': True})
+            self.materialize(state)
+            # Require all large payload bytes after actual PostgreSQL recovery.
+            state['large_fixture'] = True
+            self.event('large-restore-product-resources', observation=self.operational_sample(state['pod'], namespace=TARGET))
+            self.finish(state, BASE, drop_present=True)
+            self.event('large-fixture-restore-timing', seconds=time.monotonic()-restore_started, raw_database_bytes=fixture_bytes)
+
+    def retain_initial_fixture(self, target):
+        h, wal = self.h, self.wal
+        directory = h.WORK / 'initial-v1'
+        directory.mkdir(mode=0o700)
+        keys = self.inventory('smoke/v1/' + SOURCE_ID + '/')
+        records, total = [], 0
+        for i, key in enumerate(keys):
+            payload, headers = directory / f'{i:05d}', directory / 'headers'
+            h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
+                  '--config', wal.directory / 'curl-private.conf', '--cacert', wal.directory / 'ca.crt',
+                  '--dump-header', headers, '--output', payload, wal.endpoint + '/test-bucket/' + key)
+            total += payload.stat().st_size
+            assert total <= 256 << 20, 'initial synthetic format fixture exceeds raw bound'
+            metadata = [line for line in headers.read_text().splitlines() if line.lower().startswith('x-amz-meta-')]
+            assert all(re.fullmatch(r'[A-Za-z0-9-]+: [A-Za-z0-9_./: -]+', line) for line in metadata), 'unsafe fixture metadata'
+            with payload.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            records.append({'key': key, 'file': payload.name, 'bytes': payload.stat().st_size,
+                            'sha256': digest, 'metadata': metadata})
+        manifest = {'schema': 1, 'repository_format': 'v1', 'repository_id': SOURCE_ID,
+                    'predecessor_release': None, 'predecessor_reason': 'No project release exists; pre-release I candidate, not N-to-N+1 qualification.',
+                    'producer': self.initial_candidate, 'tool_image': self.initial_candidate['images']['pg18'],
+                    'postgres_version': self.sql(SOURCE, self.primary(), 'SHOW server_version'),
+                    'target': target, 'expected_rows': [list(row) for row in BEFORE], 'differential_expected': self.differential_expected,
+                    'chain': [self.base['backup_uid'], self.d2['backup_uid']], 'objects': records}
+        atomic_json(directory / 'manifest.json', manifest)
+        archive = h.OUT / 'initial-v1-backup-wal.tar.gz'
+        with tarfile.open(archive, 'w:gz', compresslevel=1) as output:
+            output.add(directory / 'manifest.json', arcname='manifest.json')
+            for record in records:
+                output.add(directory / record['file'], arcname=record['file'])
+        assert archive.stat().st_size <= 64 << 20, 'retained fixture exceeds artifact bound'
+        with archive.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        atomic_json(h.OUT / 'initial-v1-fixture.json', {'archive': archive.name, 'sha256': digest,
+                    'bytes': archive.stat().st_size, 'objects': len(records), 'raw_bytes': total,
+                    'producer': self.initial_candidate, 'expected_rows': BEFORE, 'differential_expected': self.differential_expected,
+                    'target': target, 'previous_release': 'inapplicable: first release'})
+        return archive, manifest
+
+    def replay_initial_fixture(self, archive, manifest):
+        # Test-owned S3-only re-import, after the source namespace is gone. No
+        # live source writer/reader is bypassed and no production migration exists.
+        h, wal = self.h, self.wal
+        prefix = 'smoke/v1/' + SOURCE_ID + '/'
+        assert not self.gate()['holders'] and self.gate()['owner'] is None, 'cannot snapshot/reimport admitted work'
+        for key in self.inventory(prefix):
+            wal.s3('DELETE', key)
+        with tarfile.open(archive, 'r:gz') as source:
+            entries = source.getmembers()
+            assert json.loads(source.extractfile('manifest.json').read(1 << 20)) == manifest, 'retained fixture provenance changed'
+            assert {e.name for e in entries} == {'manifest.json', *(r['file'] for r in manifest['objects'])}, 'fixture members changed'
+            assert all(e.isfile() and e.size <= 128 << 20 for e in entries), 'unsafe or oversized fixture entry'
+            for record in manifest['objects']:
+                assert record['key'].startswith(prefix), 'fixture escaped its owned repository'
+                path = h.WORK / 'reimport-object'
+                with source.extractfile(record['file']) as incoming, path.open('wb') as output:
+                    shutil.copyfileobj(incoming, output, 65536)
+                with path.open('rb') as stream:
+                    assert hashlib.file_digest(stream, 'sha256').hexdigest() == record['sha256'], 'retained initial bytes changed'
+                assert path.stat().st_size == record['bytes']
+                headers = [value for item in record['metadata'] for value in ('--header', item)]
+                h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '30',
+                      '--config', wal.directory / 'curl-private.conf', '--cacert', wal.directory / 'ca.crt',
+                      '-X', 'PUT', '--upload-file', path, *headers, wal.endpoint + '/test-bucket/' + record['key'])
+                path.unlink()
+        assert self.inventory(prefix) == sorted(r['key'] for r in manifest['objects']), 'fixture re-import is incomplete'
+
+    def case_operational_update_fixtures(self):
+        h = self.h
+        with self.m.case('operational-update-fixtures'):
+            old = self.initial_candidate['images']
+            pod = self.primary()
+            old_pod = json.loads(h.kube('get', 'pod', pod, '-n', SOURCE, '-o', 'json'))
+            assert next(c['image'] for c in old_pod['spec']['initContainers'] if c['name'] == 'cnpg-backup') == old['pg18'], 'backup producer was not old candidate'
+            self.archive()
+            self.acknowledge(2, 'before')
+            point = self.sql(SOURCE, pod, "SELECT pg_create_restore_point('j_before_update')")
+            self.acknowledge(3, 'target')
+            self.acknowledge(4, 'after')
+            remote = self.archive()
+            assert lsn(point) > lsn(self.d2['bundled_wal_end_lsn']), 'old-byte restore does not require post-backup WAL'
+            target = {'backupID': self.d2['backup_uid'], 'targetName': 'j_before_update'}
+            archive, manifest = self.retain_initial_fixture(target)
+            updated = copy.deepcopy(self.install)
+            for obj in updated['items']:
+                if obj['kind'] == 'Deployment':
+                    obj['spec']['template']['spec']['containers'][0]['image'] = self.args.manager_image
+                if obj['kind'] == 'ConfigMap':
+                    conf = json.loads(obj['data']['config.json'])
+                    conf['image'] = self.args.data_image
+                    obj['data']['config.json'] = json.dumps(conf)
+            h.apply(updated)
+            h.kube('rollout', 'status', '-n', 'cnpg-system', 'deployment/cnpg-backup', '--timeout=180s')
+            def rolled():
+                documents = json.loads(h.kube('get', 'pods', '-n', SOURCE, '-l', 'cnpg.io/cluster=database', '-o', 'json'))['items']
+                return (len(documents) == 2 and old_pod['metadata']['uid'] not in {p['metadata']['uid'] for p in documents} and
+                        all(next((c['image'] for c in p['spec']['initContainers'] if c['name'] == 'cnpg-backup'), '') == self.args.data_image and
+                            p['status'].get('containerStatuses') and all(s.get('ready') for s in p['status']['containerStatuses'])
+                            for p in documents))
+            h.wait(rolled, 'actual old-to-new plugin image Pod replacement after manager update', 600)
+            self.archive()  # New writer must still durably archive; no differential fallback after restart.
+            self.event('actual-plugin-update', before=old, after={'manager': self.args.manager_image, 'pg18': self.args.data_image},
+                       old_backup_ids=manifest['chain'], old_remote_wal=remote, first_release_predecessor='inapplicable')
+            self.destroy_source()
+            self.replay_initial_fixture(archive, manifest)
+            started = time.monotonic()
+            state = self.start(target)
+            state['differential_expected'] = manifest['differential_expected']
+            plan = self.materialize(state)
+            assert [c['backup_uid'] for c in plan['plan']['chain']] == manifest['chain'], 'new plugin selected different pre-update bytes'
+            assert plan['plan']['required_archive'], 'upgrade fixture did not replay old remote WAL'
+            self.finish(state, BEFORE, drop_present=True)
+            self.event('retained-initial-format-recovered-SQL', archive=archive.name, restore_seconds=time.monotonic()-started,
+                       full_differential_and_WAL=True, previous_release='inapplicable: first release')
+
     def case_retention_runtime(self):
         import datetime
         h = self.h
@@ -798,11 +1063,9 @@ class Campaign:
         repo['metadata'] = {'name': name, 'namespace': TARGET}
         repo['spec']['repositoryID'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'campaign/' + name))
         h.apply(repo)
-        c = copy.deepcopy(self.cluster)
-        c['metadata'] = {'name': name, 'namespace': TARGET}
-        c['spec']['bootstrap'] = {'recovery': {'source': 'origin', 'recoveryTarget': target}}
-        c['spec']['externalClusters'] = [{'name': 'origin', 'plugin': {'name': PLUGIN, 'parameters': {'repository': 'source'}}}]
-        c['spec']['plugins'][0]['parameters']['repository'] = name
+        # Same published consumer rendering path as docs/operations.md. Fault
+        # barriers are test-only admission arrangements, not hidden restore input.
+        c = h.renderer.recovery_cluster(self.cluster, TARGET, name, 'source', name, target)
         h.apply(c)
         def started():
             return any(any(x['name'] == 'full-recovery' and x.get('state', {}).get('running') for x in p.get('status', {}).get('containerStatuses', [])) for p in self.pods(name))
@@ -924,6 +1187,8 @@ class Campaign:
                        source_timeline=state['plan']['plan']['target']['timeline'], new_timeline=timeline,
                        history=history, history_sha256=hashlib.sha256(history.encode()).hexdigest(),
                        endpoint=state['replay_endpoint'], admitted_frontier=state['same_segment_floor'])
+        if state.get('large_fixture'):
+            assert self.sql(TARGET, primary, "SELECT count(*)||':'||sum(octet_length(payload)) FROM j_load") == '40000:163840000', 'large pre-backup bytes unreadable after recovery'
         if 'differential_expected' in state:
             expected = state['differential_expected']
             observed = self.sql(TARGET, primary, "SELECT count(*)||':'||md5(string_agg(id::text||':'||value,',' ORDER BY id)) FROM h_data")

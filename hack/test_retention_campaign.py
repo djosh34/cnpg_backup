@@ -41,6 +41,29 @@ class RetentionCampaignTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             samples(text.replace('cluster="c"', 'cluster="c",operation_id="unbounded"'))
 
+    def test_J_operational_metrics_coexist_with_backup_failure_scrapes(self):
+        # Both b408 smoke runs and five differential negatives stopped in the
+        # shared parser after J added these existing manager-owned series.
+        retention = ('cnpg_backup_retention_workspace_available',
+                     'cnpg_backup_retention_checked_timestamp_seconds')
+        restore = ('cnpg_backup_restore_observation_known', 'cnpg_backup_restore_active',
+                   'cnpg_backup_restore_uncertain', 'cnpg_backup_restore_lifetime_release_pending')
+        text = 'cnpg_backup_failures_total{repository_id="r",namespace="n",cluster="c",backup_type="full"} 1\n'
+        for name in retention:
+            text += name + '{repository_id="r",namespace="n",cluster="c"} 1\n'
+        for name in restore:
+            text += name + '{namespace="n",cluster="c"} 1\n'
+        parsed = samples(text)
+        self.assertEqual(len(parsed), 7)
+        self.assertEqual(parsed[('cnpg_backup_failures_total', 'r', 'n', 'c', 'full')], 1)
+        for name in restore:
+            self.assertEqual(parsed[(name, 'n', 'c')], 1)
+        for damaged in (text.replace('cluster="c"', 'cluster="c",operation_id="unbounded"'),
+                        text.replace('cnpg_backup_restore_active', 'cnpg_backup_unknown'),
+                        text + text):
+            with self.assertRaises(AssertionError):
+                samples(damaged)
+
     def test_periodic_accounting_does_not_scan_unrelated_host_loop_devices(self):
         # Observed local I failure: all du/cgroup/df output arrived, then the
         # global losetup enumeration exhausted the10s sample budget. Actual

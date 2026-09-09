@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository-owned G/H/I candidate publication, never version/release publication."""
+"""Repository-owned premerge candidate publication, never release publication."""
 import argparse
 import json
 import os
@@ -11,11 +11,16 @@ REPO = 'djosh34/cnpg_backup'
 BRANCH = 'refs/heads/implementation/pr-g'
 WORKFLOW = REPO + '/.github/workflows/pr-g-candidate.yml@' + BRANCH
 OUT = Path('artifacts/candidate')
+SUBJECT_RECORDS = {
+    BRANCH: '.github/ci-repair-subject.json',
+    **{'refs/heads/implementation/pr-' + letter: '.github/pr-' + letter + '-subject.json'
+       for letter in ('h', 'i', 'j')},
+}
 
 
 def trust(env, head, origin):
     if (env.get('GITHUB_REPOSITORY') != REPO or env.get('GITHUB_EVENT_NAME') != 'push'
-            or env.get('GITHUB_REF') not in (BRANCH, 'refs/heads/implementation/pr-h', 'refs/heads/implementation/pr-i')
+            or env.get('GITHUB_REF') not in SUBJECT_RECORDS
             or env.get('GITHUB_WORKFLOW_REF') != REPO + '/.github/workflows/pr-g-candidate.yml@' + env.get('GITHUB_REF', '')
             or not re.fullmatch('[0-9a-f]{40}', head) or env.get('GITHUB_SHA') != head
             or env.get('GITHUB_WORKFLOW_SHA') != head
@@ -41,7 +46,9 @@ def require_absent(result):
 
 def reuse_subject(head, branch=BRANCH):
     """Reuse only an explicitly recorded candidate with unchanged build inputs."""
-    record = Path('.github/pr-i-subject.json') if branch == 'refs/heads/implementation/pr-i' else (Path('.github/pr-h-subject.json') if branch == 'refs/heads/implementation/pr-h' else Path('.github/ci-repair-subject.json'))
+    if branch not in SUBJECT_RECORDS:
+        raise RuntimeError('untrusted candidate branch')
+    record = Path(SUBJECT_RECORDS[branch])
     if not record.exists():
         return None
     subject = json.loads(record.read_text())
@@ -52,7 +59,9 @@ def reuse_subject(head, branch=BRANCH):
     # Permit only known non-product changes. Unknown/new build inputs take the
     # existing audited publication path, rather than assuming a partial closure.
     harness = {'hack/test', 'hack/backup_smoke.py', 'hack/wal_smoke.py',
+               'hack/backup_metrics_smoke.py',
                'hack/premerge_candidate.py', 'hack/campaign_ci.py',
+               'hack/security.py',  # Post-build scanner only; not native metadata/build inputs.
                'hack/campaign_fixture.py', 'hack/campaign_plan.py',
                'hack/campaign_process.py', 'hack/campaign_trust.py',
                'hack/recovery_campaign.py', 'hack/recovery_cases.py'}
@@ -112,6 +121,7 @@ def main():
         (OUT / 'candidate.json').write_text(json.dumps(record, indent=2) + '\n')
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write(flavor + '=' + ref + '\n')
+            output.write(flavor + '_digest=' + digest + '\n')
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
         summary.write('Unqualified premerge candidate `' + sha + '` (no version tags):\n\n')
         for image in record['images'].values():

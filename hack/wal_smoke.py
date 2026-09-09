@@ -201,6 +201,54 @@ class WALFixture:
         return json.loads(self.h.run(*args, self.endpoint + '/fixture-control' +
                                     ('?mode=' + mode if mode is not None else '') + ('&name=' + name if name else '')))
 
+    def overlap_certificate(self):
+        """A new private root/leaf with an old-root cross-sign: both OLD running
+        snapshots and NEW snapshots can open valid connections during drainage.
+        This is not the ineffective old-root leaf-only rotation fixture.
+        """
+        h, d = self.h, self.directory
+        h.run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',
+              '-subj', '/CN=J new S3 private CA', '-addext', 'basicConstraints=critical,CA:TRUE',
+              '-keyout', d / 'new-ca.key', '-out', d / 'new-ca.crt')
+        h.run('openssl', 'x509', '-x509toreq', '-in', d / 'new-ca.crt', '-signkey', d / 'new-ca.key', '-out', d / 'new-ca.csr')
+        (d / 'ca-extensions').write_text('basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n')
+        h.run('openssl', 'x509', '-req', '-in', d / 'new-ca.csr', '-CA', d / 'ca.crt', '-CAkey', d / 'ca.key',
+              '-CAcreateserial', '-days', '2', '-extfile', d / 'ca-extensions', '-out', d / 'cross-ca.crt')
+        h.run('openssl', 'req', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=minio',
+              '-keyout', d / 'new-private.key', '-out', d / 'new-server.csr')
+        h.run('openssl', 'x509', '-req', '-in', d / 'new-server.csr', '-CA', d / 'new-ca.crt', '-CAkey', d / 'new-ca.key',
+              '-CAcreateserial', '-days', '2', '-extfile', d / 'extensions', '-out', d / 'new-public.crt')
+        for root in ('ca.crt', 'new-ca.crt'):
+            h.run('openssl', 'verify', '-CAfile', d / root, '-untrusted', d / 'cross-ca.crt', d / 'new-public.crt')
+        return {'public.crt': (d / 'new-public.crt').read_text() + (d / 'cross-ca.crt').read_text(),
+                'private.key': (d / 'new-private.key').read_text(), 'ca.crt': (d / 'ca.crt').read_text() + (d / 'new-ca.crt').read_text()}
+
+    def session_credentials(self):
+        """Mint overlapping VALID MinIO STS sessions using curl's maintained
+        signer. Root credentials and STS response stay in private files only.
+        This does not rotate MinIO root/environment values by restarting it.
+        """
+        import xml.etree.ElementTree as ET
+        d = self.directory
+        config, output = d / 'sts-private.conf', d / 'sts-private.xml'
+        config.write_text((d / 'curl-private.conf').read_text().replace('us-east-1:s3', 'us-east-1:sts'))
+        config.chmod(0o600)
+        output.touch(mode=0o600)
+        try:
+            self.h.run('curl', '-q', '--silent', '--show-error', '--fail', '--max-time', '15',
+                       '--config', config, '--cacert', d / 'ca.crt', '--output', output,
+                       '--data', 'Action=AssumeRole&Version=2011-06-15&DurationSeconds=3600', self.endpoint + '/')
+            if output.stat().st_size > 65536:
+                raise RuntimeError('unbounded STS fixture response')
+            root = ET.fromstring(output.read_bytes())
+            values = {element.tag.rsplit('}', 1)[-1]: element.text for element in root.iter()}
+            if any(not values.get(k) for k in ('AccessKeyId', 'SecretAccessKey', 'SessionToken')):
+                raise RuntimeError('MinIO did not create a valid STS session')
+            return {'access': values['AccessKeyId'], 'secret': values['SecretAccessKey'], 'token': values['SessionToken']}
+        finally:
+            config.unlink(missing_ok=True)
+            output.unlink(missing_ok=True)
+
     def metrics(self, pod):
         h = self.h
         if self.metrics_forward is None:

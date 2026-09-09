@@ -30,6 +30,7 @@ type backupMetrics struct {
 	mu              sync.Mutex
 	series          map[backupLabels]backupSeries
 	retentionSeries map[backupLabels]retentionSeries
+	restoreSeries   map[restoreLabels]restoreSeries
 }
 
 func newBackupMetrics() *backupMetrics {
@@ -96,6 +97,7 @@ func (m *backupMetrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	m.writeRetention(w)
+	m.writeRestore(w)
 	values := m.snapshot()
 	labels := make([]backupLabels, 0, len(values))
 	for k := range values {

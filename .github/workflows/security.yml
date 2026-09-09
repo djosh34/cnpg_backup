@@ -1,0 +1,121 @@
+name: exact-candidate security
+on:
+  workflow_dispatch:
+    inputs:
+      subject_sha:
+        description: Exact existing product revision (never rebuilt)
+        type: string
+        required: true
+      manager_image:
+        description: Canonical manager sha256 digest reference
+        type: string
+        required: true
+      data_image:
+        description: Canonical PG18 sha256 digest reference
+        type: string
+        required: true
+      trusted_ref:
+        type: choice
+        options: [main, implementation/pr-j, implementation/pr-i]
+        default: main
+  workflow_call:
+    inputs:
+      subject_sha:
+        type: string
+        required: true
+      manager_image:
+        type: string
+        required: true
+      data_image:
+        type: string
+        required: true
+      trusted_ref:
+        type: string
+        default: main
+permissions:
+  contents: read
+concurrency:
+  group: security-${{ inputs.subject_sha }}-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  scan:
+    if: github.repository == 'djosh34/cnpg_backup' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/implementation/pr-j' || github.ref == 'refs/heads/implementation/pr-i')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
+      SUBJECT_SHA: ${{ inputs.subject_sha }}
+      MANAGER_IMAGE: ${{ inputs.manager_image }}
+      DATA_IMAGE: ${{ inputs.data_image }}
+      TRUSTED_REF: ${{ inputs.trusted_ref }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.3'
+      - name: Bounded offline regressions before downloading scanners
+        run: ./hack/test harness test_security test_premerge_candidate
+      - name: Install checksum-pinned hosted tooling, not runtime dependencies
+        run: |
+          python3 hack/bootstrap.py --go-only
+          export PATH="$PWD/.work/tools/go/bin:$PATH"
+          python3 hack/security.py tools
+      - name: Ephemeral read-only registry authentication
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$DOCKER_CONFIG"
+          chmod 700 "$DOCKER_CONFIG"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Actual binary and both final images; current DB; source bundles; fail closed
+        run: |
+          export PATH="$PWD/.work/tools/go/bin:$PATH"
+          python3 hack/security.py scan
+      - name: Verify scanned checksums and selected digest binding
+        run: |
+          cd artifacts/security
+          sha256sum --check SHA256SUMS
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          s = json.loads(Path('subject.json').read_text())
+          assert json.loads(Path('gate.json').read_text())['passed'] is True
+          assert s['revision'] == os.environ['SUBJECT_SHA']
+          assert s['images'] == {'manager': os.environ['MANAGER_IMAGE'], 'pg18': os.environ['DATA_IMAGE']}
+          PY
+      - name: Remove ephemeral credentials independently of scan/collection success
+        if: always()
+        run: rm -rf -- "$DOCKER_CONFIG"
+      - name: Bound publishable evidence (raw secret matches stay private)
+        id: evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          files = list(Path('artifacts/security').rglob('*'))
+          if not files or any(p.is_symlink() for p in files):
+              raise SystemExit('missing/unsafe evidence')
+          if sum(p.stat().st_size for p in files if p.is_file()) > 768 << 20:
+              raise SystemExit('security evidence exceeds 768MiB')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write('safe=true\n')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always() && steps.evidence.outputs.safe == 'true'
+        with:
+          name: security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/security/
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error

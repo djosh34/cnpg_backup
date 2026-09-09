@@ -175,43 +175,32 @@ Each PR includes its own documentation and tests. Run the [local-first feedback 
 **Depends on:** PR H; approved retention semantics/coordination.
 **Not included:** reference-counting chunk GC or remote synthetic full compaction.
 
-## PR J — Complete operational controls and security packaging
+## PR J — Finish existing packaging and scans
 
-**Goal:** the supported deployment can be operated and patched without hidden dependencies or excessive resource use.
+> **MINIMAL RELEASE CLOSEOUT / NOT NEW FEATURE WORK. A lot smaller than the original scope; MUST NOT OVERENGINEER.** [Owner resolution](https://github.com/djosh34/cnpg_backup/issues/24#issuecomment-5598040876) supersedes the earlier checklist and signing gates. [Existing PR #40](https://github.com/djosh34/cnpg_backup/pull/40).
 
-**Requirements**
-- Complete status/metrics/alerts for archive lag/failure, backup freshness, restore, retention and workspace pressure; bounded metric cardinality. Full/differential last-success timestamps and failed-backup counters already ship in PR F/H; verify per-type stale/never-successful backup alerts and schedule-aware thresholds. Uncertain/crashed restores keep deletion paused with Warning events; use a small conservative mechanism, not a general lease-recovery framework.
-- Install/upgrade manifests, examples, resource controls, credential/CA rotation, TLS/RBAC/network hardening and backup/restore runbooks.
-- SBOM, linked-Go and final-image vulnerability checks, Checkmarx integration where available, artifact signing/provenance and dependency-update procedure.
-- Retain old backup fixtures for format/version regression testing; explain native PG libraries in the dependency exception. Complete CI permissions/timeouts/artifact controls and reusable candidate/previous-release image-digest selection per testing.md; test workflows use no model/API credentials.
+**DONE — do not repeat:** merged G crashed-restore protection and I retention safety; I full [34306264258](https://github.com/djosh34/cnpg_backup/actions/runs/34306264258) passed 35 families/57 branches. J operations/runbooks/alerts are implemented; actual b408 run3 passed BOTH operational families: resource/WAL-under-transfer measurements, valid STS/CA rotation, rolling update and retained F/D/WAL SQL recovery, with conclusive cleanup. Initial-format fixtures exist. Reuse applicable evidence, not old-image qualification for changed bytes.
 
-**Acceptance**
-- Idle/active/large-backup measurements satisfy agreed resource limits, with WAL archive latency checked under transfer load.
-- Secret/CA rotation and rolling plugin upgrade do not produce lost acknowledgments or unreadable old backups.
-- Clean-install and fresh-cluster recovery follow published manifests/runbooks with no hidden developer machine state.
-- Scanner output and final image contents are reviewable; secrets do not appear in logs/metadata/metrics.
+**Only remaining:** narrowly review existing scanner-marker/exact-image-reuse fix (7ca..f221); remove signing-only workflow steps/gates/permissions without rebuilding b408; obtain actual same-digest govulncheck/Trivy/SBOM results and dispositions. Collect existing full [34320551460](https://github.com/djosh34/cnpg_backup/actions/runs/34320551460) and applicable PR checks; resolve observed failures, then parent reviews/merges J. Prior scan/smoke failures remain failed until properly resolved, not waived. No new J operational implementation or reruns solely for already-passed gates. PR acceptance is not final exact-artifact qualification.
 
-**Depends on:** PR I; approved release and security requirements.
-**Not included:** a custom observability platform or a guarantee of permanently zero scanner findings.
+**Non-goals:** G/I reimplementation, new frameworks/abstractions, extra observability, optional assertions, new test matrices, blanket CI restarts, signing/attestation, Checkmarx. **Checkmarx UNAVAILABLE / N-A: no scan, no purchase gate.** Preserve reviewed good code; no deletion churn to shrink wording.
 
-## PR K — Certify failure recovery and production readiness
+**Depends on:** merged I. Parent alone owns the bounded finish sequence; no new design/approval phase.
 
-**Goal:** turn the implemented feature set into evidence-backed supported behavior.
+## PR K — Package and publish the release
 
-**Requirements**
-- End-to-end crash/fault matrix, prolonged archive outage/backlog, multi-instance failover/timelines, retention/restore races and supported filesystem layouts.
-- Real MinIO SigV2/SigV4/private CA integration. Complete manual two-hour seeded recovery campaign, production-module DST, long Go fuzzing and exact-artifact release qualification using the common harness.
-- N+1 reads N backup/WAL fixtures, resource/restore benchmarks, operational drills and published exact compatibility matrix. For the first release only, previous-release upgrade evidence is explicitly inapplicable; establish initial-format fixtures for the next release and keep all first-release recovery scenarios mandatory.
-- Review unresolved security findings, known limitations and unsupported topologies; final approval is evidence-based.
+> **MINIMAL RELEASE CLOSEOUT / NOT NEW FEATURE WORK. A lot smaller than the original scope; MUST NOT OVERENGINEER.** [Owner resolution](https://github.com/djosh34/cnpg_backup/issues/25#issuecomment-5598041120).
 
-**Acceptance**
-- All supported full/differential/PITR and retention scenarios pass with recovered SQL assertions, not only successful process exits.
-- No injected crash boundary produces false archive acknowledgment, committed-but-incomplete backup or deletion of an active dependency.
-- MinIO evidence linked to one subject record (distinct harness revision when needed) and actual image digests, seeds/event traces, scenario counts, resource measurements, restore timings, alert/runbook drills and upgrade results are attached to the release checklist. Replay a saved failure; preserve its minimized regression.
-- Production release is blocked on failing, skipped or unexecuted mandatory scenarios. A 120-minute timer or green rerun that hides a flake is not qualification. Use the same reusable workflow to test new candidates and already released image digests; automatically publish versioned releases and qualified images without another approval ceremony or production deployment. Original project work remains all rights reserved; preserve third-party licenses/notices.
+**DONE / reusable:** G–I implementation and actual I 35/57 evidence; J's actual operational results and retained hashed initial-format fixtures above. **First-release predecessor N-A**, not another upgrade campaign. Historical failures remain disclosed. No new artifact/image signing, Sigstore/OIDC attestations or signature verification; historical signatures are not gates.
 
-**Depends on:** PR J; approved release gates.
-**Not included:** a general-purpose chaos framework, unbounded or non-diagnostic retry loops or calling real distributed execution fully deterministic.
+**Only remaining:**
+1. After J acceptance, collect evidence against the exact candidate bytes. Use the existing harness for **only actually missing mandatory evidence**, including the existing 20-minute total fuzz requirement if not evidenced; do not restart a matrix for a documentation/signing-only change. Keep subject/harness identity, SQL/no-data-loss/ownership assertions, security dispositions and resource evidence. Earlier-image results cannot qualify changed bytes; partial runs or a timer cannot establish qualification.
+2. Assemble persistent v0.1.0 assets: existing binary, both portable OCI archives, checksums, digest-pinned manifests/runbooks, notices/corresponding sources, actual SBOMs, compatibility/qualification summary and retained synthetic fixtures/regressions. Existing recovery aggregates deliberately say `release_qualified=false`; final closeout accounts for all applicable evidence, not a flag flip or a new qualification framework.
+3. Parent publishes the GitHub versioned release and GHCR version tags on those **same tested digests**, without rebuild, tag overwrite, signing or production deployment. Any necessary release glue is limited to assembling/validating/publishing existing outputs; no product feature work.
+
+**Non-goals:** G/I reimplementation, new frameworks/abstractions, extra observability, optional assertions, new test matrices, blanket CI restarts, signing/attestation, Checkmarx. Checkmarx remains **UNAVAILABLE / N-A; no scan or purchase gate**. Failing/unexecuted applicable mandatory evidence still blocks release; all-rights-reserved and third-party obligations remain.
+
+**Depends on:** J acceptance; unchanged safety/security/exact-byte gates except the explicitly removed signing requirement.
 
 ## Implementation graph
 
@@ -226,8 +215,8 @@ flowchart TD
   F --> G[Full restore and PITR]
   G --> H[Native differentials]
   H --> I[Safe retention]
-  I --> J[Operations and security packaging]
-  J --> K[Production certification]
+  I --> J[Finish existing packaging and scans]
+  J --> K[Release closeout and publication]
 ```
 
 Decision dependencies also exist in GitHub's native blocker relationships; this diagram shows implementation ordering only. PR B/C and PR D are the main early parallel tracks. Test work is continuous across all tracks.

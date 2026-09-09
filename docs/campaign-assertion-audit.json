@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "scope": "Every assert and wait/barrier in recovery_cases.py, recovery_campaign.py, campaign_fixture.py and the consumed WALFixture setup methods; registry maps all31+2 cases. Go actors and PostgreSQL tools remain unchanged independent observers, consumed through these assertions. Required command status and input/resource/cleanup boundaries below are additional fail-closed harness contracts; optional forensics are explicitly DIAGNOSTICS, not assertions.",
+  "scope": "Every assert and wait/barrier in recovery_cases.py, recovery_campaign.py, campaign_fixture.py and the consumed WALFixture setup methods; registry maps 35 mandatory +2 seeded cases including J operational runtime. Go actors and PostgreSQL tools remain unchanged independent observers, consumed through these assertions. Required command status and input/resource/cleanup boundaries below are additional fail-closed harness contracts; optional forensics are explicitly DIAGNOSTICS, not assertions.",
   "runtime_boundaries": [
     {
       "function": "Campaign.collect_target_logs/Fixture.collect_logs/collect_events/collect/Manifest.collect_diagnostics/run_plan disposal+retain/main collect+clean",
@@ -41,6 +41,11 @@
       "function": "load_bundle/run_plan/make_plan/validate_results",
       "category": "safety-invariant",
       "requirement": "Canonical frozen subject, exact unchanged bundle/source/runtime/registry, all31+2 completed, no failures/retention/leaks/missing or mismatched attempts. Diagnostic or partial scope is never full fresh qualification."
+    },
+    {
+      "function": "Fixture.product_resources/projection_digest/resource_values; WALFixture.session_credentials/overlap_certificate",
+      "category": "fixture-precondition",
+      "requirement": "Exact original owned CRI PID, actual kernel RSS/cgroup/finite-filesystem evidence and no fabricated zeros; private MinIO STS sessions and cross-signed independent CA pair are concrete rotation inputs, using maintained curl/OpenSSL. Secret response/input files stay private; no raw credential values enter command evidence."
     }
   ],
   "reviewed_dispositions": [
@@ -2492,6 +2497,416 @@
       "requirement": "PR I/design \u00a74/6: actual runtime retention preserves F+D2 and remote SQL recovery, permanent D1 exclusion, and nonexpiring source protection through replay/manager or guard crash; exact immutable actor bytes and native post-bundle target are prerequisites.",
       "temporal_semantics": "Observed actual prerequisite before assertion; explicit test planner cutoff does not alter gate clocks, expire holds or rewrite backup metadata. Required Warning/holder/SQL evidence is not optional forensic collection.",
       "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "setup",
+      "expression": "'revision=' + self.initial_candidate['revision'] + ' ' in version",
+      "id": "1532244428faa3d8",
+      "category": "fixture-precondition",
+      "requirement": "PR J update fixture precondition: verify immutable old producer binary revision and distinct data image; a label-only restart cannot count as plugin upgrade.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "setup",
+      "expression": "initial_images['pg18'] != self.args.data_image",
+      "id": "8181f6dd7b9a6a48",
+      "category": "fixture-precondition",
+      "requirement": "PR J update fixture precondition: verify immutable old producer binary revision and distinct data image; a label-only restart cannot count as plugin upgrade.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "operational_sample",
+      "expression": "observed['go_rss_bytes'] < (128 if idle else 256) << 20",
+      "id": "a4a3e7d978170890",
+      "category": "safety-invariant",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "operational_sample",
+      "expression": "observed['go_hwm_bytes'] < 256 << 20",
+      "id": "ba627f55e47f4247",
+      "category": "safety-invariant",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "operational_sample",
+      "expression": "observed['cgroup_peak_bytes'] <= min(3 << 30, observed['cgroup_limit_bytes'])",
+      "id": "6b82b261ce0bcda8",
+      "category": "safety-invariant",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "operational_sample",
+      "expression": "observed['oom'] == observed['oom_kill'] == 0",
+      "id": "90f9038a272d48d1",
+      "category": "safety-invariant",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "operational_sample",
+      "expression": "observed['native_work_groups'] <= 1",
+      "id": "f338cc9c90f0903a",
+      "category": "safety-invariant",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "operational_sample",
+      "expression": "0 < observed['workspace_capacity_bytes'] <= 8 << 30",
+      "id": "b8c921d325eb3a45",
+      "category": "safety-invariant",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "idle_manager['go_rss_bytes'] < 128 << 20 and idle_manager['oom_kill'] == 0",
+      "id": "62533edf9d06d317",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "fixture_bytes > 128 << 20",
+      "id": "6e2fb45fd68a55c9",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "new_digest != self.initial_access_digest",
+      "id": "00a27db777435dfb",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "h.wait(transferring, 'sustained real multipart transfer larger than buffers', 600)",
+      "id": "3188e481c97218ea",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "projected",
+      "expression": "self.wal.control()['active_transfers'] > 0",
+      "id": "3874a4f4e67d8bfe",
+      "category": "safety-invariant",
+      "requirement": "PR J rotation: new complete Secret/CA projection must arrive while the OLD operation remains in actual transfer, not after work finishes.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "h.wait(projected, 'complete new valid credential and overlapping CA snapshot during old transfer', 120)",
+      "id": "b62a8ece0d9f04c1",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "h.wait(new_leaf, 'actual server TLS handshake trusted by new independent private root', 120)",
+      "id": "c6fb1c472077e204",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "self.wal.control()['active_transfers'] > 0",
+      "id": "be637edb032b9e90",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "after['active_transfers'] > 0 and after['transferred_bytes'] > before['transferred_bytes']",
+      "id": "a7d516d760b0f9e8",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "after['principal_requests'].get(new_digest, 0) > 0",
+      "id": "c9cb294ae0a6c1c2",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "complete",
+      "expression": "b.get('status', {}).get('phase') != 'failed'",
+      "id": "8d3c18617a642376",
+      "category": "safety-invariant",
+      "requirement": "PR J rotation: OLD credential/trust snapshot must complete durably after the new snapshot is projected; any failed CNPG invocation fails the overlap case.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "h.wait(complete, 'old operation snapshot drains to durable backup commit', 600)",
+      "id": "33824aa552d00dc6",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "stored > 128 << 20",
+      "id": "ef8aa453cbe7c7ba",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "final['principal_requests'].get(self.initial_access_digest, 0) > after['principal_requests'].get(self.initial_access_digest, 0)",
+      "id": "8ff24c7f18cbc2bf",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_rotation_resources",
+      "expression": "not self.gate()['holders']",
+      "id": "a414f2f63e08c95a",
+      "category": "safety-invariant",
+      "requirement": "PR J/release-policy: actual >128MiB fixture and sustained body transfer, old/new valid credentials and independent private-root TLS, concurrent durable WAL and identical retry, old snapshot drains to commit and releases its hold; actual RSS/cgroup/workspace evidence, then large SQL recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retain_initial_fixture",
+      "expression": "total <= 256 << 20",
+      "id": "afe45f09b19a846b",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixtures: bounded synthetic original full/differential/WAL objects retain exact bytes, integrity metadata, hashes, old tool/image provenance and expected SQL; no credentials in fixture assets.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retain_initial_fixture",
+      "expression": "all((re.fullmatch('[A-Za-z0-9-]+: [A-Za-z0-9_./: -]+', line) for line in metadata))",
+      "id": "4710addba40b9f25",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixtures: bounded synthetic original full/differential/WAL objects retain exact bytes, integrity metadata, hashes, old tool/image provenance and expected SQL; no credentials in fixture assets.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "retain_initial_fixture",
+      "expression": "archive.stat().st_size <= 64 << 20",
+      "id": "83ac081f5b2b43bf",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixtures: bounded synthetic original full/differential/WAL objects retain exact bytes, integrity metadata, hashes, old tool/image provenance and expected SQL; no credentials in fixture assets.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "not self.gate()['holders'] and self.gate()['owner'] is None",
+      "id": "77b0c7141ad1c5f0",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "json.loads(source.extractfile('manifest.json').read(1 << 20)) == manifest",
+      "id": "db868627b8cdb491",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "{e.name for e in entries} == {'manifest.json', *(r['file'] for r in manifest['objects'])}",
+      "id": "f7b933f00d32b5af",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "all((e.isfile() and e.size <= 128 << 20 for e in entries))",
+      "id": "ccc13edb487f73b0",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "record['key'].startswith(prefix)",
+      "id": "3c97d8ad495e4d9f",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "hashlib.file_digest(stream, 'sha256').hexdigest() == record['sha256']",
+      "id": "383f7ea3b7b832a4",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "path.stat().st_size == record['bytes']",
+      "id": "eace990597e7b37f",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "replay_initial_fixture",
+      "expression": "self.inventory(prefix) == sorted((r['key'] for r in manifest['objects']))",
+      "id": "1b1fb1cb3707275a",
+      "category": "fixture-precondition",
+      "requirement": "PR J initial v1 fixture replay: only owned source repository after source loss and drained protection; exact member types/sizes/metadata/hashes and complete re-import before real current-image fresh recovery.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "fixture"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_update_fixtures",
+      "expression": "next((c['image'] for c in old_pod['spec']['initContainers'] if c['name'] == 'cnpg-backup')) == old['pg18']",
+      "id": "6a0f480301496533",
+      "category": "safety-invariant",
+      "requirement": "PR J update: actual distinct pre-release I producer versus combined J reader images and observed Pod replacement; require old F+D2 chain, remote pre-update WAL and SQL before/after target. Previous project release remains N/A.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_update_fixtures",
+      "expression": "lsn(point) > lsn(self.d2['bundled_wal_end_lsn'])",
+      "id": "3eca418cb6dae28f",
+      "category": "safety-invariant",
+      "requirement": "PR J update: actual distinct pre-release I producer versus combined J reader images and observed Pod replacement; require old F+D2 chain, remote pre-update WAL and SQL before/after target. Previous project release remains N/A.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_update_fixtures",
+      "expression": "h.wait(rolled, 'actual old-to-new plugin image Pod replacement after manager update', 600)",
+      "id": "dbed559b19489161",
+      "category": "safety-invariant",
+      "requirement": "PR J update: actual distinct pre-release I producer versus combined J reader images and observed Pod replacement; require old F+D2 chain, remote pre-update WAL and SQL before/after target. Previous project release remains N/A.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_update_fixtures",
+      "expression": "[c['backup_uid'] for c in plan['plan']['chain']] == manifest['chain']",
+      "id": "4a74ce4e4c0f3348",
+      "category": "safety-invariant",
+      "requirement": "PR J update: actual distinct pre-release I producer versus combined J reader images and observed Pod replacement; require old F+D2 chain, remote pre-update WAL and SQL before/after target. Previous project release remains N/A.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "case_operational_update_fixtures",
+      "expression": "plan['plan']['required_archive']",
+      "id": "5733e59cd5bc86c3",
+      "category": "safety-invariant",
+      "requirement": "PR J update: actual distinct pre-release I producer versus combined J reader images and observed Pod replacement; require old F+D2 chain, remote pre-update WAL and SQL before/after target. Previous project release remains N/A.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "finish",
+      "expression": "self.sql(TARGET, primary, \"SELECT count(*)||':'||sum(octet_length(payload)) FROM j_load\") == '40000:163840000'",
+      "id": "f1476c24dc5aa4de",
+      "category": "safety-invariant",
+      "requirement": "PR J large-fixture SQL oracle: all 40000 pre-backup rows and 163840000 payload bytes must survive actual CNPG/PostgreSQL recovery, not just native extraction.",
+      "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
+      "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "wait_source_ready",
+      "expression": "self.h.wait(ready, 'CNPG Cluster ready with finite workspace replenishment', 360)",
+      "id": "b9f82d67ed04c724",
+      "category": "fixture-precondition",
+      "requirement": "Two-instance fixture must actually reach CNPG Ready while the existing wait/account loop replenishes finite capture PVs through initdb/primary/join/standby; not a blocking wait that starves its own allocator.",
+      "temporal_semantics": "Complete observable Ready after finite backing maintenance, bounded360s; failure blocks source-dependent cases and is not successful setup.",
+      "failure_layer": "fixture"
     }
   ]
 }

@@ -3,8 +3,10 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,10 +22,13 @@ import (
 
 type faults struct {
 	sync.Mutex
-	mode    string
-	match   string
-	blocked int
-	release chan struct{}
+	mode        string
+	match       string
+	blocked     int
+	active      int
+	transferred int64
+	principals  map[string]int
+	release     chan struct{}
 }
 
 func main() {
@@ -82,11 +87,25 @@ func main() {
 				state.match = r.URL.Query().Get("name")
 				state.blocked = 0
 			}
-			json.NewEncoder(w).Encode(map[string]any{"mode": state.mode, "name": state.match, "blocked": state.blocked})
+			json.NewEncoder(w).Encode(map[string]any{"mode": state.mode, "name": state.match, "blocked": state.blocked, "active_transfers": state.active, "transferred_bytes": state.transferred, "principal_requests": state.principals})
 			return
 		}
 		state.Lock()
 		mode, release, match := state.mode, state.release, state.match
+		// Bounded hashed principal observations for the VALID overlap fixture;
+		// never retain/log Authorization, credentials or session tokens.
+		if fields := strings.SplitN(r.Header.Get("Authorization"), "Credential=", 2); len(fields) == 2 {
+			if end := strings.IndexByte(fields[1], '/'); end > 0 && end <= 128 {
+				sum := sha256.Sum256([]byte(fields[1][:end]))
+				key := hex.EncodeToString(sum[:])
+				if state.principals == nil {
+					state.principals = map[string]int{}
+				}
+				if _, exists := state.principals[key]; exists || len(state.principals) < 16 {
+					state.principals[key]++
+				}
+			}
+		}
 		state.Unlock()
 		if strings.Contains(r.URL.Path, "/wal/") && (match == "" || strings.HasSuffix(r.URL.Path, "/"+match)) {
 			if (r.Method == "GET" || r.Method == "HEAD") && injectWAL(w, r, mode, state) {
@@ -107,12 +126,22 @@ func main() {
 		if mode == "hold-artifact-put" && strings.Contains(r.URL.Path, "/attempts/") && strings.Contains(r.URL.Path, "/data/") && r.Method == "PUT" && r.ContentLength > 1 {
 			r.Body = &partialBody{ReadCloser: r.Body, remaining: r.ContentLength / 2, state: state, release: release, done: r.Context().Done()}
 		}
+		if mode == "slow-artifact-put" && strings.Contains(r.URL.Path, "/attempts/") && strings.Contains(r.URL.Path, "/data/") && r.Method == "PUT" && r.ContentLength > 1 {
+			state.Lock()
+			state.active++
+			state.Unlock()
+			defer func() { state.Lock(); state.active--; state.Unlock() }()
+			r.Body = &slowBody{ReadCloser: r.Body, state: state, release: release, done: r.Context().Done()}
+		}
 		proxy.ServeHTTP(w, r)
 	})
-	server := http.Server{Addr: ":9000", Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 120 * time.Second, WriteTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}
+	server := http.Server{Addr: ":9000", Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 300 * time.Second, WriteTimeout: 300 * time.Second, MaxHeaderBytes: 64 << 10}
 	// Disposable source TLS fault, not an HTTP status mislabeled as TLS. Control
 	// uses localhost SNI; actual sidecars use the in-cluster MinIO Service name.
-	server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+	server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		cert, err := tls.LoadX509KeyPair("/certs/public.crt", "/certs/private.key")
+		return &cert, err
+	}, GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		state.Lock()
 		defer state.Unlock()
 		if state.mode == "tls-wal-get" && hello.ServerName != "localhost" {
@@ -127,9 +156,37 @@ func main() {
 	}
 }
 
+// A bounded streaming rate limit, not an early-ack queue. Counters measure real
+// body bytes read toward MinIO; final durable success still comes from MinIO.
+// Clearing the mode drains the original request rather than abandoning it.
+type slowBody struct {
+	io.ReadCloser
+	state         *faults
+	release, done <-chan struct{}
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	timer := time.NewTimer(75 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-b.done:
+		return 0, io.ErrClosedPipe
+	case <-b.release:
+	case <-timer.C:
+	}
+	if len(p) > 64<<10 {
+		p = p[:64<<10]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.state.Lock()
+	b.state.transferred += int64(n)
+	b.state.Unlock()
+	return n, err
+}
+
 func validMode(mode string) bool {
 	switch mode {
-	case "", "hold-wal-put", "fail-wal-get", "hold-artifact-put", "hold-commit-response",
+	case "", "hold-wal-put", "fail-wal-get", "hold-artifact-put", "hold-commit-response", "slow-artifact-put",
 		"missing-wal-get", "auth-wal-get", "corrupt-wal-get", "reset-wal-get", "tls-wal-get", "hold-wal-get-response", "hold-artifact-get-response":
 		return true
 	}

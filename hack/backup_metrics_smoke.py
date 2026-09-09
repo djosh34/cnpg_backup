@@ -14,7 +14,11 @@ import unittest
 import urllib.request
 
 LABELS = {'repository_id', 'namespace', 'cluster', 'backup_type'}
-RETENTION_METRICS = ('cnpg_backup_retention_blocked', 'cnpg_backup_repository_admission_blocked', 'cnpg_backup_repository_holders')
+RETENTION_METRICS = ('cnpg_backup_retention_blocked', 'cnpg_backup_repository_admission_blocked',
+                     'cnpg_backup_repository_holders', 'cnpg_backup_retention_workspace_available',
+                     'cnpg_backup_retention_checked_timestamp_seconds')
+RESTORE_METRICS = ('cnpg_backup_restore_observation_known', 'cnpg_backup_restore_active',
+                   'cnpg_backup_restore_uncertain', 'cnpg_backup_restore_lifetime_release_pending')
 METRICS = ('cnpg_backup_failures_total', 'cnpg_backup_success_history_known',
            'cnpg_backup_last_success_timestamp_seconds', 'cnpg_backup_freshness_max_age_seconds')
 
@@ -25,9 +29,12 @@ def samples(text):
         if not line or line.startswith('#'):
             continue
         match = re.fullmatch(r'([a-z_]+)\{(.*)\} ([0-9.eE+-]+)', line)
-        assert match and match[1] in (*METRICS, *RETENTION_METRICS), 'unexpected manager metric/format'
+        assert match and match[1] in (*METRICS, *RETENTION_METRICS, *RESTORE_METRICS), 'unexpected manager metric/format'
         labels = dict(re.findall(r'([a-z_]+)="([^"\\]*)"', match[2]))
-        if match[1] in RETENTION_METRICS:
+        if match[1] in RESTORE_METRICS:
+            assert set(labels) == {'namespace', 'cluster'}, 'unbounded restore metric labels'
+            key = (match[1], labels['namespace'], labels['cluster'])
+        elif match[1] in RETENTION_METRICS:
             assert set(labels) == LABELS - {'backup_type'}, 'unbounded retention metric labels'
             key = (match[1], labels['repository_id'], labels['namespace'], labels['cluster'])
         else:
