@@ -115,7 +115,9 @@ def image_files(archive, flavor):
             src = tar.extractfile(member)
             digest = hashlib.file_digest(src, 'sha256').hexdigest()
             inventory[name] = {'sha256': digest, 'bytes': member.size, 'mode': oct(member.mode & 0o777)}
-            if member.mode & 0o111:
+            # Moby adds this empty 0755 marker to docker export, not the
+            # image payload. Retain its byte inventory, but not as shipped code.
+            if member.mode & 0o111 and not (name == '/.dockerenv' and member.size == 0 and member.mode == 0o755):
                 executable.add(name)
             if name == '/usr/local/bin/cnpg-backup':
                 with tar.extractfile(member) as src, (WORK / (flavor + '-binary')).open('wb') as dst:

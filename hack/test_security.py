@@ -112,7 +112,10 @@ class SecurityTests(unittest.TestCase):
             root = Path(tmp)
             with patch.object(s, 'WORK', root), patch.object(s, 'OUT', root / 'evidence'):
                 def archive(extra=None):
-                    files = {'usr/local/bin/cnpg-backup': (b'ELF fixture', 0o755),
+                    # docker export includes Moby's empty executable marker,
+                    # unlike the prepared root used by the old fixture.
+                    files = {'.dockerenv': (b'', 0o755),
+                             'usr/local/bin/cnpg-backup': (b'ELF fixture', 0o755),
                              'usr/share/cnpg-backup/native-packages.json': (b'[{"name":"ca-certificates"}]', 0o644)}
                     if extra:
                         files.update(extra)
@@ -124,8 +127,16 @@ class SecurityTests(unittest.TestCase):
                             tar.addfile(entry, io.BytesIO(content))
                     return path
                 self.assertEqual(s.image_files(archive(), 'manager'), [{'name': 'ca-certificates'}])
-                with self.assertRaises(ValueError):
-                    s.image_files(archive({'bin/sh': (b'shell', 0o755)}), 'manager')
+                inventory = json.loads((root / 'evidence/manager-files.json').read_text())
+                self.assertEqual(inventory['/.dockerenv'], {
+                    'sha256': hashlib.sha256(b'').hexdigest(), 'bytes': 0, 'mode': '0o755'})
+                for name, content, mode in (('bin/sh', b'shell', 0o755),
+                                            ('.other', b'', 0o755),
+                                            ('.dockerenv', b'shell', 0o755),
+                                            ('.dockerenv', b'', 0o777),
+                                            ('.dockerenv', b'', 0o4755)):
+                    with self.subTest(name=name, content=content, mode=mode), self.assertRaises(ValueError):
+                        s.image_files(archive({name: (content, mode)}), 'manager')
                 with self.assertRaises(ValueError):
                     s.image_files(archive(), 'pg18')
                 tools = ('pg_basebackup', 'pg_verifybackup', 'pg_combinebackup', 'pg_waldump', 'pg_controldata', 'psql')
