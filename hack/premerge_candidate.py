@@ -60,6 +60,7 @@ def reuse_subject(head, branch=BRANCH):
     # existing audited publication path, rather than assuming a partial closure.
     harness = {'hack/test', 'hack/backup_smoke.py', 'hack/wal_smoke.py',
                'hack/premerge_candidate.py', 'hack/campaign_ci.py',
+               'hack/security.py',  # Post-build scanner only; not native metadata/build inputs.
                'hack/campaign_fixture.py', 'hack/campaign_plan.py',
                'hack/campaign_process.py', 'hack/campaign_trust.py',
                'hack/recovery_campaign.py', 'hack/recovery_cases.py'}

@@ -1,6 +1,7 @@
 """Trust/publication/auth unit controls, not actual campaign acceptance."""
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -54,6 +55,41 @@ class CandidateTests(unittest.TestCase):
             run.side_effect = RuntimeError('git ancestry/diff failed')
             with self.assertRaises(RuntimeError):
                 c.reuse_subject('c' * 40)
+
+    def test_J_reuses_post_build_scanner_fix_but_not_native_or_build_inputs(self):
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                os.chdir(directory)
+                def git(*args):
+                    return subprocess.run(['git', *args], check=True, capture_output=True,
+                                          text=True, timeout=15).stdout.strip()
+                def commit():
+                    git('add', '.')
+                    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                        'commit', '-qm', 'fixture change')
+                    return git('rev-parse', 'HEAD')
+                git('init', '-q')
+                Path('hack').mkdir(); Path('.github').mkdir()
+                paths = ('hack/security.py', 'hack/native_metadata.py', 'hack/build.py')
+                for path in paths:
+                    Path(path).write_text('original input\n')
+                revision = commit()
+                subject = {'revision': revision, 'images': {
+                    f: 'ghcr.io/djosh34/cnpg-backup-' + f + '@sha256:' + 'b' * 64
+                    for f in ('manager', 'pg18')}}
+                Path('.github/pr-j-subject.json').write_text(json.dumps(subject))
+                Path('hack/security.py').write_text('post-build scanner correction\n')
+                branch = 'refs/heads/implementation/pr-j'
+                self.assertEqual(c.reuse_subject(commit(), branch), subject)
+                for path in paths[1:]:
+                    with self.subTest(path=path):
+                        Path(path).write_text('changed product build input\n')
+                        self.assertIsNone(c.reuse_subject(commit(), branch))
+                        Path(path).write_text('original input\n')
+                        self.assertEqual(c.reuse_subject(commit(), branch), subject)
+            finally:
+                os.chdir(previous)
 
     def test_H_requires_its_own_explicit_subject_record(self):
         with patch.object(Path, 'exists', return_value=False), patch.object(c, 'run') as run:
