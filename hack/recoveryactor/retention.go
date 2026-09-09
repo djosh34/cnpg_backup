@@ -37,7 +37,7 @@ func retentionBatch() {
 	defer cancel()
 	r, e := repository.OpenSource(ctx, store, snap.Spec.RepositoryID, dir)
 	must(e)
-	result, e := retention.Run(ctx, r, wal.Files{Repository: r, Store: store, Workspace: dir}, cutoff.Add(time.Hour), retention.Options{Enabled: true, DryRun: os.Args[3] == "dry-run", Window: time.Hour, MinimumFulls: 1})
+	result, e := retention.Run(ctx, r, wal.Files{Repository: r, Store: store, Workspace: dir, Compression: snap.Spec.Compression}, cutoff.Add(time.Hour), retention.Options{Enabled: true, DryRun: os.Args[3] == "dry-run", Window: time.Hour, MinimumFulls: 1})
 	failure := ""
 	if e != nil {
 		switch {
