@@ -2524,7 +2524,7 @@
       "expression": "observed['go_rss_bytes'] < (128 if idle else 256) << 20",
       "id": "a4a3e7d978170890",
       "category": "safety-invariant",
-      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one native process, finite mounted workspace; missing evidence cannot become healthy zero.",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
       "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
       "failure_layer": "product"
     },
@@ -2534,7 +2534,7 @@
       "expression": "observed['go_hwm_bytes'] < 256 << 20",
       "id": "ba627f55e47f4247",
       "category": "safety-invariant",
-      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one native process, finite mounted workspace; missing evidence cannot become healthy zero.",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
       "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
       "failure_layer": "product"
     },
@@ -2544,7 +2544,7 @@
       "expression": "observed['cgroup_peak_bytes'] <= min(3 << 30, observed['cgroup_limit_bytes'])",
       "id": "6b82b261ce0bcda8",
       "category": "safety-invariant",
-      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one native process, finite mounted workspace; missing evidence cannot become healthy zero.",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
       "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
       "failure_layer": "product"
     },
@@ -2554,17 +2554,17 @@
       "expression": "observed['oom'] == observed['oom_kill'] == 0",
       "id": "90f9038a272d48d1",
       "category": "safety-invariant",
-      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one native process, finite mounted workspace; missing evidence cannot become healthy zero.",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
       "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
       "failure_layer": "product"
     },
     {
       "file": "hack/recovery_cases.py",
       "function": "operational_sample",
-      "expression": "observed['native_processes'] <= 1",
+      "expression": "observed['native_work_groups'] <= 1",
       "id": "f338cc9c90f0903a",
       "category": "safety-invariant",
-      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one native process, finite mounted workspace; missing evidence cannot become healthy zero.",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
       "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
       "failure_layer": "product"
     },
@@ -2574,7 +2574,7 @@
       "expression": "0 < observed['workspace_capacity_bytes'] <= 8 << 30",
       "id": "b8c921d325eb3a45",
       "category": "safety-invariant",
-      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one native process, finite mounted workspace; missing evidence cannot become healthy zero.",
+      "requirement": "Release resource policy: kernel Go RSS/HWM, separate entire sidecar/native cgroup and OOM, one backup/reconstruction process group (pg_basebackup may fork its WAL receiver; total native processes remain separately measured), finite mounted workspace; missing evidence cannot become healthy zero.",
       "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
       "failure_layer": "product"
     },
@@ -2897,6 +2897,16 @@
       "requirement": "PR J large-fixture SQL oracle: all 40000 pre-backup rows and 163840000 payload bytes must survive actual CNPG/PostgreSQL recovery, not just native extraction.",
       "temporal_semantics": "Mandatory at the explicitly observed source/transfer/rotation/recovery boundary; failure stops the case. First failures remain; no optional diagnostic promoted, no timeout/API absence treated as success.",
       "failure_layer": "product"
+    },
+    {
+      "file": "hack/recovery_cases.py",
+      "function": "wait_source_ready",
+      "expression": "self.h.wait(ready, 'CNPG Cluster ready with finite workspace replenishment', 360)",
+      "id": "b9f82d67ed04c724",
+      "category": "fixture-precondition",
+      "requirement": "Two-instance fixture must actually reach CNPG Ready while the existing wait/account loop replenishes finite capture PVs through initdb/primary/join/standby; not a blocking wait that starves its own allocator.",
+      "temporal_semantics": "Complete observable Ready after finite backing maintenance, bounded360s; failure blocks source-dependent cases and is not successful setup.",
+      "failure_layer": "fixture"
     }
   ]
 }

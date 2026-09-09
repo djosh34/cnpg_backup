@@ -57,7 +57,7 @@ def snapshot(path):
 def resource_values(text):
     values = dict(line.split('=', 1) for line in text.splitlines())
     required = {'rss_kib', 'hwm_kib', 'memory.current', 'memory.peak', 'memory.max',
-                'oom', 'oom_kill', 'blocks', 'available', 'free', 'block_size', 'native_processes'}
+                'oom', 'oom_kill', 'blocks', 'available', 'free', 'block_size', 'native_processes', 'native_work_groups'}
     if set(values) != required or any(not re.fullmatch('[0-9]+', v) for v in values.values()):
         raise CommandFailure('incomplete or unbounded product resource observation')
     v = {k: int(n) for k, n in values.items()}
@@ -68,7 +68,7 @@ def resource_values(text):
     return {'go_rss_bytes': v['rss_kib'] * 1024, 'go_hwm_bytes': v['hwm_kib'] * 1024,
             'cgroup_current_bytes': v['memory.current'], 'cgroup_peak_bytes': v['memory.peak'],
             'cgroup_limit_bytes': v['memory.max'], 'oom': v['oom'], 'oom_kill': v['oom_kill'],
-            'native_processes': v['native_processes'],
+            'native_processes': v['native_processes'], 'native_work_groups': v['native_work_groups'],
             'workspace_capacity_bytes': v['blocks'] * v['block_size'],
             'workspace_available_bytes': v['available'] * v['block_size'],
             'workspace_used_bytes': (v['blocks'] - v['free']) * v['block_size']}
@@ -553,9 +553,15 @@ rmdir "$path"
             'cg=/sys/fs/cgroup$(awk -F: \'$1 == "0" {print $3}\' "$root/cgroup"); '
             'for pair in memory.current memory.peak memory.max; do printf "%s=" "$pair"; cat "$cg/$pair"; done; '
             'awk \'$1 == "oom" || $1 == "oom_kill" {print $1 "=" $2}\' "$cg/memory.events"; '
-            'n=0; for child in $(cat "$cg/cgroup.procs"); do '
-            'case "$(cat /proc/$child/comm 2>/dev/null || true)" in pg_basebackup|pg_verifybackup|pg_combinebackup|pg_waldump|pg_controldata|psql) n=$((n+1));; esac; done; '
+            'n=0; groups=""; for child in $(cat "$cg/cgroup.procs"); do '
+            'comm=$(cat /proc/$child/comm 2>/dev/null || true); '
+            'case "$comm" in pg_basebackup|pg_verifybackup|pg_combinebackup|pg_combinebacku|pg_waldump|pg_controldata|psql) n=$((n+1));; esac; '
+            # pg_basebackup -X stream forks a WAL receiver in the SAME native
+            # process group. One backup/reconstruction is not one OS process.
+            'case "$comm" in pg_basebackup|pg_verifybackup|pg_combinebackup|pg_combinebacku|pg_waldump) '
+            'groups="$groups $(awk \'{print $5}\' /proc/$child/stat 2>/dev/null || true)";; esac; done; '
             'printf "native_processes=%s\\n" "$n"; '
+            'printf "native_work_groups=%s\\n" "$(printf \'%s\\n\' $groups | awk \'NF {g[$1]=1} END {print length(g)}\')"; '
             'stat -f -c "blocks=%b\navailable=%a\nfree=%f\nblock_size=%S" "$root/root$2"',
             'product-resource-observation', str(pid), workspace, timeout=15)
         observed = resource_values(text)

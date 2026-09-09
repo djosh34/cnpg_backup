@@ -273,12 +273,22 @@ class Campaign:
         h.wait(lambda: h.admission_ready(h.kube('apply', '--server-side', '--dry-run=server', '-f', '-',
                                                 input=json.dumps(self.cluster), check=False)), 'actual mTLS discovery')
         h.apply(self.cluster)
-        h.kube('wait', '-n', SOURCE, '--for=condition=Ready', 'cluster/database', '--timeout=360s', timeout=400)
+        self.wait_source_ready()
         self.install_observer()
         if 'differential' in getattr(self.args, 'fixtures', []):
             self.make_differential_workload()
         else:
             self.make_workload()
+
+    def wait_source_ready(self):
+        # Keep the existing finite-workspace replenishment active while CNPG
+        # creates initdb/primary/join/standby Pods. A blocking kubectl wait would
+        # consume both initial capture PVs and starve the pending standby join.
+        def ready():
+            cluster = json.loads(self.h.kube('get', 'cluster', 'database', '-n', SOURCE, '-o', 'json'))
+            return any(c.get('type') == 'Ready' and c.get('status') == 'True'
+                       for c in cluster.get('status', {}).get('conditions', []))
+        self.h.wait(ready, 'CNPG Cluster ready with finite workspace replenishment', 360)
 
     def install_observer(self):
         h = self.h
@@ -624,7 +634,7 @@ class Campaign:
         assert observed['go_hwm_bytes'] < 256 << 20, 'kernel Go high-water RSS exceeds transfer ceiling'
         assert observed['cgroup_peak_bytes'] <= min(3 << 30, observed['cgroup_limit_bytes']), 'whole sidecar/native cgroup exceeded ceiling'
         assert observed['oom'] == observed['oom_kill'] == 0, 'OOM is not a passing resource measurement'
-        assert observed['native_processes'] <= 1, 'native operations overlapped'
+        assert observed['native_work_groups'] <= 1, 'native backup/reconstruction process groups overlapped'
         assert 0 < observed['workspace_capacity_bytes'] <= 8 << 30, 'workspace is not a finite supported filesystem'
         return observed
 
@@ -711,7 +721,8 @@ class Campaign:
                 assert not self.gate()['holders'], 'successful backup did not drain its source protection'
                 self.event('operational-transfer-resources', fixture_bytes=fixture_bytes, transferred_artifact_bytes=stored,
                            capture_seconds=time.monotonic()-started, wal_callback_seconds=latency,
-                           backlog_before=backlog_before, backlog_after=backlog_after, native_concurrency=1,
+                           backlog_before=backlog_before, backlog_after=backlog_after,
+                           maximum_observed_native_work_groups=max(s['native_work_groups'] for s in samples),
                            manager_idle=idle_manager, samples=samples, snapshot_drainage=True,
                            valid_distinct_principals=True, new_private_root_handshake=True,
                            fixed_fault_RPO_claim=False)
