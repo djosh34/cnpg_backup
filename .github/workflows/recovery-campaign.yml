@@ -88,7 +88,7 @@ jobs:
           ./hack/test campaign-focused
           ./hack/test campaign-bundle --out .work/repair-bundle
           python3 hack/campaign_ci.py plans
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: immutable-harness-${{ github.run_id }}-${{ github.run_attempt }}
@@ -140,7 +140,7 @@ jobs:
       - name: Remove ephemeral registry credentials even when collection fails
         if: always()
         run: rm -rf -- "$DOCKER_CONFIG"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: repair-attempt-${{ matrix.attempt }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -166,7 +166,7 @@ jobs:
           path: .work/inputs
       - name: Exact attempts, all failures, no partial or retained acceptance
         run: python3 hack/campaign_ci.py aggregate
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: repair-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
