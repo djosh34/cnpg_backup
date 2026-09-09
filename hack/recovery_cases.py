@@ -771,7 +771,7 @@ class Campaign:
                     'predecessor_release': None, 'predecessor_reason': 'No project release exists; pre-release I candidate, not N-to-N+1 qualification.',
                     'producer': self.initial_candidate, 'tool_image': self.initial_candidate['images']['pg18'],
                     'postgres_version': self.sql(SOURCE, self.primary(), 'SHOW server_version'),
-                    'target': target, 'expected_rows': BEFORE, 'differential_expected': self.differential_expected,
+                    'target': target, 'expected_rows': [list(row) for row in BEFORE], 'differential_expected': self.differential_expected,
                     'chain': [self.base['backup_uid'], self.d2['backup_uid']], 'objects': records}
         atomic_json(directory / 'manifest.json', manifest)
         archive = h.OUT / 'initial-v1-backup-wal.tar.gz'

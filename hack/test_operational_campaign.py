@@ -1,9 +1,11 @@
 """Required operational evidence rejects missing measurements and false zeros."""
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from recovery_cases import Campaign
+from recovery_cases import Campaign, SOURCE_ID
 
 from campaign_fixture import resource_values
 from campaign_process import CommandFailure
@@ -44,6 +46,36 @@ class ResourceEvidence(unittest.TestCase):
             c.h.product_resources.return_value = dict(good, **{field: value})
             with self.subTest(field=field), self.assertRaises(AssertionError):
                 c.operational_sample('pod', idle=True)
+
+    def test_initial_fixture_export_and_replay_preserve_json_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = SimpleNamespace(WORK=root / 'work', OUT=root / 'out')
+            fixture.WORK.mkdir(); fixture.OUT.mkdir()
+            payload = b'retained initial-format bytes'
+            imported = []
+            def curl(*args):
+                if '--output' in args:
+                    Path(args[args.index('--output')+1]).write_bytes(payload)
+                    Path(args[args.index('--dump-header')+1]).write_text('x-amz-meta-checksum: unchanged\n')
+                else:
+                    imported.append(Path(args[args.index('--upload-file')+1]).read_bytes())
+            fixture.run = curl
+            campaign = Campaign(None, None, fixture)
+            campaign.wal = SimpleNamespace(directory=root, endpoint='https://store', s3=Mock())
+            campaign.initial_candidate = {'images': {'pg18': 'test-image'}}
+            campaign.primary = Mock(return_value='database-1')
+            campaign.sql = Mock(return_value='18.6')
+            campaign.differential_expected = '1:expected'
+            campaign.base = {'backup_uid': 'full'}; campaign.d2 = {'backup_uid': 'd2'}
+            campaign.inventory = Mock(return_value=['smoke/v1/' + SOURCE_ID + '/object'])
+            campaign.gate = Mock(return_value={'holders': [], 'owner': None})
+            archive, manifest = campaign.retain_initial_fixture({'backupID': 'd2'})
+            campaign.replay_initial_fixture(archive, manifest)
+            self.assertEqual(imported, [payload])
+            manifest['target']['backupID'] = 'changed'
+            with self.assertRaisesRegex(AssertionError, 'provenance changed'):
+                campaign.replay_initial_fixture(archive, manifest)
 
     def test_transfer_wal_requires_real_callback_retry_and_remote_byte_verification(self):
         campaign = Campaign(None, None, None)
