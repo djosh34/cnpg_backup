@@ -92,7 +92,7 @@ if __name__ == '__main__':
         for name in ('LICENSE', 'PATENTS'):
             shutil.copyfile(CACHE / 'go' / name, notices / ('Go-' + name))
         shutil.copytree(CACHE / 'pgroot/usr/share/common-licenses', notices / 'common-licenses', symlinks=False)
-        shipped = {'ca-certificates'}
+        shipped = {'ca-certificates', 'base-files'}  # CA bundle + os-release metadata.
         if flavor == 'pg18':
             shipped.update(entry['package'] for entry in native_files)
         native_packages = [p for p in LOCK['packages'] if p['name'] in shipped]

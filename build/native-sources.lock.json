@@ -2,6 +2,25 @@
   "schema": 1,
   "sources": [
     {
+      "name": "base-files",
+      "version": "13ubuntu10.4",
+      "binary_packages": [
+        "base-files"
+      ],
+      "files": [
+        {
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260908T000000Z/pool/main/b/base-files/base-files_13ubuntu10.4.dsc",
+          "sha256": "db0386e7111a5e0b1f9d473b1fdae76f421f0df4e66edfdbc8060cf3dc92a561",
+          "bytes": 1642
+        },
+        {
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260908T000000Z/pool/main/b/base-files/base-files_13ubuntu10.4.tar.xz",
+          "sha256": "3656f87d5a7ed92ac53cece416f918099e7e4f90281c3effcc346e2ce09c653d",
+          "bytes": 94240
+        }
+      ]
+    },
+    {
       "name": "ca-certificates",
       "version": "20260601~24.04.1",
       "binary_packages": [

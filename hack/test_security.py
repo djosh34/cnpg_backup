@@ -41,7 +41,7 @@ class SecurityTests(unittest.TestCase):
     def test_real_source_lock_covers_every_potential_runtime_package(self):
         packages = json.loads((s.REPO / 'build/inputs.lock.json').read_text())['packages']
         sources = json.loads((s.REPO / 'build/native-sources.lock.json').read_text())['sources']
-        required = {p['name'] for p in packages if not p.get('test_only') and p['name'] != 'base-files'}
+        required = {p['name'] for p in packages if not p.get('test_only')}
         self.assertEqual(required, {p for source in sources for p in source['binary_packages']})
         for source in sources:
             self.assertTrue(source['files'][0]['url'].endswith('.dsc'))
