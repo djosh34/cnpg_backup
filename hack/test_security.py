@@ -4,7 +4,6 @@ import io
 import json
 import os
 from pathlib import Path
-import re
 import tarfile
 import tempfile
 import unittest
@@ -16,22 +15,6 @@ import security as s
 
 
 class SecurityTests(unittest.TestCase):
-    def test_producer_attest_reads_the_publishers_private_docker_login(self):
-        # actions/attest 508db95 bundles @sigstore/oci 0.7.1: its credential
-        # reader uses homedir()/.docker/config.json, NOT DOCKER_CONFIG.
-        # Keep this offline path-contract regression dependency-free; the
-        # upstream reader was also exercised with synthetic login data.
-        workflow = (s.REPO / '.github/workflows/pr-g-candidate.yml').read_text()
-        docker_config = re.search(r'^      DOCKER_CONFIG: (.+)$', workflow, re.M).group(1)
-        for step_id in ('manager_provenance', 'pg18_provenance'):
-            with self.subTest(step=step_id):
-                step = next(block for block in workflow.split('      - ')
-                            if f'id: {step_id}\n' in block)
-                home = re.search(r'^          HOME: (.+)$', step, re.M)
-                self.assertIsNotNone(home, 'attest otherwise reads the unrelated runner HOME')
-                self.assertEqual(home.group(1) + '/.docker', docker_config,
-                                 'attest must read the same config.json as docker login/push')
-
     def test_native_control_source_version_not_binary_name_guess(self):
         text = b'Package: libpq5\nVersion: 18.6-3.pgdg24.04+1\nArchitecture: amd64\nSource: postgresql-18 (18.6-3.pgdg24.04+1)\n'
         archive = io.BytesIO()

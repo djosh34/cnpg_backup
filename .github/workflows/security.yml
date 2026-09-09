@@ -81,6 +81,18 @@ jobs:
         run: |
           export PATH="$PWD/.work/tools/go/bin:$PATH"
           python3 hack/security.py scan
+      - name: Verify scanned checksums and selected digest binding
+        run: |
+          cd artifacts/security
+          sha256sum --check SHA256SUMS
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          s = json.loads(Path('subject.json').read_text())
+          assert json.loads(Path('gate.json').read_text())['passed'] is True
+          assert s['revision'] == os.environ['SUBJECT_SHA']
+          assert s['images'] == {'manager': os.environ['MANAGER_IMAGE'], 'pg18': os.environ['DATA_IMAGE']}
+          PY
       - name: Remove ephemeral credentials independently of scan/collection success
         if: always()
         run: rm -rf -- "$DOCKER_CONFIG"
@@ -105,72 +117,5 @@ jobs:
           name: security-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/security/
           compression-level: 0
-          retention-days: 14
-          if-no-files-found: error
-  attest-sboms:
-    needs: scan
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: security-${{ github.run_id }}-${{ github.run_attempt }}
-          path: evidence
-      - name: Verify scanned checksums and selected digest binding before OIDC
-        id: subject
-        env:
-          SUBJECT_SHA: ${{ inputs.subject_sha }}
-          MANAGER_IMAGE: ${{ inputs.manager_image }}
-          DATA_IMAGE: ${{ inputs.data_image }}
-        run: |
-          cd evidence
-          sha256sum --check SHA256SUMS
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          s = json.loads(Path('subject.json').read_text())
-          assert json.loads(Path('gate.json').read_text())['passed'] is True
-          assert s['revision'] == os.environ['SUBJECT_SHA']
-          assert s['images'] == {'manager': os.environ['MANAGER_IMAGE'], 'pg18': os.environ['DATA_IMAGE']}
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              for flavor, image in s['images'].items():
-                  out.write(flavor + '_digest=' + image.split('@')[1] + '\n')
-          PY
-      - uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        id: binary
-        with:
-          subject-path: evidence/cnpg-backup
-          sbom-path: evidence/binary.spdx.json
-      - uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        id: manager
-        with:
-          subject-name: ghcr.io/djosh34/cnpg-backup-manager
-          subject-digest: ${{ steps.subject.outputs.manager_digest }}
-          sbom-path: evidence/manager.spdx.json
-      - uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        id: pg18
-        with:
-          subject-name: ghcr.io/djosh34/cnpg-backup-pg18
-          subject-digest: ${{ steps.subject.outputs.pg18_digest }}
-          sbom-path: evidence/pg18.spdx.json
-      - name: Preserve portable OIDC signatures, not just expiring Actions logs
-        env:
-          BINARY: ${{ steps.binary.outputs.bundle-path }}
-          MANAGER: ${{ steps.manager.outputs.bundle-path }}
-          PG18: ${{ steps.pg18.outputs.bundle-path }}
-        run: |
-          mkdir -p bundles
-          cp "$BINARY" bundles/binary-sbom.sigstore.json
-          cp "$MANAGER" bundles/manager-sbom.sigstore.json
-          cp "$PG18" bundles/pg18-sbom.sigstore.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
-        with:
-          name: security-signatures-${{ github.run_id }}-${{ github.run_attempt }}
-          path: bundles/
           retention-days: 14
           if-no-files-found: error

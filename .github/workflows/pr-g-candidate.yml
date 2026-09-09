@@ -15,8 +15,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
     env:
       DOCKER_CONFIG: ${{ github.workspace }}/.work/registry-auth/.docker
       GOMAXPROCS: '2'
@@ -56,60 +54,6 @@ jobs:
         if: steps.subject.outputs.reuse == 'false'
         id: publish
         run: python3 hack/premerge_candidate.py publish
-      - name: Sign binary build provenance with ephemeral Actions OIDC
-        if: steps.subject.outputs.reuse == 'false'
-        id: binary_provenance
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        with:
-          subject-path: build/out/cnpg-backup
-      - name: Sign exact manager build digest
-        if: steps.subject.outputs.reuse == 'false'
-        id: manager_provenance
-        # Pinned @sigstore/oci reads HOME/.docker, ignoring DOCKER_CONFIG.
-        env:
-          HOME: ${{ github.workspace }}/.work/registry-auth
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        with:
-          subject-name: ghcr.io/djosh34/cnpg-backup-manager
-          subject-digest: ${{ steps.publish.outputs.manager_digest }}
-          push-to-registry: true
-      - name: Sign exact PG18 build digest
-        if: steps.subject.outputs.reuse == 'false'
-        id: pg18_provenance
-        env:
-          HOME: ${{ github.workspace }}/.work/registry-auth
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        with:
-          subject-name: ghcr.io/djosh34/cnpg-backup-pg18
-          subject-digest: ${{ steps.publish.outputs.pg18_digest }}
-          push-to-registry: true
-      - name: Preserve portable signed provenance bundles
-        if: steps.subject.outputs.reuse == 'false'
-        env:
-          BINARY_BUNDLE: ${{ steps.binary_provenance.outputs.bundle-path }}
-          MANAGER_BUNDLE: ${{ steps.manager_provenance.outputs.bundle-path }}
-          PG18_BUNDLE: ${{ steps.pg18_provenance.outputs.bundle-path }}
-        run: |
-          cp "$BINARY_BUNDLE" artifacts/candidate/binary-provenance.sigstore.json
-          cp "$MANAGER_BUNDLE" artifacts/candidate/manager-provenance.sigstore.json
-          cp "$PG18_BUNDLE" artifacts/candidate/pg18-provenance.sigstore.json
-      - name: Verify produced signatures against this trusted workflow identity
-        if: steps.subject.outputs.reuse == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MANAGER_IMAGE: ${{ steps.publish.outputs.manager }}
-          DATA_IMAGE: ${{ steps.publish.outputs.pg18 }}
-        run: |
-          gh --version > artifacts/candidate/gh-version.txt
-          gh attestation verify build/out/cnpg-backup --repo "$GITHUB_REPOSITORY" \
-            --cert-identity "https://github.com/$GITHUB_WORKFLOW_REF" \
-            --bundle artifacts/candidate/binary-provenance.sigstore.json --format json > artifacts/candidate/binary-verification.json
-          gh attestation verify "oci://$MANAGER_IMAGE" --repo "$GITHUB_REPOSITORY" \
-            --cert-identity "https://github.com/$GITHUB_WORKFLOW_REF" \
-            --bundle artifacts/candidate/manager-provenance.sigstore.json --format json > artifacts/candidate/manager-verification.json
-          gh attestation verify "oci://$DATA_IMAGE" --repo "$GITHUB_REPOSITORY" \
-            --cert-identity "https://github.com/$GITHUB_WORKFLOW_REF" \
-            --bundle artifacts/candidate/pg18-provenance.sigstore.json --format json > artifacts/candidate/pg18-verification.json
       - name: Remove ephemeral registry login
         if: always()
         run: rm -rf -- "$DOCKER_CONFIG"
@@ -133,8 +77,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-      id-token: write
-      attestations: write
     uses: ./.github/workflows/security.yml
     with:
       subject_sha: ${{ needs.subject.outputs.sha }}
