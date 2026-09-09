@@ -95,11 +95,12 @@ class SecurityTests(unittest.TestCase):
             root = Path(tmp)
             with patch.object(s, 'WORK', root), patch.object(s, 'OUT', root / 'evidence'):
                 def archive(extra=None):
-                    # docker export includes Moby's empty executable marker,
-                    # unlike the prepared root used by the old fixture.
-                    files = {'.dockerenv': (b'', 0o755),
-                             'usr/local/bin/cnpg-backup': (b'ELF fixture', 0o755),
-                             'usr/share/cnpg-backup/native-packages.json': (b'[{"name":"ca-certificates"}]', 0o644)}
+                    # Actual b408 export: Moby injects all five empty 0755
+                    # placeholders, not just .dockerenv.
+                    files = {name: (b'', 0o755) for name in
+                             ('.dockerenv', 'dev/console', 'etc/hostname', 'etc/hosts', 'etc/resolv.conf')}
+                    files.update({'usr/local/bin/cnpg-backup': (b'ELF fixture', 0o755),
+                             'usr/share/cnpg-backup/native-packages.json': (b'[{"name":"ca-certificates"}]', 0o644)})
                     if extra:
                         files.update(extra)
                     path = root / 'image.tar'
@@ -117,7 +118,11 @@ class SecurityTests(unittest.TestCase):
                                             ('.other', b'', 0o755),
                                             ('.dockerenv', b'shell', 0o755),
                                             ('.dockerenv', b'', 0o777),
-                                            ('.dockerenv', b'', 0o4755)):
+                                            ('.dockerenv', b'', 0o4755),
+                                            ('dev/console', b'shell', 0o755),
+                                            ('etc/hosts', b'', 0o777),
+                                            ('etc/resolv.conf', b'shell', 0o755),
+                                            ('etc/hostname', b'', 0o4755)):
                     with self.subTest(name=name, content=content, mode=mode), self.assertRaises(ValueError):
                         s.image_files(archive({name: (content, mode)}), 'manager')
                 with self.assertRaises(ValueError):
