@@ -8,12 +8,12 @@ import (
 )
 
 type retentionSeries struct {
-	Blocked, Admission bool
-	Holders            int
-	Checked            time.Time
+	Blocked, Admission, Observed bool
+	Holders                      int
+	Checked                      time.Time
 }
 
-func (m *backupMetrics) retention(labels backupLabels, blocked, admission bool, holders int, now time.Time) {
+func (m *backupMetrics) retention(labels backupLabels, blocked, admission, observed bool, holders int, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	labels.Type = ""
@@ -29,7 +29,7 @@ func (m *backupMetrics) retention(labels backupLabels, blocked, admission bool, 
 	if _, ok := m.retentionSeries[labels]; !ok && len(m.retentionSeries) >= 4096 {
 		return
 	}
-	m.retentionSeries[labels] = retentionSeries{blocked, admission, holders, now}
+	m.retentionSeries[labels] = retentionSeries{blocked, admission, observed, holders, now}
 }
 func (m *backupMetrics) writeRetention(w io.Writer) {
 	m.mu.Lock()
@@ -49,6 +49,9 @@ func (m *backupMetrics) writeRetention(w io.Writer) {
 		fmt.Fprintf(w, "# HELP %s Last periodic gate/retention observation; diagnostics never authorize admission.\n# TYPE %s gauge\n", name, name)
 		for _, l := range labels {
 			s := values[l]
+			if name != "cnpg_backup_retention_blocked" && !s.Observed {
+				continue
+			}
 			v := 0
 			switch name {
 			case "cnpg_backup_retention_blocked":
