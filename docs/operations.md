@@ -1,8 +1,9 @@
 # Install, protect, recover and update
 
-**Development delivery, not a qualified release or production rollout.** Use the
-exact manager/data digests from the candidate/release evidence, never guessed
-SHAs, tags or rebuilt substitutes. [Support/pins](design.md#exact-initial-matrix):
+For the **unsigned v0.1.0 distribution**, use the [release guide](releases/v0.1.0/README.md)
+and its explicit [qualification decision](releases/v0.1.0/qualification.md).
+No production rollout is performed. Use the exact manager/data digests from the
+release evidence, never guessed SHAs, tags or rebuilt substitutes. [Support/pins](design.md#exact-initial-matrix):
 Linux amd64, Kubernetes 1.35.8, CNPG 1.30.0, cert-manager 1.21.1, PG/tools 18.6.
 MinIO is tested; another endpoint must satisfy the [storage contract](research/storage-protocol-final.md).
 The first release has no predecessor: rolling a candidate is not N→N+1 proof.
