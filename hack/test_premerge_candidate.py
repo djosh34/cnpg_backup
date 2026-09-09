@@ -65,6 +65,20 @@ class CandidateTests(unittest.TestCase):
              patch.object(c, 'run', return_value=SimpleNamespace(stdout='docs/recovery-campaign.md\n')):
             self.assertEqual(c.reuse_subject('c' * 40, 'refs/heads/implementation/pr-h'), subject)
 
+    def test_J_has_no_implicit_I_reuse_and_requires_trusted_push(self):
+        branch = 'refs/heads/implementation/pr-j'
+        sha = 'a' * 40
+        env = dict(GITHUB_REPOSITORY=c.REPO, GITHUB_EVENT_NAME='push', GITHUB_REF=branch,
+                   GITHUB_WORKFLOW_REF=c.REPO + '/.github/workflows/pr-g-candidate.yml@' + branch,
+                   GITHUB_SHA=sha, GITHUB_WORKFLOW_SHA=sha)
+        c.trust(env, sha, 'https://github.com/' + c.REPO + '.git')
+        self.assertEqual(c.SUBJECT_RECORDS[branch], '.github/pr-j-subject.json')
+        with patch.object(Path, 'exists', return_value=False), patch.object(c, 'run') as run:
+            self.assertIsNone(c.reuse_subject(sha, branch))
+            run.assert_not_called()
+        with self.assertRaises(RuntimeError):
+            c.reuse_subject(sha, 'refs/heads/implementation/pr-j-security')
+
     def test_private_auth_is_scoped_and_removed_even_on_failure(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

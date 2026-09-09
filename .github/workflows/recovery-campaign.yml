@@ -16,7 +16,7 @@ on:
         type: string
       trusted_ref:
         type: choice
-        options: [main, implementation/pr-g, implementation/pr-h, implementation/pr-i, implementation/ci-reliability]
+        options: [main, implementation/pr-g, implementation/pr-h, implementation/pr-i, implementation/pr-j, implementation/ci-reliability]
         default: main
       seeds:
         type: string
