@@ -4,6 +4,7 @@
 Prints JSON manifests; does not deploy anything. Repository schema is separate.
 """
 import argparse
+import copy
 import json
 import re
 
@@ -92,6 +93,35 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
                             roleRef={'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'Role', 'name': 'cnpg-backup'},
                             subjects=[{'kind': 'ServiceAccount', 'name': 'cnpg-backup', 'namespace': namespace}]))
     return {'apiVersion': 'v1', 'kind': 'List', 'items': objects}
+
+
+def recovery_cluster(template, namespace, name, source_repository, destination_repository, target):
+    """Fresh consumer Cluster; never copy source identity/status/PVC bindings."""
+    if template.get('kind') != 'Cluster' or template.get('apiVersion') != 'postgresql.cnpg.io/v1':
+        raise ValueError('a CNPG Cluster template is required')
+    for value in (namespace, name, source_repository, destination_repository):
+        if not re.fullmatch(r'[a-z0-9]([a-z0-9.-]*[a-z0-9])?', value):
+            raise ValueError('invalid recovery resource name')
+    if source_repository == destination_repository:
+        raise ValueError('source and destination Repositories must be distinct')
+    if not isinstance(target, dict):
+        raise ValueError('target must be a CNPG recoveryTarget object')
+    if template.get('metadata', {}).get('name') == name and template.get('metadata', {}).get('namespace', namespace) == namespace:
+        raise ValueError('recovery requires a fresh Cluster name')
+    spec = copy.deepcopy(template['spec'])
+    storage = [spec.get('storage', {}), spec.get('walStorage', {})]
+    storage += [t.get('storage', {}) for t in spec.get('tablespaces', [])]
+    if any(s.get('pvcTemplate', {}).get(k) for s in storage for k in ('volumeName', 'selector', 'dataSource', 'dataSourceRef')):
+        raise ValueError('recovery requires fresh unbound target PVCs, not source volume bindings or snapshots')
+    # Only declared Cluster spec is reused. Kubernetes allocates new Cluster/PVC
+    # identities; neither generated metadata nor status is copied from a live GET.
+    spec['instances'] = 1
+    spec['bootstrap'] = {'recovery': {'source': 'origin', 'recoveryTarget': target}}
+    spec['externalClusters'] = [{'name': 'origin', 'plugin': {
+        'name': 'cnpg-backup.djosh34.github.io', 'parameters': {'repository': source_repository}}}]
+    spec['plugins'] = [{'name': 'cnpg-backup.djosh34.github.io', 'isWALArchiver': True,
+                        'parameters': {'repository': destination_repository}}]
+    return resource('postgresql.cnpg.io/v1', 'Cluster', name, namespace, spec=spec)
 
 
 if __name__ == '__main__':

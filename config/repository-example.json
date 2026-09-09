@@ -1,0 +1,21 @@
+{
+  "apiVersion": "backup.cnpg-backup.djosh34.github.io/v1alpha1",
+  "kind": "Repository",
+  "metadata": {"name": "destination", "namespace": "database"},
+  "spec": {
+    "repositoryID": "a6e4fadc-2a56-4ca7-8e92-148abf762344",
+    "s3": {
+      "endpoint": "https://s3.example.invalid",
+      "bucket": "database-backups", "prefix": "postgres",
+      "signature": "v4", "addressing": "path", "region": "us-east-1",
+      "accessKeySecret": {"name": "s3-auth", "key": "access"},
+      "secretKeySecret": {"name": "s3-auth", "key": "secret"},
+      "caConfigMap": {"name": "s3-ca", "key": "ca.crt"},
+      "encryption": "bucket-default"
+    },
+    "compression": "gzip",
+    "workspace": {"storageClassName": "finite-workspace", "size": "256Gi"},
+    "backupFreshness": {"fullMaxAge": "192h", "differentialMaxAge": "26h"},
+    "retention": {"enabled": false, "dryRun": true, "window": "336h", "minimumFulls": 2, "interval": "1h"}
+  }
+}

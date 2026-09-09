@@ -1,0 +1,51 @@
+# Same manager scrape as backup-monitoring.yaml. No operation/Pod/backup IDs.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-backup-operations
+spec:
+  groups:
+    - name: cnpg-backup-operations
+      rules:
+        - alert: CNPGBackupRetentionBlocked
+          expr: cnpg_backup_retention_blocked == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Deletion is paused; inspect Repository conditions and durable holds, never force-clear them
+        - alert: CNPGBackupRepositoryAdmissionBlocked
+          expr: cnpg_backup_repository_admission_blocked == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: A destructive owner blocks new protected work; uncertainty does not expire
+        - alert: CNPGBackupRetentionWorkspacePressure
+          expr: cnpg_backup_retention_workspace_available == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: The last manager retention workspace reservation failed; deletion remains stopped
+        - alert: CNPGBackupRestoreUncertain
+          expr: cnpg_backup_restore_uncertain == 1
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: Restore termination is uncertain; source protection remains and poisoned targets require all fresh PVCs
+        - alert: CNPGBackupRestoreObservationUnknown
+          expr: cnpg_backup_restore_observation_known == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Restore state is unobserved or stale; do not infer completion or released protection
+        - alert: CNPGBackupRestoreLifetimeReleasePending
+          expr: cnpg_backup_restore_lifetime_release_pending == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Completed restore still awaits stable lifetime release; inspect source credentials and admission

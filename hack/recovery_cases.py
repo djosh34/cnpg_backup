@@ -798,11 +798,9 @@ class Campaign:
         repo['metadata'] = {'name': name, 'namespace': TARGET}
         repo['spec']['repositoryID'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'campaign/' + name))
         h.apply(repo)
-        c = copy.deepcopy(self.cluster)
-        c['metadata'] = {'name': name, 'namespace': TARGET}
-        c['spec']['bootstrap'] = {'recovery': {'source': 'origin', 'recoveryTarget': target}}
-        c['spec']['externalClusters'] = [{'name': 'origin', 'plugin': {'name': PLUGIN, 'parameters': {'repository': 'source'}}}]
-        c['spec']['plugins'][0]['parameters']['repository'] = name
+        # Same published consumer rendering path as docs/operations.md. Fault
+        # barriers are test-only admission arrangements, not hidden restore input.
+        c = h.renderer.recovery_cluster(self.cluster, TARGET, name, 'source', name, target)
         h.apply(c)
         def started():
             return any(any(x['name'] == 'full-recovery' and x.get('state', {}).get('running') for x in p.get('status', {}).get('containerStatuses', [])) for p in self.pods(name))

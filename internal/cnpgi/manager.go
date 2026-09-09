@@ -228,7 +228,7 @@ func RunManager(ctx context.Context, revision string) error {
 	statusCtx, stopStatus := context.WithCancel(ctx)
 	defer stopStatus()
 	go api.RunRepositoryStatus(statusCtx)
-	go api.runRecoveryOperations(statusCtx)
+	go api.runRecoveryOperations(statusCtx, metrics)
 	go api.runBackupHistory(statusCtx, metrics)
 	go api.runRetention(statusCtx, metrics)
 	go newBackupObserver(api, metrics).run(statusCtx)

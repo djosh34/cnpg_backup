@@ -31,7 +31,7 @@ func TestRetentionDefaultsPeriodicWarningAndNonblockingEvents(t *testing.T) {
 	calls := 0
 	run := func(context.Context, string, string, configuration.Spec, time.Time) (retentionObservation, error) {
 		calls++
-		return retentionObservation{holders: 2, gateObserved: true}, repository.ErrBlocked
+		return retentionObservation{holders: 2, gateObserved: true, workspaceObserved: true, workspaceAvailable: false}, repository.ErrBlocked
 	}
 	get := func() *unstructured.Unstructured {
 		o, e := a.Get(ctx, repositories, "test", "destination")
@@ -65,7 +65,7 @@ func TestRetentionDefaultsPeriodicWarningAndNonblockingEvents(t *testing.T) {
 	var state repositoryStatus
 	b, _ := json.Marshal(get().Object["status"])
 	json.Unmarshal(b, &state)
-	if !meta.IsStatusConditionTrue(state.Conditions, "RetentionBlocked") || state.Retention.LastWarningTime == nil {
+	if !meta.IsStatusConditionTrue(state.Conditions, "RetentionBlocked") || state.Retention.LastWarningTime == nil || !meta.IsStatusConditionFalse(state.Conditions, "RetentionWorkspaceAvailable") {
 		t.Fatal(state)
 	}
 	// Recreate manager-facing API, but retain durable scheduling/throttle.
@@ -77,6 +77,9 @@ func TestRetentionDefaultsPeriodicWarningAndNonblockingEvents(t *testing.T) {
 		t.Fatal(calls, warnings, e)
 	}
 	if text := metricText(m); !strings.Contains(text, "cnpg_backup_repository_holders{repository_id=") || !strings.Contains(text, "cluster=\"database\"} 2") {
+		t.Fatal(text)
+	}
+	if text := metricText(m); !strings.Contains(text, `cnpg_backup_retention_workspace_available{repository_id=`) || !strings.Contains(text, `cluster="database"} 0`) {
 		t.Fatal(text)
 	}
 	good := func(context.Context, string, string, configuration.Spec, time.Time) (retentionObservation, error) {

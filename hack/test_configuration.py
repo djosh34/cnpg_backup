@@ -38,6 +38,26 @@ class ConfigurationManifests(unittest.TestCase):
         self.assertFalse(retention['enabled'])
         self.assertTrue(retention['dryRun'])
 
+    def test_consumer_recovery_render_discards_identity_and_rejects_bound_targets(self):
+        source = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster',
+                  'metadata': {'name': 'database', 'namespace': 'test', 'uid': 'old', 'annotations': {'private': 'discard'}},
+                  'status': {'currentPrimary': 'old'},
+                  'spec': {'instances': 3, 'storage': {'size': '8Gi'}, 'bootstrap': {'initdb': {}},
+                           'plugins': [{'name': 'other'}]}}
+        c = renderer.recovery_cluster(source, 'test', 'recovered', 'source', 'destination', {'targetTime': '2026-09-01T12:00:00Z'})
+        self.assertEqual(c['metadata'], {'name': 'recovered', 'namespace': 'test'})
+        self.assertNotIn('status', c)
+        self.assertEqual(c['spec']['instances'], 1)
+        self.assertEqual(c['spec']['bootstrap']['recovery']['recoveryTarget'], {'targetTime': '2026-09-01T12:00:00Z'})
+        self.assertEqual(c['spec']['plugins'][0]['parameters']['repository'], 'destination')
+        self.assertEqual(source['spec']['instances'], 3)
+        for name, source_repo, destination_repo in [('database', 'source', 'destination'), ('fresh', 'same', 'same')]:
+            with self.assertRaises(ValueError):
+                renderer.recovery_cluster(source, 'test', name, source_repo, destination_repo, {})
+        source['spec']['storage']['pvcTemplate'] = {'volumeName': 'old-pv'}
+        with self.assertRaises(ValueError):
+            renderer.recovery_cluster(source, 'test', 'fresh', 'source', 'destination', {})
+
     def test_install_discovery_recreate_mtls_and_secret_get_allowlist(self):
         # Deliberate non-existent digest fixture, never pulled or called a pin.
         image = 'example.invalid/test-fixture@sha256:' + '1' * 64
