@@ -100,6 +100,7 @@ def subject(sha, manager, data, ref):
 def image_files(archive, flavor):
     """Inventory actual exported bytes and verify the selected native closure."""
     inventory, native, packages = {}, [], None
+    ubuntu = False
     executable = set()
     with tarfile.open(archive) as tar:
         for member in tar:
@@ -121,6 +122,12 @@ def image_files(archive, flavor):
                            and member.size == 0 and member.mode == 0o755)
             if member.mode & 0o111 and not placeholder:
                 executable.add(name)
+            if name == '/etc/os-release':
+                if member.size > 8192:
+                    raise ValueError('oversized OS identity')
+                fields = dict(line.split('=', 1) for line in tar.extractfile(member).read().decode().splitlines()
+                              if '=' in line and not line.startswith('#'))
+                ubuntu = fields.get('ID', '').strip('"') == 'ubuntu' and fields.get('VERSION_ID', '').strip('"') == '24.04'
             if name == '/usr/local/bin/cnpg-backup':
                 with tar.extractfile(member) as src, (WORK / (flavor + '-binary')).open('wb') as dst:
                     shutil.copyfileobj(src, dst)
@@ -134,7 +141,7 @@ def image_files(archive, flavor):
                 if name.endswith('/native-packages.json'):
                     packages = value
     allowed = {'/usr/local/bin/cnpg-backup'} | {entry['path'] for entry in native}
-    if executable != allowed or not packages:
+    if executable != allowed or not packages or not ubuntu:
         raise ValueError('image executable/package closure differs')
     if flavor == 'manager' and native:
         raise ValueError('native code in manager')
@@ -154,8 +161,11 @@ def scan_coverage(report, packages):
     if os_info.get('Family') != 'ubuntu' or os_info.get('Name') != '24.04':
         raise ValueError('scanner did not identify the pinned Ubuntu package origin')
     results = report.get('Results', [])
-    detected = {(p['Name'], p['Version']) for r in results if r.get('Class') == 'os-pkgs'
-                for p in r.get('Packages', [])}
+    # Trivy separates dpkg epoch/upstream/revision; compare the full locked
+    # version, not just the upstream component (which would hide patch drift).
+    detected = {(p['Name'], (str(p['Epoch']) + ':' if p.get('Epoch') else '') + p['Version']
+                 + ('-' + p['Release'] if p.get('Release') else ''))
+                for r in results if r.get('Class') == 'os-pkgs' for p in r.get('Packages', [])}
     if {(p['name'], p['version']) for p in packages} - detected:
         raise ValueError('scanner omitted shipped native/CA package versions')
     if not any(r.get('Type') == 'gobinary' and r.get('Packages') for r in results):
@@ -248,7 +258,9 @@ def scan(args):
             archive.unlink(missing_ok=True)
         run('syft', 'scan', 'registry:' + image, '-o', 'spdx-json=' + str(OUT / (flavor + '.spdx.json')))
         raw = WORK / (flavor + '-trivy.json')
-        run('trivy', 'image', '--cache-dir', cache, '--scanners', 'vuln,secret', '--ignorefile', '/dev/null',
+        # Trivy's Ubuntu analyzer requires /etc/lsb-release. Our exact scratch
+        # roots carry os-release instead, verified above before this override.
+        run('trivy', 'image', '--distro', 'ubuntu/24.04', '--cache-dir', cache, '--scanners', 'vuln,secret', '--ignorefile', '/dev/null',
             '--parallel', '2', '--timeout', '15m', '--list-all-pkgs', '--format', 'json', '--output', raw, image)
         report = json.loads(raw.read_text())
         blockers.extend({'subject': flavor, **b} for b in trivy_gate(report))

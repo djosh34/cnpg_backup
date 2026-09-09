@@ -79,7 +79,7 @@ class SecurityTests(unittest.TestCase):
     def test_no_findings_is_not_proof_scanner_saw_native_packages(self):
         p = {'name': 'libpq5', 'version': '18.6-3.pgdg24.04+1'}
         report = {'Metadata': {'OS': {'Family': 'ubuntu', 'Name': '24.04'}}, 'Results': [
-            {'Class': 'os-pkgs', 'Packages': [{'Name': p['name'], 'Version': p['version']}]},
+            {'Class': 'os-pkgs', 'Packages': [{'Name': p['name'], 'Version': '18.6', 'Release': '3.pgdg24.04+1'}]},
             {'Type': 'gobinary', 'Packages': [{'Name': 'stdlib'}]}]}
         s.scan_coverage(report, [p])
         for broken in ({'Results': []}, {**report, 'Metadata': {}},
@@ -89,6 +89,10 @@ class SecurityTests(unittest.TestCase):
                 s.scan_coverage(broken, [p])
         with self.assertRaises(ValueError):
             s.scan_coverage(report, [{**p, 'version': 'wrong'}])
+        report['Results'][0]['Packages'] = [{'Name': 'zlib1g', 'Epoch': 1, 'Version': '1.3.dfsg', 'Release': '3.1ubuntu2.2'}]
+        s.scan_coverage(report, [{'name': 'zlib1g', 'version': '1:1.3.dfsg-3.1ubuntu2.2'}])
+        with self.assertRaises(ValueError):
+            s.scan_coverage(report, [{'name': 'zlib1g', 'version': '2:1.3.dfsg-3.1ubuntu2.2'}])
 
     def test_actual_export_inventory_rejects_added_shell_and_native_tamper(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -99,7 +103,8 @@ class SecurityTests(unittest.TestCase):
                     # placeholders, not just .dockerenv.
                     files = {name: (b'', 0o755) for name in
                              ('.dockerenv', 'dev/console', 'etc/hostname', 'etc/hosts', 'etc/resolv.conf')}
-                    files.update({'usr/local/bin/cnpg-backup': (b'ELF fixture', 0o755),
+                    files.update({'etc/os-release': (b'ID=ubuntu\nVERSION_ID="24.04"\n', 0o644),
+                                  'usr/local/bin/cnpg-backup': (b'ELF fixture', 0o755),
                              'usr/share/cnpg-backup/native-packages.json': (b'[{"name":"ca-certificates"}]', 0o644)})
                     if extra:
                         files.update(extra)
@@ -122,7 +127,8 @@ class SecurityTests(unittest.TestCase):
                                             ('dev/console', b'shell', 0o755),
                                             ('etc/hosts', b'', 0o777),
                                             ('etc/resolv.conf', b'shell', 0o755),
-                                            ('etc/hostname', b'', 0o4755)):
+                                            ('etc/hostname', b'', 0o4755),
+                                            ('etc/os-release', b'ID=debian\nVERSION_ID="12"\n', 0o644)):
                     with self.subTest(name=name, content=content, mode=mode), self.assertRaises(ValueError):
                         s.image_files(archive({name: (content, mode)}), 'manager')
                 with self.assertRaises(ValueError):
