@@ -67,6 +67,38 @@ class DockerBoundary:
 
 
 class ReviewFixTests(unittest.TestCase):
+    def test_owned_claim_gc_between_list_and_delete_is_idempotent_only_for_absence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            m = Manifest(root / 'evidence', {}, [])
+            f = Fixture(root / 'fixture', 'cb-repair-123456789abc', m, {}, {}, float('inf'))
+            state = {'retired_pod_uids': ['pod-uid'], 'pvc_uids': ['owned-uid']}
+            claims = [{'metadata': {'name': 'owned', 'uid': 'owned-uid'}},
+                      {'metadata': {'name': 'unrelated', 'uid': 'other-uid'}}]
+            def kube(*args):
+                if args[:2] == ('get', 'pods'):
+                    return json.dumps({'items': []})
+                if args[:2] == ('get', 'pvc'):
+                    return json.dumps({'items': claims})
+                self.assertEqual(args[:3], ('delete', 'pvc', 'owned'))
+                if '--ignore-not-found=true' not in args:
+                    raise CommandFailure('Error from server (NotFound): persistentvolumeclaims "owned" not found')
+                return ''  # authenticated kubectl NotFound after Cluster GC
+            with patch.object(f, 'quiesce_pods') as quiesce, patch.object(f, 'kube', side_effect=kube), \
+                 patch.object(f, 'reclaim') as reclaim:
+                f.retire_claims(state)
+                quiesce.assert_called_once_with('campaign-target', ['pod-uid'])
+                reclaim.assert_called_once_with()
+            def denied(*args):
+                if args[0] == 'delete':
+                    raise CommandFailure('Forbidden')
+                return kube(*args)
+            with patch.object(f, 'quiesce_pods'), patch.object(f, 'kube', side_effect=denied), \
+                 patch.object(f, 'reclaim') as reclaim:
+                with self.assertRaisesRegex(CommandFailure, 'Forbidden'):
+                    f.retire_claims(state)
+                reclaim.assert_not_called()
+
     def verification_fixture(self, root, **options):
         m = Manifest(root / 'manifest', {}, ['shell-free-original-verification'])
         bundle = root / 'bundle'

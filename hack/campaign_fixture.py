@@ -504,7 +504,7 @@ rmdir "$path"
             name = claim['metadata']['name']
             if any(v.get('persistentVolumeClaim', {}).get('claimName') == name for p in pods for v in p['spec'].get('volumes', [])):
                 raise CommandFailure('cleanup: target PVC still has a consumer')
-            self.kube('delete', 'pvc', name, '-n', 'campaign-target', '--wait=true', '--timeout=60s')
+            self.kube('delete', 'pvc', name, '-n', 'campaign-target', '--ignore-not-found=true', '--wait=true', '--timeout=60s')
         self.reclaim()
 
     def account(self, force=False, maintain=True):
