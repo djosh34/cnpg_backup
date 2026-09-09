@@ -119,6 +119,7 @@ def main():
         (OUT / 'candidate.json').write_text(json.dumps(record, indent=2) + '\n')
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write(flavor + '=' + ref + '\n')
+            output.write(flavor + '_digest=' + digest + '\n')
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
         summary.write('Unqualified premerge candidate `' + sha + '` (no version tags):\n\n')
         for image in record['images'].values():

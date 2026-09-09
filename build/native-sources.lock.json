@@ -1,0 +1,574 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "name": "ca-certificates",
+      "version": "20260601~24.04.1",
+      "binary_packages": [
+        "ca-certificates"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20260601~24.04.1.dsc",
+          "sha256": "42292e01982f1a0aaed5ab540bc771322864bf92798ca3099a1e582ced440116",
+          "bytes": 1769
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20260601~24.04.1.tar.xz",
+          "sha256": "fd3a351ad98f5b714915d4a7c82ae258a174b48f7d5391713c7f3445067143eb",
+          "bytes": 266460
+        }
+      ]
+    },
+    {
+      "name": "glibc",
+      "version": "2.39-0ubuntu8.8",
+      "binary_packages": [
+        "libc6"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39-0ubuntu8.8.dsc",
+          "sha256": "69c09b540d03e56b3adea7c4af98b862bfc36789795c9e21d37e58e699f57b00",
+          "bytes": 9387
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39.orig.tar.xz",
+          "sha256": "f77bd47cf8170c57365ae7bf86696c118adb3b120d3259c64c502d3dc1e2d926",
+          "bytes": 18520988
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39.orig.tar.xz.asc",
+          "sha256": "2cce427ef7933c17379f5514e4f0ccf8dffae5bf8c72f0f7e0bf8b8401f34be5",
+          "bytes": 833
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39-0ubuntu8.8.debian.tar.xz",
+          "sha256": "ff1aa3bb3eba4f302a99c9b957cacff6d79f26e9b0e663e379bf70a4f39d4283",
+          "bytes": 483068
+        }
+      ]
+    },
+    {
+      "name": "e2fsprogs",
+      "version": "1.47.0-2.4~exp1ubuntu4.1",
+      "binary_packages": [
+        "libcom-err2"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/e/e2fsprogs/e2fsprogs_1.47.0-2.4~exp1ubuntu4.1.dsc",
+          "sha256": "215fe7b95c246894654c59a01514dfdc16ec17a0dcb09dc7a7c1ec1246ed4964",
+          "bytes": 3294
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/e/e2fsprogs/e2fsprogs_1.47.0.orig.tar.gz",
+          "sha256": "6667afde56eef0c6af26684974400e4d2288ea49e9441bf5e6229195d51a3578",
+          "bytes": 9637717
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/e/e2fsprogs/e2fsprogs_1.47.0.orig.tar.gz.asc",
+          "sha256": "704928204a52ddaa0ac8ef549c1bfba3c38e66c361d3853c8a4c38e6082b90f1",
+          "bytes": 488
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/e/e2fsprogs/e2fsprogs_1.47.0-2.4~exp1ubuntu4.1.debian.tar.xz",
+          "sha256": "26b381ec175ff52d1cc2fd1b217f84b9e1d7d33a58dcbaf8942115dd27a03f84",
+          "bytes": 90580
+        }
+      ]
+    },
+    {
+      "name": "libffi",
+      "version": "3.4.6-1build1",
+      "binary_packages": [
+        "libffi8"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi_3.4.6-1build1.dsc",
+          "sha256": "a7a2c320c04149192a6dd78df8be28b2b27fd38e48d76f2ee6ba0c19ae0758f6",
+          "bytes": 2055
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi_3.4.6.orig.tar.gz",
+          "sha256": "9ac790464c1eb2f5ab5809e978a1683e9393131aede72d1b0a0703771d3c6cda",
+          "bytes": 598175
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi_3.4.6-1build1.debian.tar.xz",
+          "sha256": "9d8712818b833baf002a2413552194b8770800cb20b802ba1d3714156eba14fe",
+          "bytes": 10736
+        }
+      ]
+    },
+    {
+      "name": "gmp",
+      "version": "2:6.3.0+dfsg-2ubuntu6.1",
+      "binary_packages": [
+        "libgmp10"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gmp/gmp_6.3.0%2Bdfsg-2ubuntu6.1.dsc",
+          "sha256": "7fdd2464ee453296e33598dad6f84dd489640c08f50552389469bcf90537582e",
+          "bytes": 2345
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gmp/gmp_6.3.0%2Bdfsg.orig.tar.xz",
+          "sha256": "bd2966e6d277f79328e894a5a9f3ba3fbf2ed2be81def5f48623e30c23fb1572",
+          "bytes": 1870556
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gmp/gmp_6.3.0%2Bdfsg-2ubuntu6.1.debian.tar.xz",
+          "sha256": "0a7592ee94876fcc0dba60c9a9fba806a72752c104c04d553803e1b7a97026a3",
+          "bytes": 38908
+        }
+      ]
+    },
+    {
+      "name": "gnutls28",
+      "version": "3.8.3-1.1ubuntu3.6",
+      "binary_packages": [
+        "libgnutls30t64"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3-1.1ubuntu3.6.dsc",
+          "sha256": "34455be2f5fb343b5833ff40cc00623106326e6cc88aaf9862943f6b3aa5ab60",
+          "bytes": 3397
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3.orig.tar.xz",
+          "sha256": "f74fc5954b27d4ec6dfbb11dea987888b5b124289a3703afcada0ee520f4173e",
+          "bytes": 6463720
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3.orig.tar.xz.asc",
+          "sha256": "b2b90d225728890b0e2aa7c05e5f25f8ba1282821b46e72cd99f0c732b639cef",
+          "bytes": 854
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.3-1.1ubuntu3.6.debian.tar.xz",
+          "sha256": "b4cc6ebad4cb21ffe82d094f6d9c90de31e08a8b31ed36911a2adbe5aaa56d47",
+          "bytes": 124984
+        }
+      ]
+    },
+    {
+      "name": "krb5",
+      "version": "1.20.1-6ubuntu2.8",
+      "binary_packages": [
+        "libgssapi-krb5-2",
+        "libk5crypto3",
+        "libkrb5-3",
+        "libkrb5support0"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/krb5/krb5_1.20.1-6ubuntu2.8.dsc",
+          "sha256": "22fee326733aa493194a9f616378299c6dbc53de0b1577f309a7a08c1d4cf600",
+          "bytes": 3256
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/krb5/krb5_1.20.1.orig.tar.gz",
+          "sha256": "704aed49b19eb5a7178b34b2873620ec299db08752d6a8574f95d41879ab8851",
+          "bytes": 8661660
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/krb5/krb5_1.20.1-6ubuntu2.8.debian.tar.xz",
+          "sha256": "f8c90ef24a2a3c8396fa6c2f169017c03697c1468e243b34ab1e97141a903317",
+          "bytes": 130012
+        }
+      ]
+    },
+    {
+      "name": "nettle",
+      "version": "3.9.1-2.2build1.1",
+      "binary_packages": [
+        "libhogweed6t64",
+        "libnettle8t64"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/nettle/nettle_3.9.1-2.2build1.1.dsc",
+          "sha256": "db439554d51174b657660a2a47d3d4128838e063f3c9c7da67bb3fe91931d1d2",
+          "bytes": 2325
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/nettle/nettle_3.9.1.orig.tar.gz",
+          "sha256": "ccfeff981b0ca71bbd6fbcb054f407c60ffb644389a5be80d6716d5b550c6ce3",
+          "bytes": 2396741
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/nettle/nettle_3.9.1.orig.tar.gz.asc",
+          "sha256": "9746017a1a7fe60aad4b929ea592bc6ac51e12ea7179f289944eb44828d958af",
+          "bytes": 573
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/nettle/nettle_3.9.1-2.2build1.1.debian.tar.xz",
+          "sha256": "be4ad3b97b32c4c4bacc10aa4caef2f3fa0840c21c642407fc3d48c4535b7c5e",
+          "bytes": 24848
+        }
+      ]
+    },
+    {
+      "name": "libidn2",
+      "version": "2.3.7-2build1.1",
+      "binary_packages": [
+        "libidn2-0"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libi/libidn2/libidn2_2.3.7-2build1.1.dsc",
+          "sha256": "fa2970145d391578511ef78bc74a9ba7a57cff510d9e5fba39520f63b023986c",
+          "bytes": 2651
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libi/libidn2/libidn2_2.3.7.orig.tar.gz",
+          "sha256": "4c21a791b610b9519b9d0e12b8097bf2f359b12f8dd92647611a929e6bfd7d64",
+          "bytes": 2155214
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libi/libidn2/libidn2_2.3.7.orig.tar.gz.asc",
+          "sha256": "d4e78fc1c5a5c35980be3a04dd864574f450d55921360b0aa19326c75ada4a98",
+          "bytes": 228
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libi/libidn2/libidn2_2.3.7-2build1.1.debian.tar.xz",
+          "sha256": "50d3154a3a5b3506aa340c1784f96bfe0f4c5608e2a1a9dd265aa204da4ef327",
+          "bytes": 16468
+        }
+      ]
+    },
+    {
+      "name": "keyutils",
+      "version": "1.6.3-3build1",
+      "binary_packages": [
+        "libkeyutils1"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6.3-3build1.dsc",
+          "sha256": "d81679165d93bfcadd5bf3fdca123ce0e4562e2ad9712aa2b9d8c2d1c701324d",
+          "bytes": 2211
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6.3.orig.tar.gz",
+          "sha256": "a61d5706136ae4c05bd48f86186bcfdbd88dd8bd5107e3e195c924cfc1b39bb4",
+          "bytes": 137022
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6.3-3build1.debian.tar.xz",
+          "sha256": "71904f9f862c496333fd04c7af70c15b42198b90b41f460c501c80e86c3f1d3d",
+          "bytes": 13456
+        }
+      ]
+    },
+    {
+      "name": "openldap",
+      "version": "2.6.10+dfsg-0ubuntu0.24.04.1",
+      "binary_packages": [
+        "libldap2"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openldap/openldap_2.6.10%2Bdfsg-0ubuntu0.24.04.1.dsc",
+          "sha256": "63be3643ff4157d84ef8bd9763fb7252695ceaea46773277600377417ecd21de",
+          "bytes": 3653
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openldap/openldap_2.6.10%2Bdfsg.orig.tar.xz",
+          "sha256": "e871102bda1e42155fd4d6be4825a297e1c593cb0907b84fc7dde888dc847877",
+          "bytes": 3754560
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openldap/openldap_2.6.10%2Bdfsg-0ubuntu0.24.04.1.debian.tar.xz",
+          "sha256": "91bdd643954645ce8ba51152516831ce4dcb497a222b88a5df847c4780e5f79e",
+          "bytes": 191132
+        }
+      ]
+    },
+    {
+      "name": "lz4",
+      "version": "1.9.4-1build1.1",
+      "binary_packages": [
+        "liblz4-1"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/lz4/lz4_1.9.4-1build1.1.dsc",
+          "sha256": "ba7b585b15d8b4c955dd68c7af5aa89901cfbb3fdb4f2607ccad51628857d669",
+          "bytes": 2061
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/lz4/lz4_1.9.4.orig.tar.gz",
+          "sha256": "0b0e3aa07c8c063ddf40b082bdf7e37a1562bda40a0ff5272957f3e987e0e54b",
+          "bytes": 354063
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/lz4/lz4_1.9.4-1build1.1.debian.tar.xz",
+          "sha256": "9551b039576db7c87f38c3c847283877de65114cca06488accb9596a7c4f1ead",
+          "bytes": 8356
+        }
+      ]
+    },
+    {
+      "name": "p11-kit",
+      "version": "0.25.3-4ubuntu2.2",
+      "binary_packages": [
+        "libp11-kit0"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/p11-kit/p11-kit_0.25.3-4ubuntu2.2.dsc",
+          "sha256": "c3975f825965d6ee899edcfb8bce29d56716b322859df37f200e3aa80d0da69e",
+          "bytes": 2406
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/p11-kit/p11-kit_0.25.3.orig.tar.xz",
+          "sha256": "d8ddce1bb7e898986f9d250ccae7c09ce14d82f1009046d202a0eb1b428b2adc",
+          "bytes": 991528
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/p11-kit/p11-kit_0.25.3-4ubuntu2.2.debian.tar.xz",
+          "sha256": "297b8c03f6cf5bc9a00487ddcfee8ab674040afb7b256029a5eeaf8c5edb18a5",
+          "bytes": 28712
+        }
+      ]
+    },
+    {
+      "name": "postgresql-18",
+      "version": "18.6-3.pgdg24.04+1",
+      "binary_packages": [
+        "libpq5",
+        "postgresql-18",
+        "postgresql-client-18"
+      ],
+      "files": [
+        {
+          "url": "https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/postgresql-18_18.6-3.pgdg24.04%2B1.dsc",
+          "sha256": "b450925f13017ecc496e2e4fbfa8466c44ca365b931aa0c1949f01bb9cdfb4db",
+          "bytes": 3614
+        },
+        {
+          "url": "https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/postgresql-18_18.6.orig.tar.bz2",
+          "sha256": "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f",
+          "bytes": 22632314
+        },
+        {
+          "url": "https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/postgresql-18_18.6-3.pgdg24.04%2B1.debian.tar.xz",
+          "sha256": "1d1877a282a81d4b6b8a6afffa542ec23728263084de78af3513279f6ed81e18",
+          "bytes": 34448
+        }
+      ]
+    },
+    {
+      "name": "readline",
+      "version": "8.2-4build1",
+      "binary_packages": [
+        "libreadline8t64"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/r/readline/readline_8.2-4build1.dsc",
+          "sha256": "442c688eb851652987a0b1a7f85d236c6fa445757f188bc275ec475d0fabf22f",
+          "bytes": 2926
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/r/readline/readline_8.2.orig.tar.gz",
+          "sha256": "3feb7171f16a84ee82ca18a36d7b9be109a52c04f492a053331d7d1095007c35",
+          "bytes": 3043952
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/r/readline/readline_8.2-4build1.debian.tar.xz",
+          "sha256": "d3b4bfa92d0026f5d3f5d2b21e2bf6d8ae163f9ccdebdcef20afde77901c7b70",
+          "bytes": 33816
+        }
+      ]
+    },
+    {
+      "name": "cyrus-sasl2",
+      "version": "2.1.28+dfsg1-5ubuntu3.1",
+      "binary_packages": [
+        "libsasl2-2"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/c/cyrus-sasl2/cyrus-sasl2_2.1.28%2Bdfsg1-5ubuntu3.1.dsc",
+          "sha256": "6ede2d7122c4ea1e807f45b647edbdf9fb1521ad09b0ca0b9b48f220ef33f23f",
+          "bytes": 3501
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/c/cyrus-sasl2/cyrus-sasl2_2.1.28%2Bdfsg1.orig.tar.xz",
+          "sha256": "e796a5d85d1a85e1b433d43504e467f9075c7ebc0b45730a3996cf11b1deada4",
+          "bytes": 794540
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/c/cyrus-sasl2/cyrus-sasl2_2.1.28%2Bdfsg1-5ubuntu3.1.debian.tar.xz",
+          "sha256": "a1017cf9d4fd098325338d1d7f1f71cb87102934e7b35c8f5e726d246360689e",
+          "bytes": 98324
+        }
+      ]
+    },
+    {
+      "name": "openssl",
+      "version": "3.0.13-0ubuntu3.15",
+      "binary_packages": [
+        "libssl3t64"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.15.dsc",
+          "sha256": "ae1c9a23219f0617b866d765f750ebd3bac74d93b7a235e6e53289781a056f0a",
+          "bytes": 2516
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/openssl_3.0.13.orig.tar.gz",
+          "sha256": "88525753f79d3bec27d2fa7c66aa0b92b3aa9498dafd93d7cfa4b3780cdae313",
+          "bytes": 15294843
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.15.debian.tar.xz",
+          "sha256": "a48bc18f3afd7030cd73712f180af343c4642e2d0ac65ac06fe1ec0ca7506077",
+          "bytes": 209648
+        }
+      ]
+    },
+    {
+      "name": "libtasn1-6",
+      "version": "4.19.0-3ubuntu0.24.04.2",
+      "binary_packages": [
+        "libtasn1-6"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0-3ubuntu0.24.04.2.dsc",
+          "sha256": "a322b48ad14f13ef24ccebcc1feab975817c67000382096146a281d0b4354e7e",
+          "bytes": 2801
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0.orig.tar.gz",
+          "sha256": "1613f0ac1cf484d6ec0ce3b8c06d56263cc7242f1c23b30d82d23de345a63f7a",
+          "bytes": 1786576
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0.orig.tar.gz.asc",
+          "sha256": "8410c0c004f3509c218a98b276b3308b9c46f48068e8b1a6d9ebfd61ea9f357a",
+          "bytes": 228
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libt/libtasn1-6/libtasn1-6_4.19.0-3ubuntu0.24.04.2.debian.tar.xz",
+          "sha256": "23e6e79b1be16c247e0d3b152a5838d5d182a788ba053c640b2a120b8b00adad",
+          "bytes": 25112
+        }
+      ]
+    },
+    {
+      "name": "ncurses",
+      "version": "6.4+20240113-1ubuntu2.2",
+      "binary_packages": [
+        "libtinfo6"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/ncurses/ncurses_6.4%2B20240113-1ubuntu2.2.dsc",
+          "sha256": "a7dea4604db5c8bc113eda2c4a7353f357618a74d96e404ae98655128e2f03ec",
+          "bytes": 3942
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/ncurses/ncurses_6.4%2B20240113.orig.tar.gz",
+          "sha256": "37a12a0f8ae2605012c9a164dd286b0cfa02b51b5055836d09eb3d597fc351b1",
+          "bytes": 3688489
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/ncurses/ncurses_6.4%2B20240113.orig.tar.gz.asc",
+          "sha256": "b70cfa4f155f61dfa7c085ad1e3f90c73132ad198764d7793a44cd7fdca51f1b",
+          "bytes": 729
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/ncurses/ncurses_6.4%2B20240113-1ubuntu2.2.debian.tar.xz",
+          "sha256": "c7bbb8483d7ec358fb925a370575d8ebef63d6e455edce140de2ca7b86cf98d1",
+          "bytes": 50532
+        }
+      ]
+    },
+    {
+      "name": "libunistring",
+      "version": "1.1-2build1.1",
+      "binary_packages": [
+        "libunistring5"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.1-2build1.1.dsc",
+          "sha256": "496ec65625b57a9c5cd0577843814cbd4701ab123a6146a56053dcc9463ae09e",
+          "bytes": 2292
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.1.orig.tar.xz",
+          "sha256": "827c1eb9cb6e7c738b171745dac0888aa58c5924df2e59239318383de0729b98",
+          "bytes": 2397676
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.1.orig.tar.xz.asc",
+          "sha256": "dadae6c38f85f9e8776231436c601c386924ceb44d511456c61c9be73608933d",
+          "bytes": 833
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.1-2build1.1.debian.tar.xz",
+          "sha256": "06254c8f2ad989bd8ff267fd921d6711fbc0390ff10b99bc3be09fe870baab5e",
+          "bytes": 14188
+        }
+      ]
+    },
+    {
+      "name": "libzstd",
+      "version": "1.5.5+dfsg2-2build1.1",
+      "binary_packages": [
+        "libzstd1"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libz/libzstd/libzstd_1.5.5%2Bdfsg2-2build1.1.dsc",
+          "sha256": "c190a5dff9e7c5b5b1399f0d701bb2c173bc7cbdf14d5e05970f5ac066c25570",
+          "bytes": 2485
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libz/libzstd/libzstd_1.5.5%2Bdfsg2.orig.tar.xz",
+          "sha256": "d7cf3c10d416fd999cb8fcf7685d9268ba7bec8eb78121fc2d0d916fa393d22b",
+          "bytes": 1784164
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libz/libzstd/libzstd_1.5.5%2Bdfsg2-2build1.1.debian.tar.xz",
+          "sha256": "c1df6d2628b26d085259b8e7ac020eb060e4c1feca98d6103058eda5ded725bc",
+          "bytes": 21288
+        }
+      ]
+    },
+    {
+      "name": "zlib",
+      "version": "1:1.3.dfsg-3.1ubuntu2.2",
+      "binary_packages": [
+        "zlib1g"
+      ],
+      "files": [
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/z/zlib/zlib_1.3.dfsg-3.1ubuntu2.2.dsc",
+          "sha256": "56a7cd029863cbddafce831e4e63cccfa84017f93617929cb7c02f80bb5a122a",
+          "bytes": 2987
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/z/zlib/zlib_1.3.dfsg.orig.tar.xz",
+          "sha256": "5eea0322c1c21c75cad3b607ac1c43ff5c71e014b8ac4a34300b5e2b80d02e70",
+          "bytes": 1128572
+        },
+        {
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/z/zlib/zlib_1.3.dfsg-3.1ubuntu2.2.debian.tar.xz",
+          "sha256": "de1c2d532ecb7caf99ccb905fb03c37fe0c8117fbdc79d05be4474b71e6398c2",
+          "bytes": 61316
+        }
+      ]
+    }
+  ]
+}

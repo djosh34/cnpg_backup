@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "trivy": {
+    "version": "0.74.0",
+    "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz",
+    "sha256": "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+  },
+  "syft": {
+    "version": "1.51.1",
+    "url": "https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz",
+    "sha256": "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3"
+  },
+  "govulncheck": {
+    "version": "v1.8.0",
+    "module": "golang.org/x/vuln",
+    "sum": "h1:clG4qBU6zH5VKjti8n5j8BBuYzoSha392xXMkXS351U=",
+    "database": "https://vuln.go.dev"
+  }
+}

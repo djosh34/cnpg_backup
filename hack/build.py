@@ -7,7 +7,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from bootstrap import CACHE, LOCK, REPO
+from bootstrap import CACHE, LOCK, REPO, download
+from native_metadata import control_file, status_record
 from godeps import inventory as go_inventory
 
 OUT = REPO / 'build/out'
@@ -73,6 +74,9 @@ if __name__ == '__main__':
         (root / 'usr/local/bin/cnpg-backup').chmod(0o755)
         etc = root / 'etc'
         (etc / 'ssl/certs').mkdir(parents=True)
+        # The selected CA/native files are Ubuntu noble packages, not an
+        # unidentified scratch OS. Scanner distro matching needs this metadata.
+        shutil.copyfile(CACHE / 'pgroot/usr/lib/os-release', etc / 'os-release')
         (etc / 'passwd').write_text('postgres:x:26:26:PostgreSQL:/nonexistent:/nonexistent\n')
         (etc / 'group').write_text('postgres:x:26:\n')
         certs = sorted((CACHE / 'pgroot/usr/share/ca-certificates/mozilla').glob('*.crt'))
@@ -95,7 +99,8 @@ if __name__ == '__main__':
         (root / 'usr/share/cnpg-backup/native-packages.json').write_text(json.dumps(native_packages, indent=2) + '\n')
         status = root / 'var/lib/dpkg/status'
         status.parent.mkdir(parents=True)
-        status.write_text('\n'.join(f'Package: {p["name"]}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {p["version"]}\nDescription: selected files only; see native-files.json\n' for p in native_packages))
+        status.write_text('\n'.join(status_record(p, control_file(download(p, p['name'] + '.deb')))
+                                    for p in native_packages))
         for package in native_packages:
             copyright = CACHE / 'pgroot/usr/share/doc' / package['name'] / 'copyright'
             if not copyright.exists():

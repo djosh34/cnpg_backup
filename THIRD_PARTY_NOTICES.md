@@ -43,10 +43,13 @@ Original project work is all rights reserved; this is not a project license.
   either runtime image. Its pinned source is
   https://github.com/minio/minio/tree/07c3a429bfed433e49018cb0f78a52145d4bedeb.
 
-These foundation images are not release-qualified distributions. Before release,
-PR J/K must bundle or otherwise satisfy each component's exact corresponding
-source/redistribution obligations, including LGPL libraries, with the release
-notices and source artifacts. Do not assume a package URL or this summary alone
-satisfies those obligations. Ubuntu source packages are available via
-https://archive.ubuntu.com/ubuntu/ and PGDG source packages via
-https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/.
+These images are not release-qualified distributions. J's
+`build/native-sources.lock.json` attributes binary packages to their exact
+corresponding distro/PGDG sources, including packaging patches/build instructions.
+The hosted security job verifies and bundles the actual selected closure's source
+archives and .dsc files as `native-sources.tar`; K must preserve that bundle with
+the release notices/assets, including LGPL source and replacement-library rights.
+See [security packaging](docs/security-packaging.md). A package URL, expiring CI
+artifact or this summary alone does not satisfy release redistribution obligations.
+Ubuntu source packages originate at https://archive.ubuntu.com/ubuntu/ and PGDG
+sources at https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/.
