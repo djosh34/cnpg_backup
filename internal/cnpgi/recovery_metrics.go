@@ -34,6 +34,12 @@ func (m *backupMetrics) restore(c Cluster, state recoveryOperation, known bool, 
 	m.restoreSeries[labels] = restoreSeries{state.State, known, state.LifetimeReleased, now}
 }
 
+func (m *backupMetrics) forgetRestore(c Cluster) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.restoreSeries, restoreLabels{c.Metadata.Namespace, c.Metadata.Name})
+}
+
 func (m *backupMetrics) writeRestore(w io.Writer) {
 	m.mu.Lock()
 	values := make(map[restoreLabels]restoreSeries, len(m.restoreSeries))

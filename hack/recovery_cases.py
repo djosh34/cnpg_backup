@@ -255,16 +255,17 @@ class Campaign:
         source = copy.deepcopy(self.repository)
         source['metadata'] = {'name': 'source', 'namespace': TARGET}
         h.apply(source)
-        self.cluster = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster', 'metadata': {'name': 'database', 'namespace': SOURCE},
-                        'spec': {'instances': 2 if 'ops-upgrade' in self.args.fixtures else 1, 'imageName': h.LOCK['database'],
-                                 'smartShutdownTimeout': 30, 'stopDelay': 60,
-                                 'imagePullSecrets': self.image_pull_secrets,
-                                 'storage': {'size': '3Gi', 'storageClass': 'campaign-target'},
-                                 'walStorage': {'size': '3Gi', 'storageClass': 'campaign-target'},
-                                 'tablespaces': [{'name': 'fast_space', 'storage': {'size': '3Gi', 'storageClass': 'campaign-target'}}],
-                                 'postgresql': {'parameters': {'summarize_wal': 'on', 'wal_summary_keep_time': '14d',
-                                                              'archive_timeout': '60s', 'track_commit_timestamp': 'on'}},
-                                 'plugins': [{'name': PLUGIN, 'isWALArchiver': True, 'parameters': {'repository': 'destination'}}]}}
+        # Exercise the published consumer template through ACTUAL CNPG admission.
+        # Only disposable placement/capacity/observation settings differ; never
+        # replace its image reference with a hidden developer-only working value.
+        self.cluster = json.loads((h.ROOT / 'config/cluster-example.json').read_text())
+        self.cluster['metadata'] = {'name': 'database', 'namespace': SOURCE}
+        self.cluster['spec'].update(instances=2 if 'ops-upgrade' in self.args.fixtures else 1,
+                                    smartShutdownTimeout=30, stopDelay=60, imagePullSecrets=self.image_pull_secrets,
+                                    storage={'size': '3Gi', 'storageClass': 'campaign-target'},
+                                    walStorage={'size': '3Gi', 'storageClass': 'campaign-target'},
+                                    tablespaces=[{'name': 'fast_space', 'storage': {'size': '3Gi', 'storageClass': 'campaign-target'}}])
+        self.cluster['spec']['postgresql']['parameters']['track_commit_timestamp'] = 'on'
         if 'differential' in getattr(self.args, 'fixtures', []):
             self.cluster['spec']['postgresql']['parameters']['log_replication_commands'] = 'on'
             # Pace only this disposable workload's checkpoints within the fixed

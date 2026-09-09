@@ -38,6 +38,15 @@ class ConfigurationManifests(unittest.TestCase):
         self.assertFalse(retention['enabled'])
         self.assertTrue(retention['dryRun'])
 
+    def test_consumer_source_and_recovery_keep_cnpg_version_tag_and_exact_digest(self):
+        cluster = json.loads((ROOT / 'config/cluster-example.json').read_text())
+        pinned = json.loads((ROOT / 'build/kubernetes-inputs.lock.json').read_text())['database']
+        # CNPG needs the tag to infer PG major even when the digest is pinned.
+        self.assertEqual(cluster['spec']['imageName'], pinned)
+        self.assertIn(':18.6@sha256:', pinned)
+        recovered = renderer.recovery_cluster(cluster, 'database', 'recovered', 'source', 'destination', {})
+        self.assertEqual(recovered['spec']['imageName'], pinned)
+
     def test_consumer_recovery_render_discards_identity_and_rejects_bound_targets(self):
         source = {'apiVersion': 'postgresql.cnpg.io/v1', 'kind': 'Cluster',
                   'metadata': {'name': 'database', 'namespace': 'test', 'uid': 'old', 'annotations': {'private': 'discard'}},

@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
+
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -24,7 +26,7 @@ func (a *API) runRecoveryOperations(ctx context.Context, metrics *backupMetrics)
 		if e == nil {
 			for _, o := range list.Items {
 				c, e := ParseCluster([]byte(jsonText(o.Object)))
-				if e != nil || c.Spec.Bootstrap.Recovery == nil {
+				if e != nil {
 					continue
 				}
 				a.reconcileRecoveryOperation(pass, c, metrics, time.Now())
@@ -48,6 +50,21 @@ func (a *API) runRecoveryOperations(ctx context.Context, metrics *backupMetrics)
 // Observe only validated durable state. Failed reads/persistence become Unknown;
 // diagnostics cannot supply the uninterrupted observer's termination evidence.
 func (a *API) reconcileRecoveryOperation(ctx context.Context, c Cluster, metrics *backupMetrics, now time.Time) {
+	owned := false
+	if recovery := c.Spec.Bootstrap.Recovery; recovery != nil {
+		for _, source := range c.Spec.ExternalClusters {
+			if source.Name == recovery.Source && source.Plugin != nil && source.Plugin.Name == recoveryguard.PluginName {
+				owned = true
+				break
+			}
+		}
+	}
+	if !owned {
+		// Destination archival or an unused external declaration does not make
+		// another plugin's restore ours. Evict stale labels on Cluster-name reuse.
+		metrics.forgetRestore(c)
+		return
+	}
 	state := recoveryOperation{}
 	known := false
 	defer func() { metrics.restore(c, state, known, now) }()

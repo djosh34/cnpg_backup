@@ -99,7 +99,8 @@ The example192h/26h budgets suit weekly full/daily differential, not arbitrary s
 Manager operational gauges:
 
 - `cnpg_backup_restore_{observation_known,active,uncertain,lifetime_release_pending}`:
-  only namespace/cluster labels; observation older than5m is Unknown and state
+  only namespace/cluster labels, for the **selected external source using this
+  plugin**, not unrelated restores or unused source declarations. Observation older than5m is Unknown and state
   gauges are omitted. A missing operation is not completed/healthy. Completed
   lifetime release does not prove another process-reader hold is gone.
 - `cnpg_backup_retention_blocked`, `cnpg_backup_repository_admission_blocked`,

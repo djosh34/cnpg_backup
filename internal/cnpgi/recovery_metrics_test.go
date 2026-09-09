@@ -2,6 +2,7 @@ package cnpgi
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,7 +11,48 @@ import (
 	"github.com/djosh34/cnpg_backup/internal/configuration"
 	"github.com/djosh34/cnpg_backup/internal/recoveryguard"
 	"github.com/djosh34/cnpg_backup/internal/repository"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	ktesting "k8s.io/client-go/testing"
 )
+
+func TestRecoveryMetricsOwnOnlyTheSelectedSourcePlugin(t *testing.T) {
+	a, c, _ := fixture(t, true)
+	ctx := context.Background()
+	m := newBackupMetrics()
+	scrape := func() string {
+		w := httptest.NewRecorder()
+		m.ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+		return w.Body.String()
+	}
+	// OUR selected source, but no durable operation yet: Unknown is important.
+	a.reconcileRecoveryOperation(ctx, c, m, time.Now())
+	if !strings.Contains(scrape(), `cnpg_backup_restore_observation_known{namespace="test",cluster="database"} 0`) {
+		t.Fatal(scrape())
+	}
+	// A new unrelated restore can reuse a deleted Cluster's name. Its destination
+	// may still archive with us; that does not make its bootstrap source ours.
+	c.Spec.ExternalClusters[0].Plugin.Name = "other.example/plugin"
+	a.reconcileRecoveryOperation(ctx, c, m, time.Now())
+	if strings.Contains(scrape(), "cnpg_backup_restore_observation_known{") {
+		t.Fatal("unrelated recovery caused a false Unknown incident", scrape())
+	}
+	// An unused declaration of our source also does not confer ownership.
+	c.Spec.ExternalClusters[0].Plugin.Name = "cnpg-backup.djosh34.github.io"
+	c.Spec.Bootstrap.Recovery.Source = "different-source"
+	a.reconcileRecoveryOperation(ctx, c, m, time.Now())
+	if strings.Contains(scrape(), "cnpg_backup_restore_observation_known{") {
+		t.Fatal("unused source declaration was observed", scrape())
+	}
+	c.Spec.Bootstrap.Recovery.Source = c.Spec.ExternalClusters[0].Name
+	a.Client.(*dynamicfake.FakeDynamicClient).PrependReactor("get", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("operation read unavailable")
+	})
+	a.reconcileRecoveryOperation(ctx, c, m, time.Now())
+	if !strings.Contains(scrape(), `cnpg_backup_restore_observation_known{namespace="test",cluster="database"} 0`) {
+		t.Fatal("our unreadable operation was hidden", scrape())
+	}
+}
 
 // Exercise the existing durable-operation reconciliation and public scrape,
 // not a second recovery-state model. No metric may release source protection.
