@@ -307,6 +307,9 @@ class Campaign:
     def archive(self):
         h = self.h
         pod = self.primary()
+        # An idle pg_switch_wal is a no-op and can name the still-open segment
+        # after native backup's own switch. Establish real WAL before waiting.
+        self.sql(SOURCE, pod, "SELECT pg_create_restore_point('campaign_archive_boundary')")
         segment = self.sql(SOURCE, pod, 'SELECT pg_walfile_name(pg_switch_wal())')
         h.wait(lambda: self.sql(SOURCE, pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n='" + segment + ".done'") == '1',
                'known durable archive boundary', 120)

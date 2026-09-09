@@ -79,6 +79,35 @@ class RetentionCampaignTests(unittest.TestCase):
                 self.assertEqual(target.stat().st_mode & 0o777, 0o555)
             self.assertFalse(target.with_name('actor.next').exists())
 
+    def test_archive_boundary_writes_wal_before_switching_idle_segment(self):
+        # Observed after I's independent full. Pinned PG18 probe: idle switch
+        # names current segment at0/2000028 but never archives it; writing a
+        # restore-point record first produces the actual completed segment.
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from recovery_cases import Campaign
+        c = object.__new__(Campaign)
+        written = False
+        segment = '000000010000000000000002'
+        def sql(namespace, pod, query):
+            nonlocal written
+            if 'pg_create_restore_point' in query:
+                written = True
+                return '0/2000028'
+            if 'pg_switch_wal' in query:
+                return segment
+            if 'pg_ls_dir' in query:
+                return '1' if written else '0'
+            raise AssertionError(query)
+        def wait(predicate, *args):
+            self.assertTrue(predicate(), 'idle WAL switch did not create an archiveable boundary')
+        c.h = SimpleNamespace(wait=wait)
+        c.primary = lambda: 'source-primary'
+        c.sql = sql
+        c.fetch_archive = Mock(return_value='verified remote WAL bytes')
+        self.assertEqual(c.archive(), 'verified remote WAL bytes')
+        c.fetch_archive.assert_called_once_with(segment)
+
     def test_retention_is_actual_explicit_fixture_scope(self):
         cases = selected('recovery', ['retention-runtime'])
         self.assertEqual([c['id'] for c in cases], ['retention-runtime'])
