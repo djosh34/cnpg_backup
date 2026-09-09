@@ -42,7 +42,7 @@ class CandidateTests(unittest.TestCase):
         def command(*args):
             return SimpleNamespace(stdout=changed)
         with patch.object(Path, 'read_text', return_value=json.dumps(subject)), patch.object(c, 'run', side_effect=command) as run:
-            changed = 'docs/recovery-campaign.md\nhack/recovery_cases.py\nhack/test_new.py\n.github/workflows/pr-g-candidate.yml\n'
+            changed = 'docs/recovery-campaign.md\nhack/recovery_cases.py\nhack/backup_metrics_smoke.py\nhack/test_new.py\n.github/workflows/pr-g-candidate.yml\n'
             self.assertEqual(c.reuse_subject('c' * 40), subject)
             self.assertIn(unittest.mock.call('git', 'merge-base', '--is-ancestor', 'a' * 40, 'c' * 40), run.call_args_list)
             for path in ('cmd/new.go', 'internal/cnpgi/restore.go', 'pkg/new.go',
