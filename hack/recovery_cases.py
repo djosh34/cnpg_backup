@@ -639,6 +639,21 @@ class Campaign:
         assert 0 < observed['workspace_capacity_bytes'] <= 8 << 30, 'workspace is not a finite supported filesystem'
         return observed
 
+    def wal_during_transfer(self, pod, wal):
+        # Call the real Unix WAL RPC, not an ephemeral PostgreSQL .done marker:
+        # high WAL turnover may recycle archive_status entries. Durable return,
+        # identical retry and independent remote/restored bytes are the oracle.
+        self.sql(SOURCE, pod, "SELECT pg_create_restore_point('j_transfer_wal')")
+        segment = self.sql(SOURCE, pod, 'SELECT pg_walfile_name(pg_switch_wal())')
+        self.event('transfer-WAL-requested', segment=segment)
+        started = time.monotonic()
+        wal.rpc(pod, 'archive', segment)
+        latency = time.monotonic() - started
+        wal.rpc(pod, 'archive', segment)
+        wal.verify(pod, segment)
+        self.event('transfer-WAL-durable-and-identical', segment=segment, callback_seconds=latency)
+        return segment, latency
+
     def case_operational_rotation_resources(self):
         h = self.h
         with self.m.case('operational-rotation-resources'):
@@ -696,11 +711,7 @@ class Campaign:
                 h.wait(new_leaf, 'actual server TLS handshake trusted by new independent private root', 120)
                 assert self.wal.control()['active_transfers'] > 0, 'no sustained transfer at WAL callback admission'
                 backlog_before = int(self.sql(SOURCE, pod, "SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') n WHERE n LIKE '%.ready'"))
-                wal_started = time.monotonic()
-                segment = self.archive()  # actual PostgreSQL archive callback + independent remote bytes
-                wal.rpc(pod, 'archive', segment)  # identical retry must remain durably acknowledged
-                wal.verify(pod, segment)
-                latency = time.monotonic() - wal_started
+                segment, latency = self.wal_during_transfer(pod, wal)
                 after = self.wal.control()
                 assert after['active_transfers'] > 0 and after['transferred_bytes'] > before['transferred_bytes'], 'WAL did not overlap sustained body progress'
                 assert after['principal_requests'].get(new_digest, 0) > 0, 'new operation did not use the new valid principal'

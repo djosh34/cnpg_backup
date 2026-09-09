@@ -45,6 +45,23 @@ class ResourceEvidence(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(AssertionError):
                 c.operational_sample('pod', idle=True)
 
+    def test_transfer_wal_requires_real_callback_retry_and_remote_byte_verification(self):
+        campaign = Campaign(None, None, None)
+        campaign.sql = Mock(side_effect=['', '000000010000000000000012'])
+        campaign.event = Mock()
+        wal = Mock()
+        segment, latency = campaign.wal_during_transfer('database-1', wal)
+        self.assertEqual(segment, '000000010000000000000012')
+        self.assertGreaterEqual(latency, 0)
+        self.assertEqual(wal.method_calls, [unittest.mock.call.rpc('database-1', 'archive', segment),
+            unittest.mock.call.rpc('database-1', 'archive', segment), unittest.mock.call.verify('database-1', segment)])
+        for method in ('rpc', 'verify'):
+            campaign.sql.side_effect = ['', segment]
+            wal = Mock()
+            getattr(wal, method).side_effect = CommandFailure('actual callback/byte oracle failed')
+            with self.subTest(method=method), self.assertRaises(CommandFailure):
+                campaign.wal_during_transfer('database-1', wal)
+
     def test_source_ready_wait_uses_existing_accounted_wait_not_blocking_kubectl(self):
         import json
         calls = []
