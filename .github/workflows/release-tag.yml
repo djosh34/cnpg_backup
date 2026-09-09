@@ -1,0 +1,74 @@
+name: promote-v0.1.0-exact-manifests
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tag:
+    if: github.repository == 'djosh34/cnpg_backup' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_USER: ${{ github.actor }}
+    steps:
+      - name: Attach v0.1.0 to original tested manifest bytes (no build or index wrapping)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, urllib.error, urllib.parse, urllib.request
+
+          def request(url, headers, method='GET', data=None):
+              req = urllib.request.Request(url, headers=headers, method=method, data=data)
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return response.status, response.read()
+
+          # Fixed reviewed release record from the merged K commit, not user inputs
+          # or an arbitrary ref. No checkout or execution of candidate source.
+          _, body = request('https://api.github.com/repos/djosh34/cnpg_backup/contents/'
+              '.github/release-subjects/v0.1.0.json?ref=803d016744869bb98651492828511cb99aee850b',
+              {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+          subject = json.loads(base64.b64decode(json.loads(body)['content']))
+          basic = base64.b64encode((os.environ['GH_USER'] + ':' + os.environ['GH_TOKEN']).encode()).decode()
+          prepared = []
+          for flavor in ('manager', 'pg18'):
+              repo = 'djosh34/cnpg-backup-' + flavor
+              reference = subject['images'][flavor]
+              assert reference.startswith('ghcr.io/' + repo + '@sha256:')
+              digest = reference.split('@')[1]
+              _, body = request('https://ghcr.io/token?' + urllib.parse.urlencode({
+                  'service': 'ghcr.io', 'scope': 'repository:' + repo + ':pull,push'}),
+                  {'Authorization': 'Basic ' + basic})
+              headers = {'Authorization': 'Bearer ' + json.loads(body)['token'],
+                  'Accept': 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}
+              base = 'https://ghcr.io/v2/' + repo + '/manifests/'
+              _, raw = request(base + digest, headers)
+              assert 'sha256:' + hashlib.sha256(raw).hexdigest() == digest
+              manifest = json.loads(raw)
+              assert manifest['schemaVersion'] == 2 and 'layers' in manifest and 'manifests' not in manifest
+              existing = False
+              try:
+                  _, current = request(base + 'v0.1.0', headers)
+                  assert current == raw, 'REFUSE conflicting immutable version tag'
+                  existing = True
+              except urllib.error.HTTPError as error:
+                  if error.code != 404:
+                      raise
+                  errors = json.loads(error.read()).get('errors', [])
+                  assert errors and all(e['code'] == 'MANIFEST_UNKNOWN' for e in errors)
+              prepared.append((base, headers, raw, manifest['mediaType'], existing, reference))
+          # Both tags checked before any write. Same-byte retries are idempotent.
+          for base, headers, raw, media_type, existing, reference in prepared:
+              if not existing:
+                  status, _ = request(base + 'v0.1.0', {**headers, 'Content-Type': media_type}, 'PUT', raw)
+                  assert status == 201
+              _, current = request(base + 'v0.1.0', headers)
+              assert current == raw
+              result = 'v0.1.0 verified exact manifest: ' + reference
+              print(result)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                  summary.write(result + '\n')
+          PY
