@@ -2226,7 +2226,7 @@
     {
       "file": "hack/recovery_cases.py",
       "function": "differential_failed",
-      "expression": "actor.stat().st_size < 32 << 20",
+      "expression": "actor.stat().st_size < 64 << 20",
       "id": "b949b68fbe58d28d",
       "category": "fixture-precondition",
       "requirement": "PR H cancellation: bounded checksum-pinned test actor observes actual native children before signaling the exact sidecar; canceled work drains and source postmaster continues. No native child may survive acknowledged process replacement.",

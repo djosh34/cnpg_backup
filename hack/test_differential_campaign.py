@@ -1,9 +1,13 @@
 """Cheap H oracle/registry checks before provisioning real immutable subjects."""
+import base64
 import contextlib
+import hashlib
 import json
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from campaign_plan import selected
 from recovery_cases import Campaign
@@ -76,6 +80,55 @@ class DifferentialCampaignTests(unittest.TestCase):
         # Missing requests default to the1-CPU limit and the actual4-CPU fixture
         # rejected this Pod as Insufficient cpu before pg_checksums ever ran.
         self.assertEqual(resources.get('requests'), {'memory': '32Mi', 'cpu': '100m'})
+
+    def test_cancellation_installs_current_sized_actor_with_checksum_and_bound(self):
+        class InstalledActor(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            actor = Path(directory) / 'actor'
+            # The actual I actor is33,673,970 bytes after importing retention.Run;
+            # drive the real caller across the obsolete32MiB precondition.
+            with actor.open('wb') as stream:
+                stream.truncate(33_673_970)
+            with actor.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            installed = []
+            def kube(*args, **kwargs):
+                if 'input' in kwargs:
+                    data = base64.b64decode(kwargs['input'], validate=True)
+                    self.assertEqual(len(data), actor.stat().st_size)
+                    self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
+                    installed.append(True)
+                    return ''
+                self.assertIn('sha256sum', args)
+                return digest + '  /var/lib/postgresql/data/h-native-processes\n'
+            fixture = SimpleNamespace(bundle={'directory': Path(directory), 'files': {'actor': digest}}, kube=Mock(side_effect=kube))
+            campaign = Campaign(SimpleNamespace(), SimpleNamespace(data={}), fixture=fixture)
+            campaign.wal = object()
+            campaign.d2 = {'backup_uid': 'D2'}
+            campaign.primary = lambda: 'source-pod'
+            campaign.native_backup_commands = lambda pod: []
+            campaign.cleanup = lambda restores: contextlib.nullcontext()
+            campaign.sql = Mock(side_effect=InstalledActor)
+            metrics = SimpleNamespace(start=Mock(), assert_committed=Mock(), snapshot=Mock(), close=Mock())
+            with patch('backup_metrics_smoke.BackupMetricsSmoke', return_value=metrics), patch('backup_smoke.publication_epoch', return_value=1):
+                with self.assertRaises(InstalledActor):
+                    campaign.differential_failed('cancellation')
+                self.assertEqual(installed, [True])
+                self.assertEqual(fixture.kube.call_count, 2)
+                # A transferred actor still must match the immutable bundle.
+                fixture.bundle['files']['actor'] = 'wrong-checksum'
+                with self.assertRaises(AssertionError):
+                    campaign.differential_failed('cancellation')
+                self.assertEqual(campaign.sql.call_count, 1)
+                # Reject oversize before reading/encoding/transferring any bytes.
+                with actor.open('wb') as stream:
+                    stream.truncate(64 << 20)
+                fixture.kube.reset_mock()
+                with self.assertRaises(AssertionError):
+                    campaign.differential_failed('cancellation')
+                fixture.kube.assert_not_called()
 
     def test_H_live_source_is_not_deleted_before_capture_faults(self):
         campaign = Campaign(SimpleNamespace(fixtures=['source', 'differential']), None, fixture=object())

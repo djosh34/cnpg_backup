@@ -477,7 +477,9 @@ class Campaign:
                 name = 'h-failed-' + fault
                 if fault == 'cancellation':
                     actor = h.bundle['directory'] / 'actor'
-                    assert actor.stat().st_size < 32 << 20
+                    # The real Run-importing I actor exceeds32MiB. Keep a
+                    # finite transfer cap before allocating the base64 input.
+                    assert actor.stat().st_size < 64 << 20
                     actor_path = '/var/lib/postgresql/data/h-native-processes'
                     h.kube('exec', '-i', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
                            'base64 -d > ' + actor_path + '; chmod 0555 ' + actor_path,
