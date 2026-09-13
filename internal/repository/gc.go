@@ -198,7 +198,7 @@ func (g *GCOwner) Execute(ctx context.Context, p GCPlan) error {
 	if int64(len(b)) > commitLimit {
 		return ErrCapacity
 	}
-	_, e = g.r.put(ctx, g.r.root+"gc/"+p.OperationID+".json", b, s3store.Condition{Create: true})
+	_, e = g.r.put(ctx, g.r.root+"gc/"+p.OperationID+".json", b, s3store.Condition{Create: true}, nil)
 	if e != nil {
 		if ambiguous(e) {
 			g.uncertain = true
@@ -290,13 +290,8 @@ func (g *GCOwner) validateVictim(ctx context.Context, v Victim, retired map[stri
 		return e
 	}
 	// Every orphan must have a valid claimed namespace, not an age heuristic.
-	cb, _, e := g.r.store.Read(ctx, g.r.attempt(uid, attempt)+"claim.json", smallLimit)
-	if e != nil {
+	if _, e := g.r.readClaim(ctx, uid, attempt); e != nil {
 		return e
-	}
-	var cl Claim
-	if strict(cb, smallLimit, &cl) != nil || cl.Schema != 1 || cl.RepositoryID != g.r.id.RepositoryID || cl.BackupUID != uid || cl.AttemptID != attempt || !validID(cl.ProcessID) || !hashRE.MatchString(cl.RequestSHA256) {
-		return ErrCorrupt
 	}
 	switch v.Kind {
 	case "delete-manifest":
@@ -328,7 +323,7 @@ func (g *GCOwner) destroy(ctx context.Context, v Victim) error {
 	if v.Kind == "retire-backup" {
 		ret := Retirement{1, r.id.RepositoryID, *v.BackupUID, v.SHA256, g.owner.OperationID}
 		b, _ := json.Marshal(ret)
-		_, e := r.put(ctx, r.backup(*v.BackupUID)+"retired.json", b, s3store.Condition{Create: true})
+		_, e := r.put(ctx, r.backup(*v.BackupUID)+"retired.json", b, s3store.Condition{Create: true}, nil)
 		if s3store.Is(e, s3store.Precondition) {
 			old, _, re := r.store.Read(ctx, r.backup(*v.BackupUID)+"retired.json", smallLimit)
 			if re != nil {
@@ -349,7 +344,7 @@ func (g *GCOwner) destroy(ctx context.Context, v Victim) error {
 		}
 		ret := WALRetirement{1, "retired", r.id.RepositoryID, *v.WALName, v.RawBytes, v.SHA256, g.owner.OperationID}
 		b, _ := json.Marshal(ret)
-		_, e = r.putWALTombstone(ctx, key, b, *v.ExpectedETag)
+		_, e = r.put(ctx, key, b, s3store.Condition{Match: *v.ExpectedETag}, map[string]string{"cnpg-format": "wal-retired-v1"})
 		return e
 	}
 	key := r.attempt(*v.BackupUID, *v.AttemptID) + "manifest.pg.json"
@@ -420,16 +415,4 @@ func (r *Repository) WALKey(name string) (string, error) {
 		return "", e
 	}
 	return fmt.Sprintf("%swal/%08X/%s", r.root, timeline, name), nil
-}
-func (r *Repository) putWALTombstone(ctx context.Context, key string, b []byte, etag string) (s3store.Info, error) {
-	// As with put, spool failures are definitive only BEFORE dispatch.
-	f, e := r.temp()
-	if e != nil {
-		return s3store.Info{}, &s3store.Error{Kind: s3store.LocalIO}
-	}
-	defer removeFile(f)
-	if _, e = f.Write(b); e != nil {
-		return s3store.Info{}, &s3store.Error{Kind: s3store.LocalIO}
-	}
-	return r.store.PutFile(ctx, key, f, s3store.Integrity{Size: int64(len(b)), SHA256: digest(b)}, s3store.Condition{Match: etag}, map[string]string{"cnpg-format": "wal-retired-v1"})
 }

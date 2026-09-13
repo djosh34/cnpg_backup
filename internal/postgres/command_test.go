@@ -41,10 +41,17 @@ func TestNativeProcessHelper(t *testing.T) {
 		for {
 			time.Sleep(time.Hour)
 		}
-	case "output":
-		for {
-			_, _ = os.Stdout.Write([]byte(strings.Repeat("x", 64<<10)))
+	case "output", "diagnostic":
+		out := os.Stdout
+		if mode == "diagnostic" {
+			out = os.Stderr
 		}
+		for {
+			_, _ = out.Write([]byte(strings.Repeat("x", 64<<10)))
+		}
+	case "environment":
+		os.Stdout.WriteString(os.Getenv("PGPASSWORD") + "|" + os.Getenv("PGHOST"))
+		os.Exit(0)
 	case "success":
 		os.Stdout.WriteString("bounded native output")
 		os.Exit(0)
@@ -92,8 +99,13 @@ func TestNativeCancellationKillsAndReapsStreamingChild(t *testing.T) {
 func TestNativeOutputLimitAndAllowlist(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, e := runNative(ctx, []string{"NATIVE_PROCESS_TEST=output"}, os.Args[0], "-test.run=^TestNativeProcessHelper$"); e == nil {
-		t.Fatal("output overflow succeeded")
+	for _, mode := range []string{"output", "diagnostic"} {
+		if _, e := runNative(ctx, []string{"NATIVE_PROCESS_TEST=" + mode}, os.Args[0], "-test.run=^TestNativeProcessHelper$"); e == nil {
+			t.Fatal(mode, "overflow succeeded")
+		}
+		if ctx.Err() != nil {
+			t.Fatal("output limit failed to stop child before deadline")
+		}
 	}
 	b, e := runNative(ctx, []string{"NATIVE_PROCESS_TEST=success"}, os.Args[0], "-test.run=^TestNativeProcessHelper$")
 	if e != nil || string(b) != "bounded native output" {

@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"strconv"
-	"strings"
 )
 
 type Control struct {
@@ -18,21 +17,11 @@ func ReadControl(ctx context.Context) (Control, error) {
 	if e != nil {
 		return Control{}, e
 	}
-	if e = validateControl(string(b)); e != nil {
+	fields := controlFields(string(b))
+	if e = validateControl(fields); e != nil {
 		return Control{}, e
 	}
-	var result Control
-	for _, line := range strings.Split(string(b), "\n") {
-		p := strings.SplitN(line, ":", 2)
-		if len(p) != 2 {
-			continue
-		}
-		switch strings.TrimSpace(p[0]) {
-		case "Database system identifier":
-			result.SystemIdentifier = strings.TrimSpace(p[1])
-		case "Bytes per WAL segment":
-			result.WALSegmentBytes, _ = strconv.ParseInt(strings.TrimSpace(p[1]), 10, 64)
-		}
-	}
+	result := Control{SystemIdentifier: fields["Database system identifier"]}
+	result.WALSegmentBytes, _ = strconv.ParseInt(fields["Bytes per WAL segment"], 10, 64)
 	return result, nil
 }

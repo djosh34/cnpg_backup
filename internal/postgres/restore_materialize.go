@@ -3,6 +3,7 @@ package postgres
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -104,7 +105,7 @@ func (in *fullInput) finish(ctx context.Context, c repository.Commit, l RestoreL
 	if e != nil {
 		return nil, e
 	}
-	if !sameBundles(actual, expected) {
+	if !maps.Equal(actual, expected) {
 		return nil, ErrInput
 	}
 	if e = ctx.Err(); e != nil {
@@ -144,17 +145,6 @@ func bundleIntegrity(ctx context.Context, directory string, inv archiveInventory
 	}
 	return result, nil
 }
-func sameBundles(a, b map[string]s3store.Integrity) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if other, ok := b[k]; !ok || other != v {
-			return false
-		}
-	}
-	return true
-}
 
 // Ordinary cross-filesystem copies: fsync every file, compare actual copied WAL
 // hashes, and sync the destination directories BEFORE removing our old output.
@@ -192,7 +182,7 @@ func relocateRestoreWAL(ctx context.Context, pg *os.Root, target string, inv arc
 	if e != nil {
 		return e
 	}
-	if !sameBundles(copied, expected) {
+	if !maps.Equal(copied, expected) {
 		return ErrInput
 	}
 	if e = syncRestoreTree(ctx, target); e != nil {

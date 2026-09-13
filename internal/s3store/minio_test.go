@@ -59,6 +59,7 @@ func TestMinIOPrimitives(t *testing.T) {
 	secret := make([]byte, 24)
 	rand.Read(secret)
 	c := config("https://"+endpoint, ca)
+	c.DataRequestTimeout = 15 * time.Minute
 	c.AccessKey = "cnpg-test"
 	c.SecretKey = hex.EncodeToString(secret)
 	log, e := os.Create(filepath.Join(root, "minio.log"))
@@ -333,7 +334,7 @@ func faultClient(t *testing.T, s *Store, c Config, after func(*http.Request, *ht
 	if c.Signature == "v2" {
 		creds = credentials.NewStaticV2(c.AccessKey, c.SecretKey, "")
 	}
-	core, e := minio.NewCore(strings.TrimPrefix(c.Endpoint, "https://"), &minio.Options{Secure: true, Region: c.Region, BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Creds: creds, Transport: &transport{base: faultWire{s.transport, after, before}, endpoint: strings.TrimPrefix(c.Endpoint, "https://"), slots: processHTTP, metadata: s.metadataTimeout, data: s.dataTimeout}})
+	core, e := minio.NewCore(strings.TrimPrefix(c.Endpoint, "https://"), &minio.Options{Secure: true, Region: c.Region, BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Creds: creds, Transport: &transport{base: faultWire{s.transport, after, before}, endpoint: strings.TrimPrefix(c.Endpoint, "https://"), slots: processHTTP, metadata: s.metadataTimeout, data: c.DataRequestTimeout}})
 	if e != nil {
 		t.Fatal(e)
 	}

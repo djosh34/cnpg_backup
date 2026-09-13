@@ -100,17 +100,10 @@ func Run(ctx context.Context, r *repository.Repository, files wal.Files, now tim
 			if e != nil {
 				return e
 			}
-			timelines[t] = true
 			in.Segments = append(in.Segments, Segment{t, start, !ob.Retired})
 			objects = append(objects, ob)
 		} else if strings.HasSuffix(ob.Name, ".history") {
-			// Derive the numeric ID using the already validated original name.
-			t, _, e := repository.ArchivePosition(ob.Name[:8]+"0000000000000000", r.Identity().WALSegmentBytes)
-			if e != nil {
-				return e
-			}
-			timelines[t] = true
-			histories[t] = ob.Name
+			histories[observed] = ob.Name
 		}
 		return nil
 	})

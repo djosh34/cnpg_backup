@@ -90,22 +90,6 @@ func validateState(state serverState, c Connection, n configuration.Native) erro
 	return nil
 }
 
-type boundedOutput struct {
-	data     []byte
-	exceeded bool
-}
-
-func (b *boundedOutput) Write(p []byte) (int, error) {
-	n := len(p)
-	left := (1 << 20) - len(b.data)
-	if n > left {
-		b.exceeded = true
-		p = p[:left]
-	}
-	b.data = append(b.data, p...)
-	return n, nil
-}
-
 func command(ctx context.Context, env []string, tool string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -114,8 +98,8 @@ func command(ctx context.Context, env []string, tool string, args ...string) ([]
 
 // Check runs real certificate-authenticated local-primary SQL plus mounted
 // control metadata checks. It does not capture data or advertise a Backup RPC.
-// Native handlers must first reserve full phase capacity using PreflightCapture,
-// then perform this identity check before and after their operation.
+// Capture and restore callers reserve their phase capacity separately before
+// native work. Capture also rechecks source identity after the operation.
 func Check(ctx context.Context, projection string) error { return check(ctx, projection, false) }
 
 // CheckWAL permits standby archiving after promotion/demotion, but retains the
@@ -203,16 +187,10 @@ func checkFromRoot(ctx context.Context, root *os.Root, wal bool) error {
 		return errors.New("native private workspace unavailable")
 	}
 	defer os.RemoveAll(directory)
-	for name, value := range map[string][]byte{"client.crt": snapshot.Certificate, "client.key": snapshot.Key, "server-ca.crt": snapshot.ServerCA} {
-		if err = os.WriteFile(filepath.Join(directory, name), value, 0600); err != nil {
-			return errors.New("native private snapshot write failed")
-		}
+	env, err := prepareConnection(directory, connection.Host, snapshot, "cnpg-backup-preflight")
+	if err != nil {
+		return err
 	}
-	service := "[local]\nhost=" + connection.Host + "\nhostaddr=127.0.0.1\nport=5432\nuser=streaming_replica\ndbname=postgres\nsslmode=verify-full\nconnect_timeout=10\nsslcert=" + directory + "/client.crt\nsslkey=" + directory + "/client.key\nsslrootcert=" + directory + "/server-ca.crt\n"
-	if os.WriteFile(filepath.Join(directory, "service.conf"), []byte(service), 0600) != nil {
-		return errors.New("native service snapshot write failed")
-	}
-	env := []string{"LANG=C", "LC_ALL=C", "HOME=/nonexistent", "PGSERVICE=local", "PGSERVICEFILE=" + filepath.Join(directory, "service.conf"), "PGPASSFILE=/nonexistent", "PGOPTIONS=-c search_path=pg_catalog -c statement_timeout=30000", "PGAPPNAME=cnpg-backup-preflight"}
 	output, err := command(ctx, env, "psql", "-X", "-A", "-t", "--no-password", "-v", "ON_ERROR_STOP=1", "-c", preflightSQL)
 	if err != nil {
 		return err
@@ -234,7 +212,22 @@ func checkFromRoot(ctx context.Context, root *os.Root, wal bool) error {
 	if err != nil {
 		return err
 	}
-	return validateControl(string(output))
+	return validateControl(controlFields(string(output)))
+}
+
+// prepareConnection writes a private credential snapshot for a validated Service
+// host. The caller owns the directory and removes it after all native work drains.
+func prepareConnection(directory, host string, snapshot *configuration.CaptureSnapshot, application string) ([]string, error) {
+	for name, value := range map[string][]byte{"client.crt": snapshot.Certificate, "client.key": snapshot.Key, "server-ca.crt": snapshot.ServerCA} {
+		if err := os.WriteFile(filepath.Join(directory, name), value, 0600); err != nil {
+			return nil, errors.New("native private snapshot write failed")
+		}
+	}
+	service := "[local]\nhost=" + host + "\nhostaddr=127.0.0.1\nport=5432\nuser=streaming_replica\ndbname=postgres\nsslmode=verify-full\nconnect_timeout=10\nsslcert=" + directory + "/client.crt\nsslkey=" + directory + "/client.key\nsslrootcert=" + directory + "/server-ca.crt\n"
+	if err := os.WriteFile(filepath.Join(directory, "service.conf"), []byte(service), 0600); err != nil {
+		return nil, errors.New("native service snapshot write failed")
+	}
+	return []string{"LANG=C", "LC_ALL=C", "HOME=/nonexistent", "PGSERVICE=local", "PGSERVICEFILE=" + filepath.Join(directory, "service.conf"), "PGPASSFILE=/nonexistent", "PGOPTIONS=-c search_path=pg_catalog -c statement_timeout=30000", "PGAPPNAME=" + application}, nil
 }
 
 func validHost(host string) bool {
@@ -249,7 +242,7 @@ func validHost(host string) bool {
 	return true
 }
 
-func validateControl(output string) error {
+func controlFields(output string) map[string]string {
 	fields := map[string]string{}
 	for _, line := range strings.Split(output, "\n") {
 		parts := strings.SplitN(line, ":", 2)
@@ -257,6 +250,10 @@ func validateControl(output string) error {
 			fields[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 	}
+	return fields
+}
+
+func validateControl(fields map[string]string) error {
 	for name, value := range map[string]string{"Database block size": "8192", "Blocks per segment of large relation": "131072", "WAL block size": "8192"} {
 		if fields[name] != value {
 			return errors.New("unsupported actual PostgreSQL control layout")
