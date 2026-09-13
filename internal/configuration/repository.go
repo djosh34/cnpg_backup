@@ -191,10 +191,15 @@ func (s Spec) Validate() error {
 	return nil
 }
 
-// StrictJSON rejects duplicate/unknown keys, invalid UTF-8, trailing documents,
-// oversized input and excessive nesting before decoding any trusted config.
+// StrictJSON decodes configuration up to 256 KiB, rejecting duplicate or unknown
+// fields, invalid UTF-8, trailing documents, and nesting beyond 32 levels.
 func StrictJSON(data []byte, out any) error {
-	if len(data) > 256<<10 || !utf8.Valid(data) {
+	return StrictJSONLimit(data, out, 256<<10)
+}
+
+// StrictJSONLimit applies the same validation with a caller-specific byte limit.
+func StrictJSONLimit(data []byte, out any, maxBytes int) error {
+	if maxBytes <= 0 || len(data) > maxBytes || !utf8.Valid(data) {
 		return errors.New("invalid bounded JSON")
 	}
 	d := json.NewDecoder(bytes.NewReader(data))

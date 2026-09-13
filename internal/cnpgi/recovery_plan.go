@@ -24,8 +24,8 @@ const helperPlanPath = "/cnpg-backup/state/recovery.json"
 const recoveryPlanLimit = 16 << 20
 const operationAnnotation = "cnpg-backup.djosh34.github.io/recovery"
 
-// RecoveryPlan is a credential-free exact selection, not a storage capability.
-// The original process must still admit the tuple and positively check its hold.
+// RecoveryPlan records the selected backups, WAL, and guard identity without
+// credentials. Reading it does not replace repository admission.
 type RecoveryPlan struct {
 	Plan              repository.Plan              `json:"plan"`
 	Tuple             recoveryguard.Tuple          `json:"tuple"`
@@ -34,9 +34,8 @@ type RecoveryPlan struct {
 	Materialized      bool                         `json:"materialized"`
 }
 
-// Recovery keeps only validated semantic fields needed by this plugin. Never
-// copy arbitrary annotations, other plugins' parameters or PostgreSQL connection
-// GUCs into a helper document: those may contain unrelated inline credentials.
+// recoveryCluster removes annotations, unrelated plugins, and PostgreSQL
+// settings that may contain credentials before writing the helper plan.
 func recoveryCluster(c Cluster) Cluster {
 	c.Metadata = meta.ObjectMeta{Name: c.Metadata.Name, Namespace: c.Metadata.Namespace, UID: c.Metadata.UID}
 	c.Spec.ImageName = "ghcr.io/cloudnative-pg/postgresql@" + DatabaseDigest
@@ -238,7 +237,7 @@ func readRecovery(directory string) (RecoveryPlan, error) {
 	if e != nil {
 		return p, e
 	}
-	if e = configuration.StrictJSON(b, &p); e != nil {
+	if e = configuration.StrictJSONLimit(b, &p, recoveryPlanLimit); e != nil {
 		return p, e
 	}
 	return p, p.validate()
