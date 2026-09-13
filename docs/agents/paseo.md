@@ -1,70 +1,55 @@
 # Paseo subagent lifecycle
 
-Read before **creating, waiting for, resuming or cleaning up** a child. Use Paseo for every role; no raw Pi process fallback. This lifecycle is operationally essential: unarchived completed children can retain memory until Paseo is OOM-killed.
+Use Paseo for every subagent, not raw Pi subprocesses. Unarchived children retain memory even after completion and can cause Paseo to run out of memory.
 
-## Ownership and capacity — agent instructions, not new code
+## Ownership and capacity
 
-- The orchestrator alone creates children. Researchers, implementers, reviewers and adjudicators may not recursively spawn others.
-- **Maximum five concurrent children total for this effort**, not five per role/PR. Count every created, not-yet-confirmed-archived child, including idle, failed and waiting children. The parent is not a child. Use fewer when concurrency provides no benefit.
-- Before spawning, inspect owned Paseo agents and reconcile the small task ledger in the progress comment/local task record. Other orchestrators participating in this effort share the same five slots; do not create a second independently managed pool.
-- Tag every child with a stable effort/run ownership label and role/task identity. Record returned agent ID, worktree, task, outcome and archival state. Resume from these records rather than guess from agent titles.
-- Do not build a semaphore daemon, admission controller, extension or limiter to enforce this. The AI maintains the limit as an instruction. Never archive the parent, unrelated user agents or an agent whose ownership is uncertain.
+- Only the coordinator creates children. Workers and reviewers must not delegate recursively.
+- Allow at most five unarchived children across the entire effort, including idle, failed, canceled, and waiting children. Enforce this by instruction and a task record, not a new limiter service.
+- Record each child's ownership label, ID, role, task, worktree, result, and archival state. Reconcile owned sessions before dispatch or resume. Coordinators sharing an effort share the same limit.
+- Use one writer per worktree. A successor coordinator takes exclusive dispatch ownership and counts toward the limit if it is itself a child.
+- Archive only owned children. Never archive the parent, unrelated agents, or sessions whose ownership is uncertain.
 
-## Verified interface and model selection
+## Workspace and model selection
 
-Inspect installed help if versions change. This environment provides `paseo run`, `wait`, `logs`, `inspect` and `archive`. `paseo wait --timeout` uses seconds; `run --wait-timeout` accepts a duration. Background run returns an agent ID; `wait` reaching idle does not itself prove task success. `send` waits by default: use `paseo send ID --no-wait ...` for a message to running work, then observe the original ID normally.
+Use only GPT-based models through `openai-codex`, with Paseo's `pi` provider.
 
-Planning preflight successfully dispatched two independent review agents, retrieved their reports, and verified `Archived: true` for both after cleanup. This verifies the local Paseo mechanism, not design readiness or product correctness.
-
-Select thinking by **agent role**, not the production Go `manager` mode:
-
-| Role | Provider/model | Thinking |
+| Role | Model | Thinking |
 | --- | --- | --- |
-| Supervisor, orchestrator, manager, coordinator, dispatcher, planning/research runner | `pi` / `openai-codex/gpt-6-astra` | `medium` |
-| Implementer, correctness/spec or KISS reviewer, substantive review adjudicator | `pi` / `openai-codex/gpt-6-astra` | `high` |
-| Separately assigned, non-delegating reference-cleanup implementer (explicit owner exception) | `pi` / `openai-codex/gpt-5.6-luna` | `xhigh` |
+| Coordinator, manager, or research coordinator | `openai-codex/gpt-6-astra` | `medium` |
+| Implementer, researcher, reviewer, or adjudicator | `openai-codex/gpt-6-astra` | `high` |
+| Separately authorized, non-delegating reference-cleanup worker | `openai-codex/gpt-5.6-luna` | `xhigh` |
 
-Confirm effective model/thinking and Cwd in `inspect`, including the exception; no silent substitution. Coordination does not become high-thinking work just because it oversees implementation. Use supported live settings for an active coordinator when available; otherwise leave a durable checkpoint for the parent's medium successor, without recursive dispatch or daemon resets. Preserve historical actual model observations; these role settings govern new/resumed work.
+Inspect the effective model, thinking level, workspace, and Cwd before work begins. Do not silently substitute settings. The agent-scoped CLI can ignore `--cwd` and inherit the caller's workspace. Register and select an explicit workspace for an existing worktree.
 
-Paseo may require a daemon password via `PASEO_PASSWORD`. Resolve existing local credentials without printing them or putting them in command arguments, repo files, prompts or GitHub. Keep daemon control credentials in the orchestrator's environment; do not explicitly forward them through child `--env`. Do not reset/restart the user's daemon or change its password as an authentication workaround.
+Keep `PASEO_PASSWORD` in the coordinator's environment. Do not print it, pass it in arguments or child `--env`, or place it in briefs or repository files. Use existing credentials without resetting the user's daemon or password.
 
-For an isolated existing worktree, first register/select its **explicit workspace**. The installed agent-scoped CLI can ignore `--cwd` and inherit the caller's workspace; finalization reproduced this and verified explicit `--workspace` selects the intended Cwd. Inspect the returned workspace/agent Cwd before writing. Keep absolute-path/worktree ownership in the brief.
-
-Illustrative lifecycle, with an already-authenticated CLI and a reviewed brief (fill placeholders; this is not a task runner to implement):
+Check installed CLI help when the interface changes. For a worker in an existing worktree:
 
 ```sh
 paseo workspace create --isolation local --path /absolute/task/worktree --json
-# Use the returned workspaceId below; no guessed ID.
+# Use the returned workspaceId.
 paseo run --background --json \
   --provider pi --model openai-codex/gpt-6-astra --thinking high \
   --workspace WORKSPACE_ID \
   --title 'CNPG: task name' \
-  --label cnpg_effort=stable-effort-id --label role=review \
-  'Read the task brief at /absolute/private/brief.md. Complete only that task. Do not spawn agents.'
-paseo wait AGENT_ID --timeout 1800 --json
-paseo logs AGENT_ID --tail 100
-paseo inspect AGENT_ID --json
-# Capture report/results before archival; then always perform cleanup.
-paseo archive AGENT_ID --json
+  --label cnpg_effort=EFFORT_ID --label role=worker \
+  'Read /absolute/task/brief.md. Complete only that task. Do not spawn agents.'
 paseo inspect AGENT_ID --json
 ```
 
-Each independent review is a newly created Paseo agent with a clean context, not a fork/resume of the author. Run reviewers on a pinned snapshot/worktree; explicitly prohibit edits and delegation in the brief. CLI/prompt restrictions are not a security sandbox. Workers write only their assigned worktree. Avoid access to production credentials; keep test environments disposable.
-
 ## Wait for events, not short polling
 
-Use **1800-second (30-minute) waits everywhere in agent orchestration**. `paseo wait ID --timeout 1800 --json` is event-driven: the installed CLI sends `wait_for_finish_request`; the daemon waits on an agent event and cancels the deadline when it responds. Idle/closed completion, error or a permission request can return before the timeout. A read-only bounded check against an already archived planning agent returned `idle` well before 1800 seconds; no new child was created. This is not a 30-minute sleep.
+Use `paseo wait AGENT_ID --timeout 1800 --json`. This is an event-driven wait, not a sleep. Completion, errors, and permission requests can return early. Set the calling tool's deadline above the wait plus transport overhead.
 
-Read the returned status, not just the CLI exit code. `timeout` means observation expired, not that work stopped or finished: inspect and repeat the 1800-second wait for still-owned active work. `permission`, `error` and `idle` require inspection and evidence collection, not automatic success. Set the calling tool's timeout above the wait plus transport/collection overhead. Use `send --no-wait` for instructions, or explicitly set its wait duration; use `run --background` rather than the short default foreground wait. Long CI observations follow [issue-tracker.md](issue-tracker.md). Fast local assertions, subprocess deadlines and product reconciliation are not agent polling and keep their appropriate short bounds.
+Inspect the returned status. `idle` does not prove success. `timeout` means observation expired, not that the child stopped. Inspect active work and repeat the wait when appropriate. Use `run --background` and `send AGENT_ID --no-wait` to avoid short default foreground waits.
 
-## Collect → archive → verify, on every outcome
+For hosted CI, use `gh run watch RUN_ID --interval 1800 --exit-status` or `gh pr checks PR --watch --interval 1800`. These commands poll rather than wait for events. Local assertions, subprocess deadlines, and product readiness checks retain their own short bounds.
 
-1. Wait/observe without spawning replacements beyond the limit. On completion, inspect the final report and actual task evidence; idle status can mean success, error or interruption.
-2. Save a concise result and relevant diagnostics/commit/test references outside the child session. Publish only redacted evidence, not raw credential-bearing logs/transcripts.
-3. **Immediately archive the child**, whether successful, failed, canceled, timed out or superseded. For a still-running owned child that must be abandoned, `paseo archive AGENT_ID --force --json` interrupts and archives it. Stop alone is insufficient.
-4. Confirm archival in `inspect` (or the installed CLI's archived listing) and update the task ledger. Do not free/reuse its slot until verification succeeds.
-5. If archival fails, repair cleanup before new spawns. On orchestrator interruption/resume, inspect and archive owned completed/orphaned agents first. Uncertain ownership is investigated, not solved by archiving everything.
+## Collect, archive, and verify
 
-A timeout in the caller does not prove the child stopped. Preserve its ID and explicitly clean it up. Cancellation, exceptions and partial task results must all follow the same cleanup path. Do not keep a completed author alive while reviews run; save its branch/report, archive it, and create a new scoped fix worker if needed.
+1. Inspect the report and actual task evidence. Save the result, commit, tests, and relevant diagnostics outside the child session. Redact credentials from published evidence.
+2. Immediately archive every finished, failed, canceled, or abandoned child with `paseo archive AGENT_ID --json`. To abandon a still-running owned child, use `--force`. Stopping alone is not archival.
+3. Run `paseo inspect AGENT_ID --json` and confirm archival before reusing the slot. If archival fails, repair cleanup before spawning more children.
 
-At the end of planning, a PR cycle or the whole effort, verify **zero owned unarchived completed/abandoned children**. Active children remain only when intentionally working and tracked within the limit. Before handing off a dormant thread, leave no forgotten child sessions consuming memory.
+A caller timeout or interruption does not remove this obligation. On resume, clean up owned completed or orphaned sessions before dispatch. Before a dormant handoff, collect and archive remaining owned work and leave a durable checkpoint.

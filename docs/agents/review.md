@@ -1,45 +1,41 @@
-# Independent PR review and adjudication
+# Review and merge PRs
 
-Load from `docs/EXECUTE.md` when a PR is ready for review, findings arrive, or merge is considered. This is an execution contract, not evidence that reviews already happened.
+Within the approved task scope, agents may commit, push branches, create PRs, run CI, resolve findings, and merge autonomously. Routine owner approval or manual test dispatch is not required. Respect task-specific limits and repository protections. Release authority follows [release-policy.md](../release-policy.md) and does not include production deployment.
 
-## Pin the review target
+## Prepare independent reviews
 
-The medium-thinking orchestrator records **one review target**: base/merge-base, HEAD and `git diff <base>...<head>` (or a pinned snapshot). Derive the commit list and changed paths from Git when needed rather than duplicating them in every report. Fetch the originating delivery issue, prerequisite decisions and relevant repo standards. Provide a scoped brief and a clean snapshot/diff file to each reviewer. The snapshot must include context needed to trace behavior beyond changed lines.
+Record the review target once: base or merge-base, HEAD, and the diff. Give reviewers the originating issue, relevant decisions and standards, source context, and actual test evidence.
 
-Start **two independent fresh Paseo sessions**, neither forked/resumed from the author nor supplied the author's private reasoning or the other reviewer's findings. Follow [paseo.md](paseo.md): Astra/high for both, at most five concurrent children total across the effort, and collect → archive → verify immediately after each reviewer finishes.
+Use two fresh, read-only contexts under the [Paseo lifecycle](paseo.md). Neither reviewer receives the author's private reasoning or the other reviewer's findings.
 
-- **Correctness/spec reviewer — GPT-6 Astra, high:** missing/wrong requirements, backup consistency, durable acknowledgment, restore selection, retention/dependencies, crash/retry/concurrency behavior, security and whether tests could pass while the product is broken. Trace through real callers. Select only relevant risks for the PR.
-- **KISS/maintainability reviewer — GPT-6 Astra, high:** small understandable interfaces, clear ownership, justified dependencies, bounded resource/cancellation paths, unnecessary abstraction/configuration and testability. Prefer simplifying code over hypothetical flexibility. Style preferences are not blockers unless a documented standard or concrete maintenance problem supports them.
+- The correctness reviewer traces requirements, backup consistency, durable acknowledgment, recovery selection, retention dependencies, concurrency, and security through real callers. Check whether tests could pass while the product is broken.
+- The maintainability reviewer checks interface size, ownership, resource bounds, cancellation, dependencies, and unnecessary abstraction. Style preferences are not blockers without a documented standard or concrete maintenance cost.
 
-Read-only reviewers do not edit the branch, commit, post approvals or launch more agents. They can request a specific test from the orchestrator if evidence is missing. CI and prior author tests are supplied as evidence, not assumed to be correct. The independent review sees the diff, source, requirements and actual results, not instructions to endorse the author.
+Reviewers do not edit the branch or post platform approvals. Missing critical regression coverage is a finding even when CI passes. Zero findings is valid.
 
-## Finding format
+Each finding names its severity, file and line, failure scenario, violated requirement, supporting evidence, and smallest proposed correction. Distinguish observed failure, reasoned risk, missing evidence, and optional suggestions.
 
-Each finding has an ID, category/severity, file/line, concrete scenario, requirement/invariant violated, reasoning/evidence and a minimal proposed correction. Label uncertainty and distinguish observed failure, reasoned bug, missing evidence and optional suggestion. Zero findings is valid. Do not invent findings to meet a quota or demand a rewrite merely because another architecture is possible.
+## Resolve findings
 
-Required checks live in CI; avoid flooding the report with already-enforced formatting issues. A missing critical regression scenario is a real finding even if current tests are green.
+Record each finding's disposition on the PR, under the shared review target:
 
-## Disposition loop
+| Disposition | Required evidence |
+| --- | --- |
+| Fixed | Correction, regression, and affected test results |
+| Rejected | Code trace, test, scope limit, or justified complexity trade-off |
+| Deferred | Nonblocking follow-up issue |
+| Superseded | Change that makes the original finding inapplicable |
 
-The orchestrator reads the code/evidence and records each finding on the PR:
+A plausible data-loss, recovery, authorization, or deletion defect remains blocking until fixed or disproven. For a substantive dispute, use a fresh adjudicator with both positions, code, and tests. Prefer an executable distinguishing case. Keep unresolved serious defects unmerged rather than voting by reviewer count or escalating ordinary technical disagreements to the owner.
 
-Name the current review target once above the dispositions; individual findings inherit it.
+Use fresh review to verify material fixes and their interactions. Preserve original findings and responses. Platform review threads and human approvals are separate from agent dispositions.
 
-| Finding | Disposition | Evidence |
-| --- | --- | --- |
-| review ID | accepted/fixed, rejected, superseded, or deferred nonblocking | regression/result, code trace or explicit trade-off |
+## Merge with current evidence
 
-- **Accept/fix:** implement the smallest safe correction, add the relevant regression and rerun affected checks. Authors may rebut with evidence; they do not have the final word on their own correctness.
-- **Reject:** cite why the scenario is impossible, already covered, outside approved scope, factually wrong or costs more complexity than its justified benefit. "I disagree", "too much work" or "CI is green" alone are insufficient. Preserve the original finding and response.
-- **Defer:** only an optional/nonblocking improvement can move to a follow-up issue. A plausible data-loss, recovery, auth or deletion defect stays blocking until disproven or fixed.
-- **Disputed serious finding:** use one fresh Paseo GPT-6 Astra/high adjudicator with both positions, code and tests. It may uphold or reject either side; prefer an executable distinguishing case. If still unresolved, keep the PR blocked while agents run focused diagnosis and distinguishing experiments; do not vote by agent count or route an ordinary technical dispute to the owner. Archive the adjudicator after collecting its report.
+Merge when required CI passes, blocking findings have dispositions, the diff contains no unrelated work, and evidence applies to current HEAD. If the base changed, inspect the merge diff and review or test changed behavior.
 
-A follow-up fresh review verifies material fixes and interactions against the new SHA. Reviewers need not adopt suggestions without merit. Track accepted/rejected findings separately from platform review threads; never dismiss a human review or bypass branch protections as an automation shortcut.
+A message-only change or identical tested merge tree does not require repeating an expensive matrix. Record the content comparison once and link prior results while satisfying platform-required checks. Material source or harness changes need relevant new evidence. Dirty-tree results are diagnostics, not release qualification.
 
-## Merge gate
+Keep subject identity once in the review or run record. Record a distinct harness revision when it differs. Preserve exact image digests, input and backup checksums, and promotion of the same qualified bytes. A rebuilt image does not inherit qualification from a matching source SHA.
 
-The orchestrator verifies evidence applies to current HEAD, required CI passes, all blocking findings are resolved with reasons, no unrelated change and approved merge authority. If the base changed, inspect the merge diff and seek review/tests of changed behavior. A changed commit ID alone (message-only change or identical tested merge tree) does not require repeating the same expensive matrix: record the content comparison once and link the prior result, while still satisfying platform-required checks. Material source/harness changes require relevant new evidence; local dirty-tree results are diagnostics, not a clean release candidate.
-
-Keep one subject association in the run/review record, and record a distinct harness revision only when it differs. Avoid per-finding SHA columns, repeated hash-format assertions and copying full evidence inventories into transition comments. Preserve exact immutable **image digest** selection, build/input/backup checksums, provenance and promotion of the same qualified bytes: these establish integrity, unlike string-shape bookkeeping. Release qualification never transfers to a rebuilt image merely because its source SHA matches. Keep reports small; link logs and reproducible evidence.
-
-The same GitHub account may create the PR and post agent review comments. That supplies independent **contexts**, not independent human identities or platform approvals. Planning preflight must establish that repository protections permit the agreed autonomous workflow. If an unexpected protection requires another person's approval, report a genuine infrastructure blocker without pretending it is satisfied; do not design that human step into the normal delivery loop. Never manufacture approvals or claim the author self-review fulfilled the two-context requirement.
+Same-account agent comments provide independent contexts, not independent human identities or GitHub approvals. Never manufacture approvals, dismiss a human review, or bypass branch protection. Unexpected permissions or protection requirements are blockers to repair within existing authority, not checks to pretend have passed.
