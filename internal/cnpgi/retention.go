@@ -37,7 +37,7 @@ type retentionObservation struct {
 type retentionRunner func(context.Context, string, string, configuration.Spec, time.Time) (retentionObservation, error)
 
 func (a *API) retentionBatch(ctx context.Context, namespace, writer string, spec configuration.Spec, now time.Time) (out retentionObservation, err error) {
-	snap, e := a.backupSnapshot(ctx, namespace, spec)
+	snap, e := a.repositorySnapshot(ctx, namespace, spec)
 	if e != nil {
 		return out, e
 	}
@@ -62,8 +62,7 @@ func (a *API) retentionBatch(ctx context.Context, namespace, writer string, spec
 	}
 	window, _ := time.ParseDuration(spec.Retention.Window)
 	out.result, err = retention.Run(ctx, r, wal.Files{Repository: r, Store: store, Workspace: dir, Compression: spec.Compression}, now, retention.Options{Enabled: spec.Retention.Enabled, DryRun: spec.Retention.DryRun, Window: window, MinimumFulls: spec.Retention.MinimumFulls})
-	// Diagnostics after work; failed observation cannot change request ownership
-	// or turn successfully completed destruction into a failed destructive batch.
+	// A failed diagnostic read does not change the batch result or gate ownership.
 	if gate, e := r.ObserveGate(ctx); e == nil {
 		out.gateObserved = true
 		out.holders = len(gate.Holders)
@@ -80,18 +79,10 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 	if e != nil {
 		return e
 	}
-	// The configuration source was read afresh above. Status updates below carry
-	// a resourceVersion precondition; neither status nor events grant GC admission.
-	plugins, _, _ := unstructured.NestedSlice(c.Object, "spec", "plugins")
-	name := ""
-	for _, p := range plugins {
-		v, ok := p.(map[string]any)
-		if ok {
-			n, _, _ := unstructured.NestedString(v, "parameters", "repository")
-			if n != "" && v["name"] == "cnpg-backup.djosh34.github.io" {
-				name = n
-			}
-		}
+	// Use the Repository resourceVersion to reject stale status updates.
+	name, e := backupRepositoryName(c)
+	if e != nil {
+		return e
 	}
 	object, e := a.Get(ctx, repositories, c.GetNamespace(), name)
 	if e != nil {
@@ -119,13 +110,13 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 		next.LastWarningTime = state.Retention.LastWarningTime
 	}
 	observation := retentionObservation{}
-	reason, message := "Disabled", "Automatic retention is disabled. Repository holders remain enforced."
+	reason, message := "Disabled", "Automatic retention is disabled."
 	if spec.Retention.Enabled {
 		observation, e = run(ctx, c.GetNamespace(), string(c.GetUID()), spec, now)
 		next.OperationID, next.Planned = observation.result.OperationID, observation.result.Planned
-		reason, message = "BatchComplete", "Exclusive retention inventory and bounded batch completed."
+		reason, message = "BatchComplete", "Retention batch completed."
 		if spec.Retention.DryRun {
-			reason, message = "DryRun", "Exclusive inventory planned without deleting data."
+			reason, message = "DryRun", "Dry run completed without deleting data."
 		}
 		if observation.result.Decision.Shortened {
 			if observation.result.Decision.Current == 0 {
@@ -140,7 +131,7 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 	}
 	blocked := e != nil
 	if blocked {
-		reason, message = "RetentionBlocked", "Deletion stopped: repository admission, metadata, recovery coverage or storage outcome is unavailable or uncertain. Protection never expires."
+		reason, message = "RetentionBlocked", "Deletion stopped because admission, metadata, recovery coverage, or a storage result is uncertain."
 	}
 	condition := metav1.ConditionFalse
 	if blocked {
@@ -148,10 +139,10 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 	}
 	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RetentionBlocked", Status: condition, Reason: reason, Message: message, ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
 	admission, admissionReason := metav1.ConditionUnknown, "GateUnobserved"
-	admissionMessage := "Gate was not observed. Disabling retention or failed diagnostics never clears an owner or establishes admission."
+	admissionMessage := "Repository gate has not been observed."
 	if observation.gateObserved {
 		admission, admissionReason = metav1.ConditionFalse, "GateObservation"
-		admissionMessage = "A set GC owner excludes new protected work; a lost or uncertain owner never expires."
+		admissionMessage = "A GC owner blocks new backups and restores until its destructive requests have drained."
 		if observation.admissionBlocked {
 			admission = metav1.ConditionTrue
 		}
@@ -164,7 +155,7 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 			workspace, workspaceReason = metav1.ConditionTrue, "ReservationPassed"
 		}
 	}
-	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RetentionWorkspaceAvailable", Status: workspace, Reason: workspaceReason, Message: "Last retention workspace reservation only; not current free space or native backup workspace capacity. Failed reads remain Unknown.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
+	meta.SetStatusCondition(&state.Conditions, metav1.Condition{Type: "RetentionWorkspaceAvailable", Status: workspace, Reason: workspaceReason, Message: "Result of the last retention workspace reservation.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
 	warn := blocked && (next.LastWarningTime == nil || !now.Before(next.LastWarningTime.Add(5*time.Minute)))
 	if warn {
 		stamp := metav1.NewTime(now)
@@ -185,9 +176,8 @@ func (a *API) reconcileRetention(ctx context.Context, m *backupMetrics, c *unstr
 	return nil
 }
 
-// Exactly one serial worker, one bounded Cluster page per turn. A new store and
-// process-specific repository handle each batch prevents accidental adoption
-// across credential changes or manager restarts. Gate ownership is authoritative.
+// runRetention processes one Cluster per tick. Each batch opens a fresh store
+// and repository handle so it cannot inherit another process's GC ownership.
 func (a *API) runRetention(ctx context.Context, m *backupMetrics) {
 	if len(a.Namespaces) == 0 {
 		return

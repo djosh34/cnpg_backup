@@ -20,9 +20,8 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-// Actual sweep plus API-shaped expiration responses: a consistent LIST snapshot
-// expires before 200 objects can be visited at one per five seconds. Independent
-// configuration diagnostics may resume on the replacement snapshot at its cursor.
+// A LIST snapshot can expire before the sweep finishes. Resume from the API's
+// replacement cursor so resources at the end of the list still get checked.
 func TestRepositorySweepProgressAcrossExpiredSnapshots(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{repositories: "RepositoryList"})
@@ -84,8 +83,7 @@ func TestRepositorySweepProgressAcrossExpiredSnapshots(t *testing.T) {
 			if err := json.Unmarshal(a.GetPatch(), &patch); err != nil {
 				t.Fatal(err)
 			}
-			// Missing credentials/configuration are invalid diagnostics, never fabricated
-			// storage health. Every tail resource must actually receive this status.
+			// Missing credentials should be reported for every resource.
 			invalid := false
 			for _, c := range patch.Status.Conditions {
 				if c.Type == "Invalid" && c.Status == meta.ConditionTrue {

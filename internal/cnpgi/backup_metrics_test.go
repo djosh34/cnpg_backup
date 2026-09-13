@@ -195,13 +195,13 @@ func TestBackupDurableHistoryUnknownNeverSuccessfulAndLostResponse(t *testing.T)
 	}
 }
 
-func TestBackupSnapshotUsesAllowlistAndOneSecretGeneration(t *testing.T) {
+func TestRepositorySnapshotUsesAllowlistAndOneSecretGeneration(t *testing.T) {
 	a, c, _ := fixture(t, false)
 	_, spec, err := a.backupConfiguration(context.Background(), unstruct(c))
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := a.backupSnapshot(context.Background(), "test", spec)
+	snap, err := a.repositorySnapshot(context.Background(), "test", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestBackupSnapshotUsesAllowlistAndOneSecretGeneration(t *testing.T) {
 		t.Fatal("mixed Secret generations", secretReads)
 	}
 	a.SecretNames["test"] = nil
-	if _, err = a.backupSnapshot(context.Background(), "test", spec); err == nil {
+	if _, err = a.repositorySnapshot(context.Background(), "test", spec); err == nil {
 		t.Fatal("Secret allowlist bypass")
 	}
 }

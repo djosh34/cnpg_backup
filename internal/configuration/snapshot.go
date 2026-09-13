@@ -68,7 +68,6 @@ type Snapshot struct {
 	Spec                               Spec
 	AccessKey, SecretKey, SessionToken []byte
 	CA                                 []byte
-	Roots                              *x509.CertPool
 }
 
 func LoadSnapshot(directory, role string) (*Snapshot, error) {
@@ -122,9 +121,9 @@ func loadRepositorySnapshot(root *os.Root, role string) (*Snapshot, error) {
 			return nil, err
 		}
 		result.CA = data
-		result.Roots, err = CAPool(data, true)
+		_, err = CAPool(data, true)
 	} else {
-		result.Roots, err = x509.SystemCertPool()
+		_, err = x509.SystemCertPool()
 	}
 	if err != nil {
 		return nil, errors.New("invalid trust snapshot")

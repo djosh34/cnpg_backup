@@ -23,9 +23,9 @@ type repositoryStatus struct {
 	LastWarningTime    *metav1.Time       `json:"lastWarningTime,omitempty"`
 }
 
-// ReconcileRepositoryStatus owns configuration diagnostics only, not storage
-// readiness or admission. Persisting the Warning throttle survives manager restarts.
-// The resourceVersion precondition prevents recording a stale validation result.
+// ReconcileRepositoryStatus reports configuration validity. The resourceVersion
+// precondition prevents stale updates, and persisted timestamps limit warnings
+// across manager restarts.
 func (a *API) ReconcileRepositoryStatus(ctx context.Context, object *unstructured.Unstructured, now time.Time) error {
 	var previous repositoryStatus
 	b, _ := json.Marshal(object.Object["status"])
@@ -49,17 +49,16 @@ func (a *API) ReconcileRepositoryStatus(ctx context.Context, object *unstructure
 		if c.positive {
 			value = metav1.ConditionTrue
 		}
-		reason, message := "ConfigurationValid", "Configuration validated for full backup, WAL and protected recovery. This is not storage health or native capacity evidence."
+		reason, message := "ConfigurationValid", "Repository configuration is valid. Storage and capacity checks run with each operation."
 		if !valid {
 			reason, message = "ConfigurationInvalid", "Repository configuration or referenced credentials/trust are invalid or unavailable; new operations are rejected."
 		}
 		condition := metav1.Condition{Type: c.kind, Status: value, ObservedGeneration: object.GetGeneration(), Reason: reason, Message: message, LastTransitionTime: metav1.NewTime(now)}
 		meta.SetStatusCondition(&next.Conditions, condition)
 	}
-	// The serial retention worker owns storage diagnostics. Configuration checks
-	// cannot fabricate a successful inventory or overwrite that observation.
+	// Preserve storage diagnostics written by the retention worker.
 	if meta.FindStatusCondition(next.Conditions, "RetentionBlocked") == nil {
-		meta.SetStatusCondition(&next.Conditions, metav1.Condition{Type: "RetentionBlocked", Status: metav1.ConditionUnknown, Reason: "NotObserved", Message: "Retention has not been observed; recovery admission and its durable holds remain enforced.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
+		meta.SetStatusCondition(&next.Conditions, metav1.Condition{Type: "RetentionBlocked", Status: metav1.ConditionUnknown, Reason: "NotObserved", Message: "Retention has not been observed.", ObservedGeneration: object.GetGeneration(), LastTransitionTime: metav1.NewTime(now)})
 	}
 	warn := !valid && (previous.LastWarningTime == nil || !now.Before(previous.LastWarningTime.Add(5*time.Minute)))
 	if warn {
@@ -75,8 +74,7 @@ func (a *API) ReconcileRepositoryStatus(ctx context.Context, object *unstructure
 		return err
 	}
 	if warn {
-		// Throttle is persisted before attempting best-effort Event delivery. Events
-		// are diagnostics, never lock state; API failure cannot cause a warning storm.
+		// Persist the throttle before delivery so API failures do not flood events.
 		event := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "v1", "kind": "Event", "metadata": map[string]any{"generateName": object.GetName() + "-invalid-", "namespace": object.GetNamespace()},
 			"involvedObject": map[string]any{"apiVersion": object.GetAPIVersion(), "kind": "Repository", "name": object.GetName(), "namespace": object.GetNamespace(), "uid": string(object.GetUID())},
@@ -88,11 +86,8 @@ func (a *API) ReconcileRepositoryStatus(ctx context.Context, object *unstructure
 	return err
 }
 
-// One bounded page per tick, serial API calls, no Secret watches, worker pool or
-// per-Repository in-memory ledger. On snapshot expiration use the API's replacement
-// cursor: these independent status checks need not share a catalog snapshot.
-// Restart only when no replacement is available; never treat an uncertain page as
-// data. Total work has a 30s deadline.
+// RunRepositoryStatus checks one page per tick. Independent configuration checks
+// can use a replacement cursor when a LIST snapshot expires.
 func (a *API) RunRepositoryStatus(ctx context.Context) {
 	if len(a.Namespaces) == 0 {
 		return

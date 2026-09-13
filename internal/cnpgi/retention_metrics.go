@@ -56,8 +56,15 @@ func (m *backupMetrics) writeRetention(w io.Writer) {
 		labels = append(labels, k)
 	}
 	sort.Slice(labels, func(i, j int) bool { return labels[i].text() < labels[j].text() })
-	for _, name := range []string{"cnpg_backup_retention_blocked", "cnpg_backup_repository_admission_blocked", "cnpg_backup_repository_holders", "cnpg_backup_retention_workspace_available", "cnpg_backup_retention_checked_timestamp_seconds"} {
-		fmt.Fprintf(w, "# HELP %s Last periodic gate/retention observation; diagnostics never authorize admission.\n# TYPE %s gauge\n", name, name)
+	for _, metric := range []struct{ name, help string }{
+		{"cnpg_backup_retention_blocked", "Whether the last retention batch failed."},
+		{"cnpg_backup_repository_admission_blocked", "Whether the last observed gate had a GC owner."},
+		{"cnpg_backup_repository_holders", "Number of holders in the last observed repository gate."},
+		{"cnpg_backup_retention_workspace_available", "Whether the last retention workspace reservation succeeded."},
+		{"cnpg_backup_retention_checked_timestamp_seconds", "Time of the last retention check in Unix seconds."},
+	} {
+		name := metric.name
+		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n", name, metric.help, name)
 		for _, l := range labels {
 			s := values[l]
 			if (name == "cnpg_backup_repository_admission_blocked" || name == "cnpg_backup_repository_holders") && !s.Observed {

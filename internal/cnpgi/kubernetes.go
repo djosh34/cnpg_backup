@@ -3,7 +3,6 @@ package cnpgi
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -26,8 +25,8 @@ func coreResource(name string) schema.GroupVersionResource {
 	return schema.GroupVersionResource{Version: "v1", Resource: name}
 }
 
-// API is an uncached client, not an informer or cluster-wide Secret cache.
-// Secret names are independently constrained by install-time RBAC and this list.
+// API restricts Kubernetes reads to configured namespaces and Secret names.
+// Install-time RBAC enforces the same allowlists.
 type API struct {
 	OperatorNamespace string
 	Client            dynamic.Interface
@@ -65,34 +64,8 @@ func (a *API) Repository(ctx context.Context, namespace, name string) (configura
 	if err != nil {
 		return spec, err
 	}
-	for _, selector := range []*configuration.Selector{&spec.S3.AccessKeySecret, &spec.S3.SecretKeySecret, spec.S3.SessionTokenSecret} {
-		if selector == nil {
-			continue
-		}
-		secret, err := a.Get(ctx, coreResource("secrets"), namespace, selector.Name)
-		if err != nil {
-			return spec, errors.New("referenced credential unavailable")
-		}
-		encoded, ok, _ := unstructured.NestedString(secret.Object, "data", selector.Key)
-		value, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil || !ok || len(value) == 0 || len(value) > 64<<10 {
-			return spec, errors.New("referenced credential key invalid")
-		}
-	}
-	if selector := spec.S3.CAConfigMap; selector != nil {
-		ca, err := a.Get(ctx, coreResource("configmaps"), namespace, selector.Name)
-		if err != nil {
-			return spec, errors.New("referenced CA unavailable")
-		}
-		data, ok, _ := unstructured.NestedString(ca.Object, "data", selector.Key)
-		if !ok || len(data) > 256<<10 {
-			return spec, errors.New("invalid CA projection")
-		}
-		if _, err := configuration.CAPool([]byte(data), false); err != nil {
-			return spec, err
-		}
-	}
-	return spec, nil
+	_, err = a.repositorySnapshot(ctx, namespace, spec)
+	return spec, err
 }
 func (a *API) ValidateRepositories(ctx context.Context, c Cluster) (configuration.Spec, *configuration.Spec, error) {
 	destination, source, err := c.Repositories()
@@ -126,10 +99,8 @@ func (a *API) VerifyCluster(ctx context.Context, c Cluster) error {
 	return nil
 }
 
-// VerifyLivePod binds a no-mutation hook to an existing Cluster-owned Pod.
-// It deliberately does not revalidate today's Repository or regenerate yesterday's
-// spec: this path grants no new projections or data access. CREATE/EVALUATE own
-// placement/security validation and CNPG decides when to replace the old Pod.
+// VerifyLivePod checks ownership without rebuilding an admitted Pod. Only
+// CREATE and EVALUATE validate new placement against current configuration.
 func (a *API) VerifyLivePod(ctx context.Context, c Cluster, object []byte) error {
 	if err := a.VerifyCluster(ctx, c); err != nil {
 		return err
@@ -152,10 +123,8 @@ func (a *API) VerifyLivePod(ctx context.Context, c Cluster, object []byte) error
 	return nil
 }
 
-// EnsureProjection never trusts editable ConfigMap data as configuration. It
-// compares against current validated Repository specs and an exact Cluster owner.
-// Immutable snapshots preserve Job references; ownership-set bindings reject
-// replacement PVC UIDs rather than silently defining a new target set.
+// EnsureProjection creates an immutable, Cluster-owned configuration snapshot.
+// Existing data must match, including any target PVC identities.
 func (a *API) EnsureProjection(ctx context.Context, c Cluster, name string, data map[string]string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
