@@ -1,45 +1,36 @@
 # cnpg_backup
 
-A CGO-free Go CNPG-I plugin in development for direct PostgreSQL 18 backups to S3-compatible storage. MinIO is the integration target; a maintained SDK provides Signature V2/V4 support for S3-compatible deployments that satisfy the documented capability contract. Claims are limited to tested behavior and stated capability requirements.
+A CloudNativePG plugin for direct PostgreSQL 18 backups to S3-compatible storage. It supports full backups, differentials that depend on one full, fresh-cluster recovery with point-in-time targets, WAL archiving, and conservative retention.
 
-**Status:** [READY](https://github.com/djosh34/cnpg_backup/issues/14#issuecomment-5564016816) authorized implementation. Repository/storage primitives, CNPG lifecycle and [synchronous WAL Archive/Restore](docs/wal-implementation.md) are implemented. Native full/differential capture, protected primary restore/PITR and conservative retention are implemented. Operational/security acceptance is in progress; no qualified release is claimed.
+[v0.1.0](docs/releases/v0.1.0/README.md) is available for Linux amd64. The [release qualification record](docs/releases/v0.1.0/qualification.md) describes the tested versions and evidence limits. MinIO is tested with Signature V2, Signature V4, and a private CA. Other endpoints must meet the [storage requirements](docs/repository.md#storage-requirements).
 
 ## Operate
 
-- [Install, backup, fresh-cluster recovery, rotation, update and resource runbook](docs/operations.md)
-- [Backup monitoring](docs/backup-monitoring.md) and [operational alerts](config/operational-alerts.yaml)
-- [Install renderer](config/render.py), [fresh recovery renderer](config/recovery.py), and [network-policy example](config/network-policy-example.json)
+- [Install, back up, recover, rotate credentials, and update](docs/operations.md)
+- [Repository and CNPG configuration](docs/configuration.md)
+- [Backup, WAL, restore, and retention monitoring](docs/backup-monitoring.md)
+- [Release assets and installation](docs/releases/v0.1.0/README.md)
 
-## Build and test
+A differential never falls back to a full. Restore requires a new destination repository lineage and fresh target PVCs. Uncertain recovery holders and target markers do not expire. Healthy `archive_timeout=60s` still adds queue and upload latency, and outages have no fixed recovery-point bound.
+
+## Develop
 
 ```sh
+./hack/test harness
+./hack/test unit
 ./hack/test fast
 ./hack/test integration --seed 1806 --images
-./hack/test cnpg-smoke # actual lifecycle + WAL faults/failover, not release qualification
 ```
 
-See [build inputs, dependency inventories and recovery evidence](docs/build-and-harness.md) for prerequisites, local diagnostics and exact scope.
+See [build prerequisites](docs/build-and-harness.md), [test profiles and safety coverage](docs/testing.md), and [exact-image recovery campaigns](docs/recovery-campaign.md). Production Go builds use `CGO_ENABLED=0`. Only the data image includes native PostgreSQL client tools and their libraries.
 
-**New agent thread:** start with [docs/EXECUTE.md](docs/EXECUTE.md). It requires a finalized READY design, then covers Paseo-only role-based thinking, 1800-second waits, local-first test feedback, a five-child instruction limit, mandatory archival, independent review, automatic PR delivery and resumable progress.
+## References
 
-## Planning
-
-- [Wayfinder decision map](https://github.com/djosh34/cnpg_backup/issues/1) — canonical decision index and native blockers.
-- [Design specification](https://github.com/djosh34/cnpg_backup/issues/2) — architecture, trade-offs, safety requirements and sources.
-- [PR delivery graph](https://github.com/djosh34/cnpg_backup/issues/3) — eleven planned PRs with requirements and acceptance criteria.
-
-Local planning assets:
-
-- [Implementation specification and research evidence](docs/design.md)
-- [PR plan](docs/pr-plan.md)
-- [Release endpoints, licensing and security gates](docs/release-policy.md)
-- [Recovery testing, DST/fuzz and the two-hour Actions campaign](docs/testing.md)
-- [Independent review and adjudication](docs/agents/review.md)
-- [Initial research and unverified assumptions](docs/research/initial-reconnaissance.md)
+- [Architecture and recovery safety](docs/design.md)
+- [Repository format, publication, and retention](docs/repository.md)
 - [Domain glossary](CONTEXT.md)
-
-GitHub resolutions and current PR/CI/release evidence are the durable delivery state. Planned PR issues and planning experiments are not evidence of completed product implementation.
+- [Security packaging](docs/security-packaging.md) and [release policy](docs/release-policy.md)
 
 ## License
 
-**All rights reserved** for original project work. This is not an open-source license grant. Third-party components retain their own licenses and required notices.
+All rights reserved for original project work. This is not an open-source license grant. Third-party components retain their own licenses. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

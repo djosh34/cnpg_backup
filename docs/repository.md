@@ -1,48 +1,105 @@
-# Repository v1 implementation (PR C)
+# Repository and S3 reference
 
-Authority remains [design §§3–6](design.md) and the resolved [storage protocol](research/storage-protocol-final.md). This document describes the concrete Go callers and evidence, not a replacement decision or release qualification.
+`internal/repository` owns format v1, all derived keys, immutable publication, protected catalogs, restore plans, and destructive admission. `internal/s3store` implements its concrete storage seam with minio-go. Unknown formats and malformed metadata fail closed. There is no automatic format rewrite.
 
-## Callers and boundaries
+## Storage requirements
 
-`internal/repository` owns derived keys, strict plugin schemas, immutable request/attempt/commit publication, the shared CAS gate, backup catalogs, restore-plan metadata, and bounded destructive execution. `Storage` is the actual file/metadata/list seam implemented by `*s3store.Store`; simulation implementations exist only in `_test.go` files.
+The backend must provide TLS, atomic object visibility, atomic `If-None-Match: *` creation and ETag `If-Match` replacement, and strong reads and complete ordered lists. ETags are opaque concurrency tokens, not checksums. The plugin never substitutes HEAD-then-PUT for conditional creation.
 
-- A writer initially calls `Initialize(ctx, store, identity, diskWorkspace)`. It runs bucket safety and conditional capability checks. `Open` requires the exact immutable identity and existing valid gate; it cannot repair missing identity/gate over used data. Use one live Repository handle per process/config snapshot. `ProcessID` is fresh on Open, never an old process's adoption token.
-- `AdmitBackup(writerClusterUID, backupUID)` acknowledges protection before parent selection or capture. `Begin(request)` freezes the semantic request and either returns a verified durable winner or a unique, one-use Attempt. Populate `Commit.AttemptID` from `Attempt.ID` and its request digest from `Attempt.RequestSHA256()`. `Publish` accepts original manifest and immutable known-length files, verifies stored/raw lengths and SHA256, uploads, verifies remote artifacts and the exact full parent, and commits last. Losing/ambiguous callbacks return the winning commit bytes and its S3 publication timestamp, never their own candidate.
-- The native caller (PR F/H) **must already have run original-input/native-WAL verification, archive/path/file-count limits, capture identity/postflight, reference-age/summary checks and workspace reservations**. C does not execute PostgreSQL, parse tar/native incremental files, or claim that synthetic test fixture bytes are PostgreSQL backups. C itself enforces the commit's stricter 64 MiB manifest, 64 tablespace/66 artifact, 1 TiB raw-backup, 256 GiB bundled-WAL and 512 GiB stored-object ceilings, including capture-instance/postmaster continuity in differential edges.
-- A disaster-recovery caller uses `OpenSource(ctx, store, repositoryID, diskWorkspace)` to discover the immutable system/WAL/writer identity from S3 with only source configuration. `AdmitRestore(targetClusterUID, operationID)` positively establishes stable lifetime protection and then a fresh process-reader holder. It needs no source Kubernetes state, source controller, writer or payload-deletion privileges. Callers **must reject terminal operations from their durable CNPG lifecycle state before admission**; a removed S3 lifetime holder is not a terminal-state tombstone.
-- `Hold.Catalog(limits)` completes and validates an ordered S3 inventory into a private disk spool before returning anything. Original manifests are hash-verified; artifact HEADs check presence/size **not content integrity**. Full-parent edges must be valid and unretired. Retired history remains enumerable with original publication timestamps. `Catalog.Visit` still requires active protection; its disk scan and the GC inventory/dependency scans check cancellation between records, including after the final callback. Visitors own cancellation within their own work; do not recursively call Hold methods from a visitor.
-- `Hold.Select` verifies the selected exact full or F+D chain and all actual referenced bytes. The WAL caller (PR G/E) supplies the numeric source-history path and continuous admitted archive intervals derived from verified history/archive inventory. Plan validation rejects incompatible chains, target combinations, forks, missing interval continuity, and source/destination identity reuse. It does not invent archive coverage or claim PostgreSQL reached a target.
-- `RestoreOperationID` derives a project-defined UUIDv8 from SHA256 of the domain-separated target UID and nonsecret bootstrap fingerprint. Use this function in lifecycle callers, not a competing derivation. `ValidatePlan` requires a fresh admitted reader and preserves exact selected chain/target while rebinding only its reader ID. `SavePlan`/`ReadPlan` use bounded JSON and confined, atomic/fsynced state-file publication in a caller-owned private directory outside PGDATA. These are **not target ownership**: PR D/G must establish the main recovery-guard before any target work.
-- `Plan.Coverage` reports bundle and remote interval intersections separately. The same final bundled segment can also be remote-required. The WAL caller must look up and verify archive bytes first; bundle-only metadata is not proof that a local file still exists. Auth/transport/corruption/retirement must never become ordinary EOF.
-- `Hold.DownloadInput` derives only the exact committed manifest/artifact key and verifies the whole stored/raw input while holding local admission. Index `-1` means original manifest. It returns no unverified successful download. Differential input downloads recheck the exact live full-parent identity/request/claim without retransferring unrelated parent payloads. Each original F/D input is verified when actually downloaded; selected-chain verification remains unchanged.
+Writer and retention startup checks require an unversioned bucket with no Object Lock or lifecycle rules. Versioning suspension is also rejected. Bucket safety checks that are denied or unsupported do not count as safe. No unrelated process or bucket administrator may mutate or expire repository data while the plugin uses it.
 
-## Release and failure ownership
+Initialization probes conditional create, rejected create, missing-object CAS, successful CAS, stale CAS, and subsequent GET/HEAD/LIST under a unique `probes/` path. Failed capability checks return `UnsupportedStorageSemantics`. Finite probes do not prove an arbitrary endpoint's consistency under every failure. MinIO with both signers and private CA is the tested backend, not a claim of universal S3 compatibility.
 
-Hold methods serialize with `Close`: close irreversibly stops admission and waits for admitted calls. Repository tempfile creation/write failures known to precede dispatch return definitive `LocalIOFailure`; restored workspace capacity permits clean close and fresh admission. Unknown errors from dispatched mutations remain conservative. A possibly applied producer mutation permanently latches its holder, even when a later GET establishes a valid winning result. A fresh process can admit beside this holder but cannot remove it. Do not release from a bootstrap-RPC defer; retain the reader through replay/pause and drain.
+Destination credentials need bucket configuration reads, prefix object reads/list, conditional writes, multipart initiation/upload/completion/list, and destructive operations for retention. Bucket checks use `GetBucketVersioning`, `GetLifecycleConfiguration`, and `GetBucketObjectLockConfiguration`. Buckets must already exist; production does not need `CreateBucket` or `ListAllMyBuckets`.
 
-`ReleaseLifetimeAfterTermination` can remove only the stable lifetime token. Its **CNPG caller** must first record terminal state and prove matching Job/all-Pod/container termination. It cannot remove process-reader holders. Missing API evidence is not termination proof.
+GC deletion permissions apply only to attempt payload keys. Explicitly deny `DeleteObject` on repository identity, gate, request, commit, retirement, and WAL slot keys. Source recovery needs prefix reads/list and GET/conditional PUT on the exact source `gate.json`, not payload deletion. It opens existing identity and gate metadata without initializing or repairing them.
 
-GC callers use `AcquireGC`, then authoritative `Inventory`, then one `Execute(GCPlan)`, then `Close`. Pure keep/window/WAL-floor policy belongs to PR I; C does not authorize deletion merely from age. Execute:
+Gate writers are trusted cooperative plugin participants. S3 policy cannot distinguish a legitimate holder update from a malicious owner change. This protocol protects against accidental concurrency, not compromised credentials or arbitrary external readers. Source recovery cannot use read-only credentials because it must acknowledge deletion protection.
 
-1. Validates the whole bounded plan and complete backup catalog before any destructive operation, then persists the immutable plan.
-2. Requires differential retirement before parent retirement and retirement before any winning-attempt payload deletion. Rejects any plan placing WAL retirement before a later backup retirement, before persisting or dispatching the plan; all planned backup retirements must conclusively complete before WAL retirement.
-3. Allows orphan deletion/MPU abort only in a valid claimed attempt with no admitted producer. `OrphanUploads` performs complete bounded discovery for lost initiation responses; it never resumes the old upload.
-4. Replaces WAL segments at the permanent key using the expected ETag and validated live identity/hash metadata. It refuses history/backup-history retirement. No WAL-slot or permanent backup-metadata DELETE API exists.
-5. Issues at most 128 serial destructive requests and stops dispatch once the batch has reached 30 seconds. The caller must replan after clean release; these bounds are not a lease. Clean release yields at least one second locally. Large/slow inventories can exhaust the batch budget without deleting anything; this is an explicit capacity/progress failure, never permission to omit inventory or expire ownership.
-6. Latches uncertainty on a possibly applied retirement/DELETE/abort. No retry, HEAD absence, time advance or other incarnation can clear it. Even an acknowledged destructive batch that crashes before owner release remains blocked.
+The adapter uses explicit credential/CA snapshots, exact configured authority, path addressing, and no proxy, redirect, credential-chain, or signer fallback. Fresh HTTP/1 connections avoid automatic replay of bodyless destructive requests on reused connections. Transport error messages omit endpoints, keys, server messages, and secrets.
 
-Every ambiguous gate CAS uses a fresh no-op generation/nonce CAS barrier before inferring absence/retrying. Generation overflow, malformed/unknown/duplicate/missing fields, holder exhaustion, unknown keys and incomplete lists fail closed.
+## Key layout
 
-## Resource envelope
+All keys are under `<configured-prefix>/v1/<repository-UUID>/`. Repository code derives the following paths from validated IDs, indices, and PostgreSQL filenames.
 
-Metadata is bounded before decoding: 64 KiB small records, 1 MiB/1,024 holders for gate, 4 MiB commit/plan. Decoder rejects invalid UTF-8/escaped surrogates, duplicates, unknown fields, missing required fields, nonnullable null and trailing JSON. IDs and native LSNs must be canonical. Keys are entirely derived from validated IDs/indices/PostgreSQL filename grammar.
+| Relative key | Meaning |
+|---|---|
+| `repository.json` | Immutable schema, repository UUID, PG major, system identifier, WAL segment size, writer Cluster UID, creation time |
+| `gate.json` | CAS generation, nonce, nonexpiring holders, optional destructive owner |
+| `backups/<Backup-UID>/request.json` | Immutable requested type, full root if differential, writer and configuration identity |
+| `backups/<Backup-UID>/attempts/<attempt-UUID>/claim.json` | Ownership of one fresh attempt namespace |
+| `backups/<Backup-UID>/attempts/<attempt-UUID>/manifest.pg.json` | Exact original native manifest |
+| `backups/<Backup-UID>/attempts/<attempt-UUID>/data/<index>.tar[.gz]` | Attempt-owned backup artifacts |
+| `backups/<Backup-UID>/commit.json` | Immutable winning manifest/artifact inventory and capture metadata |
+| `backups/<Backup-UID>/retired.json` | Permanent exclusion from recovery selection |
+| `wal/<8-hex-timeline>/<PostgreSQL-filename>` | Verified WAL/history content, or a permanent same-key WAL tombstone |
+| `gc/<operation-UUID>.json` | Immutable destructive plan, not permission for a new process to resume it |
+| `probes/<probe-UUID>/...` | Conditional-capability diagnostics |
 
-Catalog holds no global in-memory graph: one decoded commit/manifest workspace at a time and a caller-bounded disk spool, with at most one million **active** records. The merged S3 adapter additionally limits each complete LIST to one million total objects, so many attempts/retirements can reach that lower operational capacity first. Both limits fail explicitly; no partial inventory is exposed. Retired records consume disk/LIST capacity, not an active-selection map. Whole artifact verification uses 128 KiB buffers and one temporary disk file at a time. The caller must provide real bounded disk capacity; this package does not manufacture native/PVC capacity guarantees.
+WAL keys have no compression suffix. Live object metadata uses `cnpg-format: wal-v1`, `cnpg-system-id`, `cnpg-raw-bytes`, `cnpg-raw-sha256`, `cnpg-stored-sha256`, and `cnpg-compression`. The body is raw or gzip data, without HTTP Content-Encoding. A retired slot has `cnpg-format: wal-retired-v1` and a JSON tombstone recording identity, original name/hash/size, and GC operation. Reads verify actual bytes rather than trusting metadata alone.
 
-## Evidence and honest exclusions
+Identity is a lineage, not a Cluster name or PostgreSQL system identifier alone. One cooperative Cluster writes it. A restored cluster archives to a distinct destination UUID. Missing identity or gate over used data cannot be repaired as if the repository were empty.
 
-`hack/test fast` runs repository tests, fixed deterministic simulations and fuzz regression seeds. `hack/test integration` now also selects `TestMinIORepository` alongside `TestMinIOPrimitives`, with the same checksum-pinned disposable MinIO binary, both signers and private CA. It accepts no external endpoint/credentials. `artifacts/s3/minio-integration.jsonl` and bounded redacted adapter/repository server logs distinguish setup failure from product assertions.
+## Publication and retries
 
-The deterministic tests execute actual production operations against controlled storage durability/delivery, preserve fake durable objects across fresh Open calls, reproduce fixed operation-count traces, and use independent byte/deletion invariants. Deliberately incomplete publication and unsafe owner clearing are negative controls. These are **simulated protocol evidence**, not actual S3/PostgreSQL behavior. The MinIO suite uses real adapter/remote storage with test-controlled lost delivery and delayed dispatch; its fixture data is synthetic and does not establish SQL recovery.
+Backup admission precedes parent selection and capture. `request.json` freezes the Backup UID's semantics. Each attempt claims a new namespace. Publication uploads the original manifest and known-length artifacts, verifies remote raw/stored length and SHA256, validates the full parent, and creates `commit.json` last. The native caller has already verified archives, WAL, capacity, and source continuity.
 
-Real CNPG target ownership/lifecycle, native-tool correctness, WAL upload/fatal-vs-miss RPC behavior, continuous archive inventory/target resolution, retention policy, metrics/events and full product recovery remain their later delivery slices. Race detection and real-MinIO success must be recorded by exact-SHA hosted CI; neither a skipped local integration test nor a generated workflow is passing system evidence.
+The first valid commit wins. Losing or ambiguous retries verify and return that durable winner, not their own candidate bytes. A lost response can leave a valid commit and a failed CNPG invocation. Its success timestamp is the immutable commit object's S3 LastModified, distinct from source capture completion.
+
+WAL uses a seekable disk spool and conditional single PUT with precomputed Content-MD5. It needs no global holder or per-file gate write. An existing initialized writer can keep archiving while holders or an uncertain GC owner block other work. Acknowledgment requires verified remote content. Same-name identical raw bytes can succeed on retry; different content or a retired slot cannot. No ETag-as-hash or local queue acknowledgment is used.
+
+Artifacts use Core multipart operations in fresh claimed keys, 64 MiB parts, at most two workers per artifact, and ordered completion. High-level SDK automatic abort is not used. Lost initiation may have no UploadID. Failed attempts are not resumed or reused, and errors do not trigger destructive cleanup without GC admission.
+
+Read retries restart verified downloads from byte zero, with at most five attempts. Mutations have one attempt. A timeout, transport loss, short response, malformed control response, or unknown result may mean a mutation applied. A successful retry or later HEAD absence does not prove the original request drained. Conservative uncertainty remains attached to its owner.
+
+## Deletion admission
+
+`gate.json` contains either holders or one process-specific GC owner, never both. Add-holder CAS success acknowledges admission. Each update changes generation and nonce. Ambiguous CAS outcomes require a fresh no-op CAS barrier before retry or absence inference, so delayed requests cannot acquire stale authority.
+
+Backup holders cover producers. Restore uses both a stable lifetime holder and a fresh process-reader holder. Hold close stops local admission and drains admitted calls before release. A possibly applied producer mutation latches its holder even if a later read finds a valid winner. Another process can admit beside it but cannot clear it.
+
+GC owns every retirement, payload DELETE, and multipart abort. Its owner never expires or transfers to another incarnation. It releases only after all dispatched destructive requests conclusively drain. Crash or ambiguity leaves the owner set and blocks new admission. No clock, retry, HEAD absence, or GC log authorizes takeover.
+
+Crashed reader or backup holders block GC, but allow new protected backups and restores. Arbitrary external S3 readers do not obtain this protection. There is no force-clear or TTL option. Status and Warning events describe lock state but do not grant authority.
+
+## Catalogs and recovery plans
+
+A catalog requires a complete validated inventory under acknowledged protection. Metadata and original manifests are authenticated. Artifact HEADs prove presence and size, not content integrity. Selected inputs are downloaded and verified before use. Differential edges require a live exact full parent with matching physical and capture continuity.
+
+Catalogs spool to bounded disk rather than keeping all manifest payloads in memory. A failed, partial, malformed, or canceled list yields no authoritative catalog. Protected visitation and dependency scans check cancellation between records. Permanent retired commit metadata remains available for diagnosis and success history.
+
+Recovery freezes a full or full-plus-differential chain, target, numeric timeline path, and required archive intervals. Bundle coverage and remote coverage remain separate, including when both intersect the same segment. The [architecture reference](design.md#wal-and-recovery-correctness) defines helper failure semantics and target ownership.
+
+## Retention
+
+`internal/retention.Plan` keeps backups inside the configured recovery window, a usable pre-cutoff anchor along each known timeline path, the minimum full roots, the latest usable backup, and every retained differential's full parent. Without a pre-cutoff anchor it keeps the earliest usable candidate and reports a shortened window. Prolonged failed backups do not remove the last usable root.
+
+WAL retention uses native redo/start/fork floors and continuous replay coverage, never object age or cross-timeline lexical ordering. Competing latest timeline leaves, inconsistent metadata, or required coverage gaps stop destructive work. Format v1 conservatively retains non-current-timeline WAL, history, backup-history, and promotion partials.
+
+Execution acquires GC before authoritative inventory. It validates the complete plan, retires dependent differentials before their parent, and completes backup retirement before WAL retirement. Retirement permanently excludes a backup before payload deletion. Commit, request, and retirement history remain. WAL retirement replaces the permanent key with a conditional tombstone, so a late no-clobber upload cannot resurrect it.
+
+`GCOwner.Cleanup` completes object and multipart inventories before returning at most 128 eligible payload deletions or aborts. Each victim requires a valid claimed attempt with no admitted producer and must be retired, nonwinning, or uncommitted. Reaching the victim limit does not permit skipping the rest of the inventory. A fresh batch can resume cleanup of permanent retirements only after the previous owner conclusively released, never by adopting that owner.
+
+A completely validated catalog with no live backups permits only proven orphan cleanup, reports unavailable recovery coverage, and never retires WAL. Partial or corrupt inventory authorizes nothing.
+
+A batch dispatches at most 128 serial destructive requests. Its 30-second destructive-phase clock starts at first dispatch. After a conclusively drained release it yields at least one second, then replans. These are work limits, not lease expiration. Manager work has a separate 90-second context including inventory reads.
+
+The manager uses a separate 512 MiB disk-backed retention mount. It reserves 384 MiB before admission and accounts for existing spools, a 256 MiB catalog, sequential 64 MiB manifests, and control/history overhead. Bounded Go writes enforce that allocation budget; `emptyDir.sizeLimit` alone is not its enforcement mechanism. Capacity failure before destructive dispatch permits clean live-owner release.
+
+## Bounds and errors
+
+| Resource | Limit |
+|---|---:|
+| Small repository records | 64 KiB |
+| Gate | 1 MiB, 1,024 holders |
+| Commit and repository plan | 4 MiB |
+| Original manifest | 64 MiB |
+| Active catalog records | 1,000,000 |
+| Complete adapter LIST | 1,000,000 entries, 10,001 pages |
+| Stored artifact | 512 GiB, 8,192 multipart parts |
+| Control response body and headers | 4 MiB body, 64 KiB headers |
+| Hash/copy buffer | 128 KiB |
+
+Permanent attempts, retirements, holders, and probe objects consume finite storage and LIST capacity. Exhaustion fails explicitly, not with a partial inventory. Strict metadata decoding rejects duplicate, unknown, missing, null-required, invalid Unicode, noncanonical identity/LSN, and trailing fields or documents.
+
+`RepositoryAdmissionBlocked` indicates an exclusive owner prevents admission. `RepositoryOperationUncertain` retains protection after ambiguous work. `BackupAlreadyExpired` rejects retired selections. `RepositoryCapacityExceeded`, `RepositoryCorruption`, and `InvalidRepositoryMetadata` stop the affected operation. Only a fully consumed GET 404 XML `NoSuchKey` is authenticated object absence. Missing buckets, bare 404s, and malformed XML remain failures.
