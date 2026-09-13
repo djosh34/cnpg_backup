@@ -142,7 +142,7 @@ func TestOracleDetectsWALBeforeBackupRetirement(t *testing.T) {
 	// intermediate state. Oracle must not call production order validation.
 	p := gcplan(g, w, retire(old))
 	b, _ := json.Marshal(p)
-	if _, e = r.put(ctx, r.root+"gc/"+p.OperationID+".json", b, s3store.Condition{Create: true}); e != nil {
+	if _, e = r.put(ctx, r.root+"gc/"+p.OperationID+".json", b, s3store.Condition{Create: true}, nil); e != nil {
 		t.Fatal(e)
 	}
 	key, _ := r.WALKey(*w.WALName)

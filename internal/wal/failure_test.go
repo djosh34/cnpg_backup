@@ -44,7 +44,7 @@ func TestUnwritableRawOutputNeverSucceeds(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer full.Close()
-	if _, e = w.retrieve(ctx, name, full); e != ErrLocal {
+	if _, e = w.Retrieve(ctx, name, full); e != ErrLocal {
 		t.Fatal("unwritable verified output", e)
 	}
 }

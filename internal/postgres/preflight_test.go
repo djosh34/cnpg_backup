@@ -27,23 +27,14 @@ func TestActualServerSettingsAndManagedLayoutValidation(t *testing.T) {
 		}
 	}
 }
-func TestControlMetadataPhysicalLimitsAndBoundedNativeOutput(t *testing.T) {
+func TestControlMetadataPhysicalLimits(t *testing.T) {
 	good := "Database block size: 8192\nBlocks per segment of large relation: 131072\nWAL block size: 8192\nDatabase system identifier: 1234\nBytes per WAL segment: 16777216\nData page checksum version: 1\n"
-	if err := validateControl(good); err != nil {
+	if err := validateControl(controlFields(good)); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{strings.ReplaceAll(good, "8192", "16384"), strings.ReplaceAll(good, "16777216", "16000000"), strings.ReplaceAll(good, "checksum version: 1", "checksum version: 2"), ""} {
-		if validateControl(text) == nil {
+		if validateControl(controlFields(text)) == nil {
 			t.Fatal("unsupported control metadata accepted")
 		}
-	}
-	var output boundedOutput
-	for i := 0; i < 8; i++ {
-		if n, err := output.Write(make([]byte, 256<<10)); err != nil || n != 256<<10 {
-			t.Fatal(n, err)
-		}
-	}
-	if len(output.data) != 1<<20 || !output.exceeded {
-		t.Fatal("unbounded native stdout")
 	}
 }

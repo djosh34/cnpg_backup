@@ -52,7 +52,7 @@ func (h *Hold) begin(ctx context.Context, req Request) (*Attempt, *Result, error
 		req.RootBackupUID = &root
 	}
 	b, _ := json.Marshal(req)
-	_, e := r.put(ctx, r.backup(req.BackupUID)+"request.json", b, s3store.Condition{Create: true})
+	_, e := r.put(ctx, r.backup(req.BackupUID)+"request.json", b, s3store.Condition{Create: true}, nil)
 	if ambiguous(e) {
 		h.uncertain = true
 	}
@@ -96,7 +96,7 @@ func (h *Hold) begin(ctx context.Context, req Request) (*Attempt, *Result, error
 	}
 	cl := Claim{Schema: 1, RepositoryID: r.id.RepositoryID, BackupUID: req.BackupUID, AttemptID: UUID(), ProcessID: r.process, RequestSHA256: digest(b)}
 	b, _ = json.Marshal(cl)
-	_, e = r.put(ctx, r.attempt(cl.BackupUID, cl.AttemptID)+"claim.json", b, s3store.Condition{Create: true})
+	_, e = r.put(ctx, r.attempt(cl.BackupUID, cl.AttemptID)+"claim.json", b, s3store.Condition{Create: true}, nil)
 	if e != nil {
 		if ambiguous(e) {
 			h.uncertain = true
@@ -194,7 +194,7 @@ func (a *Attempt) publish(ctx context.Context, c Commit, manifest *os.File, file
 	if int64(len(b)) > commitLimit {
 		return nil, ErrCapacity
 	}
-	_, e = r.put(ctx, r.backup(c.BackupUID)+"commit.json", b, s3store.Condition{Create: true})
+	_, e = r.put(ctx, r.backup(c.BackupUID)+"commit.json", b, s3store.Condition{Create: true}, nil)
 	if ambiguous(e) {
 		h.uncertain = true
 	}

@@ -511,7 +511,7 @@ func TestGateAmbiguityBarrierAndStaleCAS(t *testing.T) {
 	old.Generation = "1"
 	old.Nonce = UUID()
 	b, _ := json.Marshal(old)
-	if _, e = r.put(ctx, r.root+"gate.json", b, s3store.Condition{Match: oi.ETag}); !s3store.Is(e, s3store.Precondition) {
+	if _, e = r.put(ctx, r.root+"gate.json", b, s3store.Condition{Match: oi.ETag}, nil); !s3store.Is(e, s3store.Precondition) {
 		t.Fatal(e)
 	}
 	requireOracle(t, s)

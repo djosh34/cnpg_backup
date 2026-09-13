@@ -144,7 +144,7 @@ func initialize(ctx context.Context, s Storage, id Identity, workspace string) e
 	}
 	g := Gate{Schema: 1, RepositoryID: id.RepositoryID, Generation: "0", Nonce: UUID(), Holders: []Holder{}}
 	b, _ = json.Marshal(g)
-	_, e := r.put(ctx, r.root+"gate.json", b, s3store.Condition{Create: true})
+	_, e := r.put(ctx, r.root+"gate.json", b, s3store.Condition{Create: true}, nil)
 	if e == nil {
 		return nil
 	}
@@ -170,7 +170,7 @@ func (r *Repository) artifact(c Commit, a Artifact) string {
 }
 func (r *Repository) temp() (*os.File, error) { return os.CreateTemp(r.workspace, "repository-*") }
 func removeFile(f *os.File)                   { name := f.Name(); f.Close(); os.Remove(name) }
-func (r *Repository) put(ctx context.Context, key string, b []byte, c s3store.Condition) (s3store.Info, error) {
+func (r *Repository) put(ctx context.Context, key string, b []byte, c s3store.Condition, metadata map[string]string) (s3store.Info, error) {
 	// These local failures precede PutFile dispatch: no remote mutation can
 	// still arrive. Do not let them poison an otherwise drained hold/owner.
 	f, e := r.temp()
@@ -181,10 +181,10 @@ func (r *Repository) put(ctx context.Context, key string, b []byte, c s3store.Co
 	if _, e = f.Write(b); e != nil {
 		return s3store.Info{}, &s3store.Error{Kind: s3store.LocalIO}
 	}
-	return r.store.PutFile(ctx, key, f, s3store.Integrity{Size: int64(len(b)), SHA256: digest(b)}, c, nil)
+	return r.store.PutFile(ctx, key, f, s3store.Integrity{Size: int64(len(b)), SHA256: digest(b)}, c, metadata)
 }
 func (r *Repository) createExact(ctx context.Context, key string, b []byte, max int64) (s3store.Info, error) {
-	i, e := r.put(ctx, key, b, s3store.Condition{Create: true})
+	i, e := r.put(ctx, key, b, s3store.Condition{Create: true}, nil)
 	if e == nil {
 		return i, nil
 	}
@@ -253,12 +253,11 @@ func (r *Repository) requestFor(ctx context.Context, c Commit) (Request, error) 
 	if c.Kind == "differential" && (req.RootBackupUID == nil || *req.RootBackupUID != c.RootBackupUID) {
 		return req, ErrCorrupt
 	}
-	var cl Claim
-	b, _, e = r.store.Read(ctx, r.attempt(c.BackupUID, c.AttemptID)+"claim.json", smallLimit)
+	cl, e := r.readClaim(ctx, c.BackupUID, c.AttemptID)
 	if e != nil {
 		return req, e
 	}
-	if strict(b, smallLimit, &cl) != nil || cl.Schema != 1 || cl.RepositoryID != r.id.RepositoryID || cl.BackupUID != c.BackupUID || cl.AttemptID != c.AttemptID || !validID(cl.ProcessID) || cl.RequestSHA256 != c.RequestSHA256 {
+	if cl.RequestSHA256 != c.RequestSHA256 {
 		return req, ErrCorrupt
 	}
 	return req, nil

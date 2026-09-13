@@ -132,7 +132,7 @@ func (r *Repository) changeGate(ctx context.Context, change func(*Gate) (bool, e
 		if int64(len(b)) > gateLimit {
 			return ErrCapacity
 		}
-		_, e = r.put(ctx, r.root+"gate.json", b, s3store.Condition{Match: i.ETag})
+		_, e = r.put(ctx, r.root+"gate.json", b, s3store.Condition{Match: i.ETag}, nil)
 		if e == nil {
 			if barrier {
 				barrier = false

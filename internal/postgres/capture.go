@@ -55,15 +55,9 @@ func controlAt(ctx context.Context, directory string) (captureControl, error) {
 }
 
 func parseCaptureControl(output string) (captureControl, error) {
-	if e := validateControl(output); e != nil {
+	fields := controlFields(output)
+	if e := validateControl(fields); e != nil {
 		return captureControl{}, e
-	}
-	fields := map[string]string{}
-	for _, line := range strings.Split(output, "\n") {
-		p := strings.SplitN(line, ":", 2)
-		if len(p) == 2 {
-			fields[strings.TrimSpace(p[0])] = strings.TrimSpace(p[1])
-		}
 	}
 	if fields["pg_control version number"] != "1800" || fields["Catalog version number"] != "202506291" {
 		return captureControl{}, ErrInput
@@ -150,19 +144,13 @@ func OpenCapture(ctx context.Context, root *os.Root) (*Capture, error) {
 			c.Close()
 		}
 	}()
-	for name, value := range map[string][]byte{"client.crt": s.Certificate, "client.key": s.Key, "server-ca.crt": s.ServerCA} {
-		if e = os.WriteFile(filepath.Join(c.Directory, name), value, 0600); e != nil {
-			return nil, e
-		}
-	}
-	service := "[local]\nhost=" + c.Connection.Host + "\nhostaddr=127.0.0.1\nport=5432\nuser=streaming_replica\ndbname=postgres\nsslmode=verify-full\nconnect_timeout=10\nsslcert=" + c.Directory + "/client.crt\nsslkey=" + c.Directory + "/client.key\nsslrootcert=" + c.Directory + "/server-ca.crt\n"
-	if e = os.WriteFile(filepath.Join(c.Directory, "service.conf"), []byte(service), 0600); e != nil {
+	c.env, e = prepareConnection(c.Directory, c.Connection.Host, s, "cnpg-backup")
+	if e != nil {
 		return nil, e
 	}
-	c.env = []string{"LANG=C", "LC_ALL=C", "HOME=/nonexistent", "PGSERVICE=local", "PGSERVICEFILE=" + c.Directory + "/service.conf", "PGPASSFILE=/nonexistent", "PGOPTIONS=-c search_path=pg_catalog -c statement_timeout=30000", "PGAPPNAME=cnpg-backup"}
 	for _, tool := range []string{"pg_basebackup", "pg_verifybackup", "pg_waldump", "pg_controldata", "psql"} {
 		b, e := command(ctx, c.env, tool, "--version")
-		if e != nil || !(strings.HasPrefix(string(b), tool+" (PostgreSQL) 18.6 ") || string(b) == tool+" (PostgreSQL) 18.6\n") {
+		if e != nil || !nativeVersion(b, tool) {
 			return nil, errors.New("native tool version mismatch")
 		}
 	}
