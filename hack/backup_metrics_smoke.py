@@ -114,8 +114,9 @@ class BackupMetricsSmoke:
             def warned():
                 events = json.loads(self.h.kube('get', 'events', '-n', self.h.NS,
                     '--field-selector', f'involvedObject.uid={uid},reason=BackupFailed', '-o', 'json'))['items']
-                return any(e.get('type') == 'Warning' and e.get('source', {}).get('component') == 'cnpg-backup'
-                           and e.get('message', '').startswith('Requested ' + kind + ' backup invocation failed;') for e in events)
+                return any(e.get('involvedObject', {}).get('uid') == uid and e.get('reason') == 'BackupFailed'
+                           and e.get('type') == 'Warning' and e.get('source', {}).get('component') == 'cnpg-backup'
+                           for e in events)
             self.h.wait(warned, 'actual supplemental BackupFailed Warning')
         for _ in range(3):
             time.sleep(1)
