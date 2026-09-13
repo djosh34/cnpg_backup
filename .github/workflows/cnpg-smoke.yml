@@ -1,6 +1,7 @@
 name: real-cnpg-lifecycle-smoke
 on:
   push:
+    branches: [main]
     paths: ['internal/**', 'cmd/**', 'config/**', 'hack/**', 'go.mod', 'go.sum', 'build/**', '.github/workflows/cnpg-smoke.yml']
   pull_request:
     paths: ['internal/**', 'cmd/**', 'config/**', 'hack/**', 'go.mod', 'go.sum', 'build/**', '.github/workflows/cnpg-smoke.yml']
