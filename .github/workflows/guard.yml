@@ -1,6 +1,7 @@
 name: recovery-guard-namespace
 on:
   push:
+    branches: [main]
     paths: ['internal/**', 'cmd/**', 'hack/**', 'go.mod', 'go.sum', 'build/**', '.github/workflows/guard.yml']
   pull_request:
     paths: ['internal/**', 'cmd/**', 'hack/**', 'go.mod', 'go.sum', 'build/**', '.github/workflows/guard.yml']
