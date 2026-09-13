@@ -28,8 +28,6 @@ Build inputs, Go modules/toolchain, container inputs, and Actions are pinned. In
 
 `govulncheck` checks linked Go code. Trivy checks both final images, including native libraries and secrets, with recorded tool and database versions. Reachable high/critical defects, leaked credentials, exploitable extraction, and unresolved backup/restore/data-loss defects block release. Specific false-positive or absent-code findings can have evidence-backed dispositions with revisit conditions; blanket ignores cannot hide missing coverage.
 
-Checkmarx is unavailable and no scan is claimed. No additional platform purchase or access is a gate. Required reviews, govulncheck, and final-image scanning remain.
-
 Test workflows default to read permissions. Publication grants `contents: write` and `packages: write` only where needed. Signing-only token permissions are unnecessary. Untrusted PR code never executes with `pull_request_target` publication privileges. No production or model credentials belong in tests.
 
 ## Qualification requirements

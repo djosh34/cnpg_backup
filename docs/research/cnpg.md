@@ -1,6 +1,6 @@
 # CNPG upstream protocol notes
 
-These notes explain upstream behavior that constrains the plugin. Product behavior and configuration are documented in [design.md](../design.md), [lifecycle-implementation.md](../lifecycle-implementation.md), and [restore-implementation.md](../restore-implementation.md).
+These notes explain upstream behavior that constrains the plugin. See [architecture](../design.md) and [configuration](../configuration.md) for the plugin's behavior.
 
 Source references use CNPG v1.30.0 at `4b5e244a7d031f67e025c83c1555e7726ecbbfa1`, CNPG-I v0.6.0 at `844d20b2b783a4804705b4abcb767beee6abf893`, and PostgreSQL 18.6 at `724edf9bde9d356724ad384a2e196edc3c9f80f7`.
 
@@ -30,7 +30,7 @@ Sources and executable regressions:
 - [CNPG WAL error aggregation](https://github.com/cloudnative-pg/cloudnative-pg/blob/4b5e244a7d031f67e025c83c1555e7726ecbbfa1/internal/cnpi/plugin/client/wal.go#L88-L163), [command fallback](https://github.com/cloudnative-pg/cloudnative-pg/blob/4b5e244a7d031f67e025c83c1555e7726ecbbfa1/internal/cmd/manager/walrestore/cmd.go#L110-L167), and [exit status](https://github.com/cloudnative-pg/cloudnative-pg/blob/4b5e244a7d031f67e025c83c1555e7726ecbbfa1/cmd/manager/main.go#L45-L74)
 - [PG archive failure handling](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/src/backend/access/transam/xlogarchive.c#L240-L280) and [fatal wait-status predicate](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/src/common/wait_error.c#L111-L131)
 - [Archive-before-local order](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/src/backend/access/transam/xlogrecovery.c#L4390-L4409) and [BACKUP_END before SWITCH](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/src/backend/access/transam/xlog.c#L9300-L9317)
-- [Exit-status negative control](experiments/cnpgi-wal-exit.py), [same-segment fixture](fixtures/README.md), and [latest-recovery endpoint oracle](s1-switch-latest.md)
+- [Exit-status negative control](experiments/cnpgi-wal-exit.py), [same-segment fixture](fixtures/README.md), and [latest-recovery endpoint oracle](wal-switch.md)
 
 ## Recovery Job and target ownership
 
