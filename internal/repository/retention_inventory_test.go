@@ -101,9 +101,10 @@ func TestRetentionCompleteCleanupPrerequisites(t *testing.T) {
 	if e != nil || len(victims) != 1 || victims[0].Kind != "abort-artifact" {
 		t.Fatal(victims, e)
 	}
-	listing.uploads[0].Key = r.root + "backups/" + backupID + "/attempts/" + UUID() + "/data/0.tar"
+	// The first upload fills the batch, but later entries still need validation.
+	listing.uploads = append(listing.uploads, s3store.Upload{Key: r.attempt(backupID, UUID()) + "data/0.tar", ID: "unclaimed"})
 	if victims, e := g.Cleanup(ctx, 1); e == nil || victims != nil {
-		t.Fatal("unclaimed MPU accepted", victims, e)
+		t.Fatal("unclaimed MPU beyond batch limit accepted", victims, e)
 	}
 	if s.deletes != 0 {
 		t.Fatal("inventory destroyed data")
