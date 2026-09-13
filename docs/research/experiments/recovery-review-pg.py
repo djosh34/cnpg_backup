@@ -2,7 +2,7 @@
 """Research only; private PG sockets, direct verification, archive-first tests.
 PG_BIN/PG_SHARE/LD_LIBRARY_PATH select read-only PG18 tools.
 Default is deterministic post-backup WAL; no race workload. Optional
-RECOVERY_FIXTURE names the retained same-segment capture described in the report.
+RECOVERY_FIXTURE names the capture described in ../fixtures/README.md.
 Keeps logs/commands, removes each stopped restore directory to bound disk/inodes.
 """
 import json
