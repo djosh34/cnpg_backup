@@ -1,40 +1,49 @@
-# Release and security contract
+# Release policy
 
-Technical distribution/security contract; becomes binding after independent design review and the READY resolution on [the handoff decision](https://github.com/djosh34/cnpg_backup/issues/14). Owner directions are authoritative there. This file selects technical distribution and qualification details; it grants no new project license.
+GitHub [versioned releases](https://github.com/djosh34/cnpg_backup/releases) are the canonical distribution record. The current release is [v0.1.0](releases/v0.1.0/README.md). Publication does not deploy the product into a consumer's production environment or grant a general project license.
 
-**Owner supersession — minimal release closeout:** the [explicit J/K owner resolution](https://github.com/djosh34/cnpg_backup/issues/24#issuecomment-5598040876) removes artifact/image signing, Sigstore/OIDC attestations and signature-verification gates, overriding earlier READY/document wording on those requirements only. Do not generate new signatures; historical signatures are not gates. Keep source/build/run traceability, exact tested bytes/checksums and actual security/correctness checks. Removing signing alone requires no image rebuild or requalification.
+## Artifacts and compatibility
 
-## Endpoint and support
+Each release contains the static Linux executable, both portable OCI archives, checksums, install/example manifests, runbooks, dependency notices, corresponding native sources, SBOMs, source/build records, qualification evidence, and retained synthetic regression fixtures.
 
-- First supported release: **v0.1.0**, Linux **amd64**, PostgreSQL **18** only, with the exact patch/tool/operator/Kubernetes/storage pins in the frozen design and release evidence. No implicit support for other architectures, PostgreSQL majors, standby captures or untested Kubernetes/CNPG versions. Compatible patch updates may be qualified autonomously and update the published matrix.
-- GitHub versioned releases at `https://github.com/djosh34/cnpg_backup/releases` are the canonical distribution record. Publish the Go executable, checksum file, install/example manifests and runbooks, dependency licenses/notices, SBOMs, source/build/run records, qualification summary, minimized synthetic regressions and **portable OCI archives of both qualified images**.
-- Registry destinations: `ghcr.io/djosh34/cnpg-backup-manager` and `ghcr.io/djosh34/cnpg-backup-pg18`. Build immutable `sha-<commit>` candidate images, qualify by digest, then attach the version tag to those **same digests**, without rebuilding. Version tags are never reused for changed bytes. Install examples pin digests. No floating `latest` dependency.
-- Initial database test/install image is `ghcr.io/cloudnative-pg/postgresql:18.6-standard-trixie`, resolved during planning to Linux-amd64 manifest **`sha256:de8dc8b70c7f26b6d353cc64b67d38037b9a94592ba8b789ca4d6f44762d6fa4`** (multiarch index `sha256:c2a773217853c6e0ffe7da9c37ea456466efb20cf844f27511a73fa6a81e3152`). Anonymous manifest retrieval succeeded. This is an upstream database image input, not a qualified plugin image. Manager final image is scratch + static Go binary + CA/identity/notices; data-path final image adds only the six selected PG18.6 executables and their loader/library/notices closure from the checksum-pinned PGDG Ubuntu packages, plus required CA/identity files. Builder/test tools remain outside final images. PR A locks remaining package/build-input digests and verifies actual runtime closure; it does not choose a new engine or runtime policy.
-- Do not assume GHCR visibility from public source visibility. Actions uses the verified repository token to publish/read its packages. If consumer anonymous pulls are unavailable, document `read:packages` authentication and provide public release OCI archives as the registry-independent alternative. Do not require a new owner credential or UI step to finish delivery. Consuming teams choose how to import/mirror/install; their production deployment is outside this project's execution scope.
-- Use semantic versions: patch for compatible fixes, minor for additive features or explicitly documented pre-1.0 breaking configuration changes. The `v1` repository format has its own compatibility contract: unknown formats fail closed; no implicit rewrite or destructive migration. N+1 reads retained N fixtures. Initial release has no predecessor and establishes fixtures rather than inventing upgrade evidence.
-- Support claims mean passing the published compatibility/recovery matrix, not an operational SLA, an unlimited database-size/RTO promise or all possible failure interleavings. Security and correctness fixes use the same review and exact-artifact qualification path. No production rollout is performed.
+Registry destinations are `ghcr.io/djosh34/cnpg-backup-manager` and `ghcr.io/djosh34/cnpg-backup-pg18`. Candidates are immutable. Qualification consumes their exact digests, and version tags promote those same manifests without rebuilding. A published version tag is never reused for changed bytes. Install manifests pin digests, not floating `latest` tags.
 
-## Original and third-party work
+GHCR visibility is independent of source visibility. Consumers may need `read:packages` authentication. Public release OCI archives provide a registry-independent path. Mirroring must preserve manifest digests rather than recompressing layers or wrapping a manifest in another index.
 
-Original project work is **all rights reserved**. Do not add Apache/MIT/another general project license or imply source/image publication grants downstream rights. Preserve third-party notices and applicable redistribution/source obligations. PostgreSQL tools and native libraries are the only runtime native exception; inventory and patch them. The production Go executable and linked Go dependencies build with `CGO_ENABLED=0`. Barman, pgBackRest, Python, test orchestration and build compilers are absent from final images.
+The published compatibility matrix defines support. There is no implicit support for other PostgreSQL majors, architectures, operator/Kubernetes versions, standby captures, or untested layouts. Compatible patch updates require updated pins and qualification. Support is not an SLA, fixed outage RPO, or unlimited database-size/restore-time promise.
 
-## Security gates
+Patch versions contain compatible fixes. Minor versions add features or explicitly documented pre-1.0 configuration breaks. Repository format compatibility is independent of package versioning. Unknown formats fail closed, with no implicit destructive migration. Later releases must recover retained prior-release full, differential, and WAL fixtures. v0.1.0 has no supported predecessor and establishes initial fixtures.
 
-- Pin Go modules/toolchain, container inputs and Actions by immutable identifiers in the build. Record both full build inventory and actually linked/runtime packages; do not confuse tooling dependencies with shipped code. SBOM each final image and binary; generate checksums and retain source/build/run records bound to the exact release digests. No artifact/image signing, OIDC attestation or signature-verification requirement remains.
-- Run `govulncheck` against linked Go code and an up-to-date maintained final-image scanner (Trivy) against both images, including native PostgreSQL libraries. Archive tool/database versions, results and dispositions. Reachable high/critical security defects, leaked credentials, exploitable unsafe extraction or unresolved backup/restore/data-loss defects block release. Scanner false positives or demonstrably unexploitable findings may be dispositioned with specific evidence and revisit conditions; neither a zero-findings fiction nor a routine owner waiver is required.
-- **Checkmarx: UNAVAILABLE / N-A; no scan performed.** No integration, purchase or configuration work is a release gate. Mandatory independent review, govulncheck and final-image scanning still apply.
-- Release jobs get `contents: write` and `packages: write` only where used; remove signing-only `id-token: write` and attestation permissions. Tests default to `contents: read`; no model/API/production secrets. Trusted default-branch workflows validate selected refs/digests; no privileged `pull_request_target` execution of untrusted code.
+## Integrity and licensing
 
-## Qualification contract
+Artifacts are unsigned. No artifact/image signing, Sigstore/OIDC attestation, or signature-verification gate applies. Checksums detect altered downloads but do not independently authenticate their source. Consumers obtain them from the canonical release.
 
-[testing.md](testing.md) remains authoritative. Every feature lands with its tests; no final-PR-only harness. Release requires two-context independent review dispositions applicable to the current subject, all relevant PR checks and exact-image recovery qualification. Associate evidence once with that subject and the actual image digests; identical source revisions do not authorize qualification of rebuilt bytes. Use local feedback first per testing.md without replacing trusted publication/source-and-byte traceability or mandatory recovery/security/resource gates. Mandatory recovery scenarios cannot be traded for a timer or green unit tests.
+Source/build/run traceability and exact tested bytes remain mandatory. A source revision does not qualify rebuilt images. Source and image evidence are associated once in the release subject record, with a separate harness identity when needed.
 
-Initial measurable execution targets and ceilings:
+Original project work is all rights reserved. Third-party licenses and notices remain applicable. PostgreSQL tools and their native libraries are the only runtime native exception. Production Go and its linked dependencies build with `CGO_ENABLED=0`. Compilers, test actors, scanners, Python, Barman, and pgBackRest are absent from final images. [Security packaging](security-packaging.md) describes inventories and corresponding-source obligations.
 
-- Manager: request 50m CPU/64 MiB, limit 500m/256 MiB; idle steady-state target below 128 MiB RSS.
-- Data-path Go process: request 100m/256 MiB, limit 2 CPU/3 GiB for the sidecar plus its native-tool children; idle Go RSS target below 128 MiB, transfer RSS target below 256 MiB excluding native tools. Measure the entire cgroup separately so exclusions cannot hide OOM risk. Native-tool concurrency is one backup/reconstruction per instance. Resource requests are defaults, not evidence that an arbitrary database fits them.
-- Reserve WAL request/buffer capacity independently from backup multipart transfers. Qualification must demonstrate a WAL archive callback completes during a sustained backup transfer and bounded memory with fixtures larger than transfer buffers. Report observed latency and backlog; no invented fixed RPO during faults.
-- Ordinary workspace is disk-backed; explicit capacity and extraction/output ceilings are enforced by the native-workflow contract. No database-sized RAM buffering, memory-backed workspace or unbounded artifact metadata accumulation. Fixture size, measured filesystem/cgroup limits, peak RAM/disk, transferred bytes and restore timings appear in release evidence.
-- Default qualification target 120 minutes, hard job timeout 150 minutes. Run fixed mandatory regressions first; require 20 minutes total native Go fuzzing across named parsing/extraction/planning targets, fixed-seed production-module DST corpus plus recorded exploration, and all real-system scenario families. Split jobs/rebalance within platform limits autonomously if mandatory work exceeds the budget; never label incomplete coverage qualified. The corpus and its replay counts are versioned with the harness; publish actual seeds/event counts, not merely elapsed time.
+## Security requirements
 
-Persist concise release evidence and minimized synthetic fixtures in GitHub release assets/repository; expiring runner logs are supplemental. No prior-release fixtures is inapplicable only for v0.1.0; all other first-release cases remain mandatory. Unexpected flakes retain their first failure and distinguishing replay/regression. Publication occurs automatically only after every applicable mandatory gate passes. A workflow file, planned campaign, or permission probe is not a successful qualification.
+Build inputs, Go modules/toolchain, container inputs, and Actions are pinned. Inventories distinguish full build dependencies from actual linked and shipped files. The binary and both actual images receive SBOMs, checksums, and current vulnerability scans.
+
+`govulncheck` checks linked Go code. Trivy checks both final images, including native libraries and secrets, with recorded tool and database versions. Reachable high/critical defects, leaked credentials, exploitable extraction, and unresolved backup/restore/data-loss defects block release. Specific false-positive or absent-code findings can have evidence-backed dispositions with revisit conditions; blanket ignores cannot hide missing coverage.
+
+Checkmarx is unavailable and no scan is claimed. No additional platform purchase or access is a gate. Required reviews, govulncheck, and final-image scanning remain.
+
+Test workflows default to read permissions. Publication grants `contents: write` and `packages: write` only where needed. Signing-only token permissions are unnecessary. Untrusted PR code never executes with `pull_request_target` publication privileges. No production or model credentials belong in tests.
+
+## Qualification requirements
+
+[testing.md](testing.md) defines mandatory recovery and failure behavior. A release needs independent review, applicable source/unit/integration checks, fixed production-module simulation regressions, 20 minutes total Go fuzzing, exact-image recovery scenarios, prior-release compatibility where applicable, and actual security/resource evidence.
+
+Resource measurements include:
+
+- Manager idle Go RSS below 128 MiB, with default 50m CPU/64 MiB requests and 500m/256 MiB limits.
+- Data Go RSS below 128 MiB idle and 256 MiB during transfer, measured separately from native children.
+- Whole sidecar cgroup peak within the configured limit, at most 3 GiB, with OOM outcomes recorded. Default CPU limit is 2.
+- One concurrent native operation, explicit finite per-filesystem capacity, raw/spooled/reconstructed bytes, workspace peaks, and restore timings.
+- A durable WAL callback during sustained backup transfer larger than application buffers, with measured latency and backlog.
+
+Requests and example workspace sizes are defaults, not measurements. Samples do not prove unlimited capacity or every transient peak. Recovery campaigns budget 120 minutes with a 150-minute hosted hard timeout. Mandatory work that does not finish remains incomplete, regardless of elapsed time.
+
+Release assets retain concise qualification results, first failures and their dispositions, and minimized synthetic fixtures. Expiring runner logs are supplemental. A reviewed causal supplement must identify the exact failed obligation and distinguishing same-image replay without rewriting raw outcomes as a full pass. The [v0.1.0 record](releases/v0.1.0/qualification.md) documents such a decision.
