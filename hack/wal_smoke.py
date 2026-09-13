@@ -1,4 +1,4 @@
-"""E's actual CNPG/MinIO WAL extension. No replacement product data paths."""
+"""Real CNPG/MinIO WAL tests using the product archive and restore paths."""
 import gzip
 import hashlib
 import json

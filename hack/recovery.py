@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR A native recovery oracle, not production backup/storage/CNPG code.
+"""Native PostgreSQL recovery oracle, separate from the product data path.
 Runs as an ordinary user. Only its private Unix socket and loopback MinIO are
 accepted. --images verifies using direct Go exec in the actual scratch image.
 """

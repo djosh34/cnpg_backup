@@ -11,7 +11,6 @@ from unittest.mock import Mock, patch
 
 from campaign_plan import selected
 from recovery_cases import Campaign
-from premerge_candidate import trust, REPO
 
 
 class DifferentialCampaignTests(unittest.TestCase):
@@ -152,17 +151,6 @@ class DifferentialCampaignTests(unittest.TestCase):
         # A replacement full is rejected by the SAME counter used after faults.
         corrupted = observed + ['received replication command: BASE_BACKUP (WAL true)']
         self.assertNotEqual(sum('INCREMENTAL' not in c for c in corrupted), 1)
-
-    def test_trusted_H_caller_does_not_admit_other_workflows_or_branches(self):
-        sha = 'a' * 40
-        branch = 'refs/heads/implementation/pr-h'
-        env = {'GITHUB_REPOSITORY': REPO, 'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': branch,
-               'GITHUB_WORKFLOW_REF': REPO + '/.github/workflows/pr-g-candidate.yml@' + branch,
-               'GITHUB_SHA': sha, 'GITHUB_WORKFLOW_SHA': sha}
-        trust(env, sha, 'https://github.com/' + REPO + '.git')
-        for key, value in [('GITHUB_REF', 'refs/heads/attacker'), ('GITHUB_WORKFLOW_REF', 'other'), ('GITHUB_EVENT_NAME', 'pull_request_target')]:
-            with self.assertRaises(RuntimeError):
-                trust({**env, key: value}, sha, 'https://github.com/' + REPO + '.git')
 
 
 if __name__ == '__main__':

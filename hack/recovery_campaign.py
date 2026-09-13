@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Digest-only CI repair runner. Fresh fixtures, exact records, all independent failures."""
+"""Digest-only recovery runner with fresh fixtures and bounded failure evidence."""
 import argparse
 from collections import deque
 import contextlib
@@ -64,33 +64,14 @@ def failure_frames(error):
             for f in traceback.extract_tb(error.__traceback__)[-12:]]
 
 
-def assertion_record(error):
-    import ast
-    audit = json.loads((ROOT / 'docs/campaign-assertion-audit.json').read_text())['assertions']
-    if getattr(error, 'campaign_oracle', None):
-        return next(a for a in audit if a['id'] == error.campaign_oracle)
-    for frame in reversed(traceback.extract_tb(error.__traceback__)):
-        path = Path(frame.filename)
-        if path.name not in ('recovery_cases.py', 'recovery_campaign.py', 'wal_smoke.py'):
-            continue
-        node = next((n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.Assert) and n.lineno == frame.lineno), None)
-        if node is not None:
-            return next((a for a in audit if a['file'] == 'hack/' + path.name and a['function'] == frame.name
-                         and a['expression'] == ast.unparse(node.test)), None)
-    return None
-
-
 def classify(error, phase):
-    if isinstance(error, AssertionError):
-        audit = assertion_record(error)
-        if audit:
-            return audit['failure_layer']
+    # Diagnostic hints only. Every failure blocks acceptance regardless of layer.
     if phase in ('setup', 'preflight'):
         return 'fixture' if isinstance(error, AssertionError) else 'infrastructure'
     if phase in ('collection', 'teardown', 'fault-reset', 'fault-observation', 'child-reap', 'container-cleanup', 'fixture-restore'):
         return 'infrastructure'
     if isinstance(error, AssertionError):
-        if any(word in str(error).lower() for word in ('ineffective', 'injection', 'fixture', 'ambiguous')):
+        if str(error).lower().startswith(('ineffective', 'fixture', 'ambiguous')):
             return 'fixture'
         return 'product'
     # A timeout alone does not demonstrate a product defect. Preserve the layer
@@ -181,16 +162,16 @@ class Manifest:
             prior = self.failure(context, phase, scenario, fixture_requirement)
             caused_by = caused_by or prior['id']
         spec = next((c for c in REGISTRY if c['id'] == scenario), {})
+        classification = classify(error, phase)
         record = {'id': len(self.data['failures']) + 1, 'phase': phase, 'scenario': scenario,
                   'fixture_requirement': fixture_requirement, 'caused_by': caused_by,
                   'branch': getattr(self, 'current_branch', None),
-                  'classification': classify(error, phase),
-                  'classification_status': 'unadjudicated-requirement-layer' if classify(error, phase) == 'product' else 'observed-harness-layer',
+                  'classification': classification,
+                  'classification_status': 'unadjudicated',
                   'product_defect_proven': False,
                   'requirement': spec.get('requirement', 'owned fixture lifecycle'),
                   'error_type': type(error).__name__, 'diagnostic': redact(str(error))[-4000:],
-                  'frames': failure_frames(error), 'epoch': time.time(), 'fixture': self.data.get('active_fixture'),
-                  'assertion': assertion_record(error) if isinstance(error, AssertionError) or getattr(error, 'campaign_oracle', None) else None}
+                  'frames': failure_frames(error), 'epoch': time.time(), 'fixture': self.data.get('active_fixture')}
         error.campaign_records = {**records, identity: record}
         self.data['failures'].append(record)
         self.save_failures()
@@ -277,7 +258,7 @@ class Manifest:
         passed = not self.data['remaining_mandatory'] and not self.data['failures'] and self.data.get('profile') != 'qualification'
         self.data['scope_passed'] = passed
         self.save()
-        text = 'CI REPAIR: ' + ('PASS scoped' if passed else 'FAIL/incomplete') + '\n'
+        text = 'Recovery campaign: ' + ('PASS scoped' if passed else 'FAIL/incomplete') + '\n'
         text += f"Failures: {len(self.data['failures'])}; unproved scenarios: {len(self.data['remaining_mandatory'])}; release_qualified=false\n"
         for failure in self.data['failures']:
             label = 'unadjudicated product-requirement assertion' if failure['classification'] == 'product' else failure['classification']
@@ -402,10 +383,6 @@ def run_plan(plan, directory, bundle, duration=120, retain=False, branches=()):
     if plan['recipe']['fixture_mode'] == 'fresh':
         if bundle['diagnostic'] or subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT).strip():
             raise ValueError('dirty/diagnostic harness cannot execute qualifying fresh plan')
-    frozen = ROOT / '.github/ci-repair-subject.json'
-    if frozen.exists() and plan['subject']['revision'] == json.loads(frozen.read_text())['revision']:
-        if subprocess.check_output(['git', 'diff', plan['subject']['revision'], '--', 'cmd', 'internal', 'go.mod', 'go.sum'], cwd=ROOT).strip():
-            raise ValueError('CI REPAIR cannot change frozen product sources')
     directory.mkdir(parents=True, exist_ok=False)
     # Cross-worktree lock on the same host. Unknown/leaked nodes also block reuse.
     lockpath = Path.home() / '.cache/cnpg-backup-campaign.lock'
@@ -431,7 +408,6 @@ def run_plan(plan, directory, bundle, duration=120, retain=False, branches=()):
                 stale += commands.run('docker', 'ps', '-a', '--filter', 'label=cnpg-backup-fixture', '--format', '{{.Names}}').split()
                 if any(name.startswith(('cb-repair-', 'cnpg-backup-campaign-')) for name in stale):
                     raise ValueError('uncollected owned/retained campaign container blocks fresh slot')
-                shutil.copyfile(ROOT / 'docs/campaign-assertion-audit.json', manifest.directory / 'assertion-audit.json')
         except Exception as error:
             failure = manifest.failure(error, 'preflight')
             for name in manifest.data['scenarios']:

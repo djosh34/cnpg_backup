@@ -51,16 +51,16 @@ class SecurityTests(unittest.TestCase):
     def test_exact_trusted_subject_not_fork_tag_or_privileged_pr(self):
         images = ['ghcr.io/djosh34/cnpg-backup-' + f + '@sha256:' + 'b' * 64 for f in s.FLAVORS]
         env = dict(GITHUB_REPOSITORY='djosh34/cnpg_backup', GITHUB_EVENT_NAME='workflow_dispatch',
-                   GITHUB_REF='refs/heads/implementation/pr-j', GITHUB_RUN_ID='1', GITHUB_RUN_ATTEMPT='1')
+                   GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='1', GITHUB_RUN_ATTEMPT='1')
         with patch.dict(os.environ, env, clear=True), patch.object(s, 'run') as run, \
              patch.object(s.subprocess, 'check_output', return_value='c' * 40):
-            subject = s.subject('a' * 40, *images, 'implementation/pr-j')
+            subject = s.subject('a' * 40, *images, 'main')
             self.assertNotEqual(subject['revision'], subject['harness_revision'])
-            run.assert_called_once_with('git', 'merge-base', '--is-ancestor', 'a' * 40, 'refs/remotes/origin/implementation/pr-j')
+            run.assert_called_once_with('git', 'merge-base', '--is-ancestor', 'a' * 40, 'refs/remotes/origin/main')
             for key, value in [('GITHUB_REPOSITORY', 'fork/repo'), ('GITHUB_EVENT_NAME', 'pull_request_target'),
                                ('GITHUB_REF', 'refs/heads/implementation/pr-j-security')]:
                 with patch.dict(os.environ, {key: value}), self.assertRaises(ValueError):
-                    s.subject('a' * 40, *images, 'implementation/pr-j')
+                    s.subject('a' * 40, *images, 'main')
             with self.assertRaises(ValueError):
                 s.subject('a' * 40, images[0].split('@')[0] + ':latest', images[1], 'main')
 

@@ -1,4 +1,4 @@
-"""Disposable real CNPG G scenarios. Test arrangements never replace product I/O."""
+"""Disposable real CNPG recovery, fault, retention and upgrade scenarios."""
 import contextlib
 import base64
 import copy
@@ -30,7 +30,7 @@ LATEST = INCLUSIVE + [(4, 'after')]
 MAX_TARGETS = 64
 # Replace via a new inode: a prior verified0555 actor cannot be truncated by
 # the non-root PostgreSQL user. No mutation of a running executable's bytes.
-RETENTION_ACTOR_INSTALL = 'base64 -d > "$1.next"; chmod 0555 "$1.next"; mv "$1.next" "$1"'
+ACTOR_INSTALL = 'base64 -d > "$1.next"; chmod 0555 "$1.next"; mv "$1.next" "$1"'
 
 
 def target_secret_names():
@@ -506,15 +506,8 @@ class Campaign:
                 commands_before = self.native_backup_commands(pod)
                 name = 'h-failed-' + fault
                 if fault == 'cancellation':
-                    actor = h.bundle['directory'] / 'actor'
-                    # The real Run-importing I actor exceeds32MiB. Keep a
-                    # finite transfer cap before allocating the base64 input.
-                    assert actor.stat().st_size < 64 << 20
                     actor_path = '/var/lib/postgresql/data/h-native-processes'
-                    h.kube('exec', '-i', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
-                           'base64 -d > ' + actor_path + '; chmod 0555 ' + actor_path,
-                           input=base64.b64encode(actor.read_bytes()).decode())
-                    assert h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', actor_path).split()[0] == h.bundle['files']['actor']
+                    self.install_actor(pod, actor_path)
                     postmaster = self.sql(SOURCE, pod, 'SELECT pg_postmaster_start_time()')
                     self.sql(SOURCE, pod, "UPDATE h_data SET value=repeat(md5(id::text||'cancel'),16)")
                 h.apply(backup_smoke.definition(h, name, backup_type='differential'))
@@ -604,14 +597,19 @@ class Campaign:
                 else:
                     self.differential_failed(branch)
 
+    def install_actor(self, pod, path):
+        h = self.h
+        actor = h.bundle['directory'] / 'actor'
+        assert actor.stat().st_size < 64 << 20, 'fixture actor exceeds transfer bound'
+        h.kube('exec', '-i', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
+               ACTOR_INSTALL, 'actor-install', path, input=base64.b64encode(actor.read_bytes()).decode())
+        assert h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', path).split()[0] == h.bundle['files']['actor']
+
     def retention_batch(self, cutoff, mode='execute'):
         h = self.h
         pod = self.primary()
-        actor = h.bundle['directory'] / 'actor'
         path = '/var/lib/postgresql/data/i-retention-actor'
-        h.kube('exec', '-i', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sh', '-ec',
-               RETENTION_ACTOR_INSTALL, 'retention-install', path, input=base64.b64encode(actor.read_bytes()).decode())
-        assert h.kube('exec', '-n', SOURCE, pod, '-c', 'postgres', '--', 'sha256sum', path).split()[0] == h.bundle['files']['actor']
+        self.install_actor(pod, path)
         result = json.loads(h.kube('exec', '-n', SOURCE, pod, '-c', 'cnpg-backup', '--', path, 'retention', cutoff, mode, timeout=120))
         self.event('actual-retention-batch', **result)
         return result
@@ -1570,7 +1568,7 @@ class Campaign:
                        outcome_assertions='eligible' if receipt['blocked'] > 0 and requested_seen else 'blocked')
             if receipt['blocked'] <= 0 or not requested_seen:
                 raise RuntimeError('ineffective fault fixture: outcome assertions blocked; requested WAL/fault receipt not established')
-        assert '255' in logs and ('FATAL' in logs or 'fatal' in logs)
+        assert '255' in logs and ('FATAL' in logs or 'fatal' in logs), 'required WAL fault did not produce fatal exit 255'
         assert 'database system is ready to accept connections' not in logs, 'false latest promotion'
         assert any(x.get('event') == 'wal-request' and x['name'] == requested for x in events)
         assert any(x.get('event') == 'actual-cnpg-exit' and x['exit'] != 0 for x in events)

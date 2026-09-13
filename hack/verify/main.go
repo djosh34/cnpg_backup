@@ -1,5 +1,5 @@
-// verify is test-only R0 tooling, mounted into (never shipped in) the data image.
-// Production verification and hostile-manifest parsing arrive with PR F/H.
+// verify is an independent native verification driver mounted into the data
+// image for integration tests. It is not shipped in either runtime image.
 package main
 
 import (

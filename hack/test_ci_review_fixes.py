@@ -135,7 +135,7 @@ class ReviewFixTests(unittest.TestCase):
                         with self.assertRaises(BaseException):
                             c.case_shell_free_original_verification()
                         self.assertFalse(m.finish())
-                        self.assertEqual(m.data['failures'][0]['assertion']['id'], 'shell-free-native-rejection')
+                        self.assertIn('expected exit=2 and WAL rejected', m.data['failures'][0]['diagnostic'])
                 self.assertFalse(docker.containers)
                 self.assertFalse(f.containers)
 
@@ -307,7 +307,7 @@ class ReviewFixTests(unittest.TestCase):
                     self.assertLessEqual(receipt['epoch'], m.data['failures'][0]['epoch'])
                 self.assertEqual(m.data['failures'][0]['classification'], 'infrastructure' if timeout else 'product')
                 if not timeout:
-                    self.assertEqual(m.data['failures'][0]['assertion']['id'], 'bef39bc6301a9e81')
+                    self.assertIn('255', m.data['failures'][0]['diagnostic'])
                 self.assertFalse(m.data['failures'][0]['product_defect_proven'])
 
     def test_collectors_do_not_accept_error_text_or_suppress_other_logs(self):

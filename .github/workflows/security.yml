@@ -16,7 +16,7 @@ on:
         required: true
       trusted_ref:
         type: choice
-        options: [main, implementation/pr-j, implementation/pr-i]
+        options: [main]
         default: main
   workflow_call:
     inputs:
@@ -39,7 +39,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   scan:
-    if: github.repository == 'djosh34/cnpg_backup' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/implementation/pr-j' || github.ref == 'refs/heads/implementation/pr-i')
+    if: github.repository == 'djosh34/cnpg_backup' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -64,7 +64,7 @@ jobs:
         with:
           python-version: '3.14.3'
       - name: Bounded offline regressions before downloading scanners
-        run: ./hack/test harness test_security test_premerge_candidate
+        run: ./hack/test harness test_security test_campaign_ci
       - name: Install checksum-pinned hosted tooling, not runtime dependencies
         run: |
           python3 hack/bootstrap.py --go-only

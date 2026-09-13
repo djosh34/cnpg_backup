@@ -1,4 +1,4 @@
-"""Callable assertions for F's REAL CNPG backup harness, not a backup fixture.
+"""Freshness and failure-metric assertions for the real CNPG backup tests.
 
 Call start() before triggering backups so Prometheus counters have a baseline.
 Supply independent S3 commit LastModified to assert_committed(), never CNPG's

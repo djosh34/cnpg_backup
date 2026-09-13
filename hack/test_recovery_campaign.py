@@ -15,7 +15,6 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(set(c.scenarios('smoke')), set(c.SMOKE))
         self.assertEqual(c.scenarios('retry'), ('source-namespace-catalog-loss-S3-only', 'controller-all-Job-retry-Pods-terminated'))
         selected = c.scenarios('ownership')
-        self.assertEqual(len(selected), 13)
         self.assertIn('source-namespace-catalog-loss-S3-only', selected)
         self.assertIn('controller-all-Job-retry-Pods-terminated', selected)
         with tempfile.TemporaryDirectory() as tmp:

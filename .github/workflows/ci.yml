@@ -7,7 +7,6 @@ permissions:
   contents: read
 jobs:
   fast:
-    if: github.ref != 'refs/heads/implementation/ci-reliability' && github.head_ref != 'implementation/ci-reliability'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -28,7 +27,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   integration:
-    if: github.ref != 'refs/heads/implementation/ci-reliability' && github.head_ref != 'implementation/ci-reliability'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
