@@ -1,6 +1,6 @@
 # PostgreSQL native-tool notes
 
-These upstream details explain the capture and reconstruction rules in [design.md](../design.md), [full-backup-implementation.md](../full-backup-implementation.md), and [differential-implementation.md](../differential-implementation.md). Sources use PostgreSQL 18.6 at `724edf9bde9d356724ad384a2e196edc3c9f80f7`. Build inputs and package checksums live in `build/inputs.lock.json`.
+These upstream details explain the [capture and reconstruction rules](../design.md#full-and-differential-capture). Sources use PostgreSQL 18.6 at `724edf9bde9d356724ad384a2e196edc3c9f80f7`. Build inputs and package checksums live in [build/inputs.lock.json](../../build/inputs.lock.json).
 
 ## Full-reference differentials
 
@@ -34,7 +34,7 @@ Sources:
 - [pg_basebackup options](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/doc/src/sgml/ref/pg_basebackup.sgml) and [stream completion](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/src/bin/pg_basebackup/pg_basebackup.c)
 - [pg_verifybackup format support](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/doc/src/sgml/ref/pg_verifybackup.sgml) and [shell invocation](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/src/bin/pg_verifybackup/pg_verifybackup.c#L1200-L1215)
 - [Manifest schema and WAL ranges](https://github.com/postgres/postgres/blob/724edf9bde9d356724ad384a2e196edc3c9f80f7/doc/src/sgml/backup-manifest.sgml)
-- [Archive-before-bundle behavior](cnpgi-contract-final.md#wal-failures-and-archive-order)
+- [Archive-before-bundle behavior](cnpg.md#wal-failures-and-archive-order)
 
 ## Reconstruction and layout transforms
 

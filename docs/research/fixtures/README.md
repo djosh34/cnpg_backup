@@ -33,4 +33,4 @@ RECOVERY_FIXTURE="$fixture" python3 docs/research/experiments/recovery-review-pg
 
 The runner checks archive preference, allowed local fallback, fatal required absence, incorrect bundle-as-archive behavior, and direct WAL verification. It keeps logs and command results at the printed path and removes stopped restore copies. Without `RECOVERY_FIXTURE`, it creates a fresh post-backup named-point case. `experiments/cnpgi-wal-exit.py` separately demonstrates latest-recovery data loss when an outage incorrectly returns exit 1 rather than 255.
 
-These native tests do not establish CNPG, MinIO, Go-helper, or shell-free-image qualification. See the [latest-recovery endpoint oracle](../s1-switch-latest.md) for a case where SQL rows alone cannot detect missing WAL.
+These native tests do not establish CNPG, MinIO, Go-helper, or shell-free-image qualification. See the [latest-recovery endpoint oracle](../wal-switch.md) for a case where SQL rows alone cannot detect missing WAL.
