@@ -1,55 +1,14 @@
 package cnpgi
 
 import (
-	"context"
-	"encoding/json"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"sigs.k8s.io/yaml"
 )
 
-// Real PromQL evaluation, not a hand-written approximation of the shipped
-// expressions. Optional test tool only; never linked into the manager image.
 func TestBackupAlertsPromtool(t *testing.T) {
-	tool := os.Getenv("CNPG_PROMTOOL")
-	if tool == "" {
-		t.Skip("set CNPG_PROMTOOL to run actual Prometheus rule positive/negative controls")
-	}
-	data, err := os.ReadFile("../../config/backup-alerts.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest struct {
-		Spec struct {
-			Groups []struct {
-				Name  string `json:"name"`
-				Rules []struct {
-					Alert       string            `json:"alert"`
-					Expr        string            `json:"expr"`
-					For         string            `json:"for"`
-					Labels      map[string]string `json:"labels"`
-					Annotations map[string]string `json:"annotations"`
-				} `json:"rules"`
-			} `json:"groups"`
-		} `json:"spec"`
-	}
-	// Kubernetes envelope fields are deliberately not rule-engine inputs.
-	if err = yaml.Unmarshal(data, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	if len(manifest.Spec.Groups) != 1 || len(manifest.Spec.Groups[0].Rules) != 8 {
+	rulesFile, rules := alertRules(t, "../../config/backup-alerts.yaml")
+	if len(rules) != 8 {
 		t.Fatal("missing per-type rules")
-	}
-	dir := t.TempDir()
-	rulesFile := filepath.Join(dir, "rules.json")
-	b, _ := json.Marshal(manifest.Spec)
-	if err = os.WriteFile(rulesFile, b, 0600); err != nil {
-		t.Fatal(err)
 	}
 	tests := []any{}
 	for _, kind := range []string{"full", "differential"} {
@@ -90,7 +49,7 @@ func TestBackupAlertsPromtool(t *testing.T) {
 			}
 			add("cnpg_backup_failures_total", counter)
 			checks := []any{}
-			for _, rule := range manifest.Spec.Groups[0].Rules {
+			for _, rule := range rules {
 				expected := []any{}
 				typeName := "Full"
 				if kind == "differential" {
@@ -112,17 +71,5 @@ func TestBackupAlertsPromtool(t *testing.T) {
 			tests = append(tests, map[string]any{"name": kind + "-" + scenario, "interval": "1m", "input_series": inputs, "alert_rule_test": checks})
 		}
 	}
-	input := map[string]any{"rule_files": []string{rulesFile}, "evaluation_interval": "1m", "tests": tests}
-	b, _ = json.Marshal(input)
-	testFile := filepath.Join(dir, "tests.json")
-	if err = os.WriteFile(testFile, b, 0600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, tool, "test", "rules", testFile).CombinedOutput()
-	if err != nil {
-		t.Fatalf("real alert engine: %v\n%s", err, output)
-	}
-	t.Logf("promtool: %s (16 cases, 128 alert assertions)", output)
+	testAlerts(t, rulesFile, tests)
 }

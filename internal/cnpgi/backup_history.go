@@ -3,7 +3,6 @@ package cnpgi
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"time"
@@ -17,9 +16,7 @@ import (
 
 var errBackupUnconfigured = errors.New("backup Repository not configured")
 
-func (a *API) backupConfiguration(ctx context.Context, c *unstructured.Unstructured) (backupLabels, configuration.Spec, error) {
-	var labels backupLabels
-	var spec configuration.Spec
+func backupRepositoryName(c *unstructured.Unstructured) (string, error) {
 	plugins, _, _ := unstructured.NestedSlice(c.Object, "spec", "plugins")
 	name := ""
 	found := false
@@ -30,14 +27,24 @@ func (a *API) backupConfiguration(ctx context.Context, c *unstructured.Unstructu
 		}
 		if value["name"] == recoveryguard.PluginName {
 			if found {
-				return labels, spec, errors.New("duplicate backup plugin")
+				return "", errors.New("duplicate backup plugin")
 			}
 			found = true
 			name, _, _ = unstructured.NestedString(value, "parameters", "repository")
 		}
 	}
 	if name == "" {
-		return labels, spec, errBackupUnconfigured
+		return "", errBackupUnconfigured
+	}
+	return name, nil
+}
+
+func (a *API) backupConfiguration(ctx context.Context, c *unstructured.Unstructured) (backupLabels, configuration.Spec, error) {
+	var labels backupLabels
+	var spec configuration.Spec
+	name, err := backupRepositoryName(c)
+	if err != nil {
+		return labels, spec, err
 	}
 	object, err := a.Get(ctx, repositories, c.GetNamespace(), name)
 	if err != nil {
@@ -54,57 +61,8 @@ func (a *API) backupConfiguration(ctx context.Context, c *unstructured.Unstructu
 	return backupLabels{Repository: spec.RepositoryID, Namespace: c.GetNamespace(), Cluster: c.GetName()}, spec, nil
 }
 
-// Resolve an uncached operation snapshot with the same bounded, explicit Secret
-// allowlist as lifecycle validation. No native certificate or workspace needed:
-// success-history reads never run tools, write storage, or download payloads.
-func (a *API) backupSnapshot(ctx context.Context, namespace string, spec configuration.Spec) (*configuration.Snapshot, error) {
-	snap := &configuration.Snapshot{Spec: spec}
-	secrets := map[string]*unstructured.Unstructured{}
-	for _, item := range []struct {
-		selector *configuration.Selector
-		out      *[]byte
-	}{
-		{&spec.S3.AccessKeySecret, &snap.AccessKey}, {&spec.S3.SecretKeySecret, &snap.SecretKey}, {spec.S3.SessionTokenSecret, &snap.SessionToken},
-	} {
-		if item.selector == nil {
-			continue
-		}
-		object := secrets[item.selector.Name]
-		if object == nil {
-			var err error
-			object, err = a.Get(ctx, coreResource("secrets"), namespace, item.selector.Name)
-			if err != nil {
-				return nil, errors.New("backup history credentials unavailable")
-			}
-			secrets[item.selector.Name] = object
-		}
-		encoded := backupField(object, "data", item.selector.Key)
-		if len(encoded) > 90<<10 {
-			return nil, errors.New("invalid backup history credentials")
-		}
-		data, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil || len(data) == 0 || len(data) > 64<<10 {
-			return nil, errors.New("invalid backup history credentials")
-		}
-		*item.out = data
-	}
-	if selector := spec.S3.CAConfigMap; selector != nil {
-		object, err := a.Get(ctx, coreResource("configmaps"), namespace, selector.Name)
-		if err != nil {
-			return nil, errors.New("backup history trust unavailable")
-		}
-		snap.CA = []byte(backupField(object, "data", selector.Key))
-		if len(snap.CA) > 256<<10 {
-			return nil, errors.New("invalid backup history trust")
-		}
-		if _, err = configuration.CAPool(snap.CA, true); err != nil {
-			return nil, err
-		}
-	}
-	return snap, nil
-}
 func (a *API) readBackupHistory(ctx context.Context, namespace, writerUID string, spec configuration.Spec) (repository.BackupHistory, error) {
-	snap, err := a.backupSnapshot(ctx, namespace, spec)
+	snap, err := a.repositorySnapshot(ctx, namespace, spec)
 	if err != nil {
 		return repository.BackupHistory{}, err
 	}
@@ -130,9 +88,7 @@ func (a *API) reconcileBackupHistory(ctx context.Context, m *backupMetrics, c *u
 	return labels, nil
 }
 
-// One Cluster/page per turn, one 60-second total API+S3 deadline, serial reads.
-// This runs independently of lifecycle reconciliation, Backup observation and
-// HTTP scrapes. No whole S3 inventory or Kubernetes Cluster list is retained.
+// runBackupHistory reads one Cluster per tick, separately from metric scrapes.
 func (a *API) runBackupHistory(ctx context.Context, m *backupMetrics) {
 	if len(a.Namespaces) == 0 {
 		return
@@ -151,8 +107,7 @@ func (a *API) runBackupHistory(ctx context.Context, m *backupMetrics) {
 				if e == nil {
 					seen[labels] = true
 				} else if !errors.Is(e, errBackupUnconfigured) {
-					// Unavailable configuration is not evidence of deletion. Preserve counter
-					// continuity but never advertise cached success as current knowledge.
+					// Keep counters on read failure, but mark cached success unknown.
 					m.mu.Lock()
 					for key, s := range m.series {
 						if key.Namespace == ns && key.Cluster == list.Items[i].GetName() {

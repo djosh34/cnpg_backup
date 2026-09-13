@@ -12,8 +12,6 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Actual observer/predicate/ConfigMap transitions on an explicitly scheduled
-// Kubernetes I/O seam. Not a claim of measured CNPG cleanup timing.
 func TestTerminalPodEventChecksCompletionBeforeCleanup(t *testing.T) {
 	for _, delay := range []time.Duration{500 * time.Millisecond, 3 * time.Second} {
 		t.Run(delay.String(), func(t *testing.T) {

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Small explicit install renderer. No arbitrary Pod templates or image tags.
-
-Prints JSON manifests; does not deploy anything. Repository schema is separate.
-"""
+"""Render Kubernetes installation and recovery manifests as JSON."""
 import argparse
 import copy
 import json
@@ -46,7 +43,7 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
         'cnpg.io/pluginPort': '9090', 'cnpg.io/pluginClientSecret': 'cnpg-backup-client-tls',
         'cnpg.io/pluginServerSecret': 'cnpg-backup-server-tls', 'cnpg.io/pluginServerName': service_name})
     objects.append(service)
-    # Separate internal metrics Service: never a CNPG-discoverable plugin/data proxy.
+    # Only the gRPC Service carries CNPG plugin discovery labels.
     metrics = resource('v1', 'Service', 'cnpg-backup-metrics', namespace, spec={
         'selector': {'app': 'cnpg-backup'}, 'ports': [{'name': 'metrics', 'port': 9091, 'targetPort': 'metrics'}]})
     metrics['metadata']['labels'] = {'app': 'cnpg-backup-metrics'}
@@ -96,7 +93,7 @@ def render(manager_image, data_image, namespace, managed_namespace, secret_names
 
 
 def recovery_cluster(template, namespace, name, source_repository, destination_repository, target):
-    """Fresh consumer Cluster; never copy source identity/status/PVC bindings."""
+    """Build a recovery Cluster with new identity and unbound storage."""
     if template.get('kind') != 'Cluster' or template.get('apiVersion') != 'postgresql.cnpg.io/v1':
         raise ValueError('a CNPG Cluster template is required')
     for value in (namespace, name, source_repository, destination_repository):
@@ -113,8 +110,7 @@ def recovery_cluster(template, namespace, name, source_repository, destination_r
     storage += [t.get('storage', {}) for t in spec.get('tablespaces', [])]
     if any(s.get('pvcTemplate', {}).get(k) for s in storage for k in ('volumeName', 'selector', 'dataSource', 'dataSourceRef')):
         raise ValueError('recovery requires fresh unbound target PVCs, not source volume bindings or snapshots')
-    # Only declared Cluster spec is reused. Kubernetes allocates new Cluster/PVC
-    # identities; neither generated metadata nor status is copied from a live GET.
+    # Reuse the spec, not the source Cluster's metadata or status.
     spec['instances'] = 1
     spec['bootstrap'] = {'recovery': {'source': 'origin', 'recoveryTarget': target}}
     spec['externalClusters'] = [{'name': 'origin', 'plugin': {

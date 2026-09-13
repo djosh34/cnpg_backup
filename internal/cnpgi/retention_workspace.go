@@ -12,10 +12,8 @@ import (
 const retentionWorkspacePath = "/cnpg-backup/retention"
 const retentionMountBytes int64 = 512 << 20
 
-// The sole serial retention worker reserves its entire peak before admission.
-// Account for prior crashed local spools; never delete/adopt another owner's
-// state. emptyDir eviction is NOT the write limiter: the repository caps the
-// catalog and each sequential manifest/history/control file in Go.
+// Reserve peak space before admission, including spools left by crashed workers.
+// Repository write limits enforce this budget independently of emptyDir eviction.
 func newRetentionWorkspace(root string) (string, error) {
 	var stat unix.Statfs_t
 	if e := unix.Statfs(root, &stat); e != nil {

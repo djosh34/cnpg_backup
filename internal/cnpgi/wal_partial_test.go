@@ -19,9 +19,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-// This is a real wire/handler validation check, not a successful archive RPC:
-// the full-name control reaches missing local configuration, while the partial
-// must not fail earlier at the filename gate. Files tests own durable-byte I/O.
+// Both full and partial WAL names must pass request validation and reach the
+// missing local configuration check.
 func TestPromotionPartialArchiveRPCValidation(t *testing.T) {
 	if _, err := os.Lstat(projectionPath); !os.IsNotExist(err) {
 		t.Fatal("RPC validation fixture requires absent deployment configuration; no real storage access allowed")

@@ -50,8 +50,8 @@ func backupType(b *unstructured.Unstructured) string {
 	return kind
 }
 
-// Transform strips error text, annotations, managed fields and unrelated status
-// before caching. Informer resourceVersion/UID semantics remain intact.
+// compactBackup caches only identity, requested type, and phase. Error text and
+// annotations may contain secrets.
 func compactBackup(obj any) (any, error) {
 	b, ok := obj.(*unstructured.Unstructured)
 	if !ok {
@@ -75,8 +75,7 @@ func (o *backupObserver) observe(obj any, initial bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	state := o.observed[b.GetUID()]
-	// Freeze the terminal observation: later resync/spec changes cannot rewrite
-	// its requested type or create an empty/invalid metric label while queued.
+	// Keep the requested type from the first failure while notification is queued.
 	if !state.SeenFailure {
 		state.Object = b
 	}
@@ -180,12 +179,11 @@ func (o *backupObserver) process(ctx context.Context, uid types.UID, now time.Ti
 	return nil
 }
 func (o *backupObserver) warning(ctx context.Context, b *unstructured.Unstructured, kind string, now time.Time) {
-	// Constant redacted diagnostics: CNPG owns detailed Backup status. Never copy
-	// status.error, endpoint, key, credential or native subprocess output here.
+	// CNPG status errors may contain credentials. Use a fixed message.
 	event := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1", "kind": "Event", "metadata": map[string]any{"generateName": "cnpg-backup-failed-", "namespace": b.GetNamespace()},
 		"involvedObject": map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Backup", "name": b.GetName(), "namespace": b.GetNamespace(), "uid": string(b.GetUID())},
-		"type":           "Warning", "reason": "BackupFailed", "message": "Requested " + kind + " backup invocation failed; inspect CNPG Backup status. Durable commit history is reported independently.",
+		"type":           "Warning", "reason": "BackupFailed", "message": "Requested " + kind + " backup failed. Inspect CNPG Backup status.",
 		"source": map[string]any{"component": "cnpg-backup"}, "firstTimestamp": now.UTC().Format(time.RFC3339), "lastTimestamp": now.UTC().Format(time.RFC3339), "count": int64(1),
 	}}
 	_, _ = o.api.Client.Resource(coreResource("events")).Namespace(b.GetNamespace()).Create(ctx, event, metav1.CreateOptions{})

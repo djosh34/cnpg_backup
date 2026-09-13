@@ -1,5 +1,5 @@
 // Copyright 2026 cnpg_backup contributors. All rights reserved.
-// Package cnpgi implements lifecycle, full backup and protected recovery.
+// Package cnpgi implements the CNPG backup, WAL, recovery, and lifecycle services.
 package cnpgi
 
 import (
@@ -34,7 +34,7 @@ type Identity struct {
 func (s Identity) GetPluginMetadata(context.Context, *identity.GetPluginMetadataRequest) (*identity.GetPluginMetadataResponse, error) {
 	return &identity.GetPluginMetadataResponse{
 		Name: recoveryguard.PluginName, Version: "development-" + s.Revision,
-		DisplayName: "CNPG Backup", Description: "CNPG full backup, synchronous WAL and protected recovery",
+		DisplayName: "CNPG Backup", Description: "PostgreSQL backups and WAL archival to S3",
 		ProjectUrl: "https://github.com/djosh34/cnpg_backup", RepositoryUrl: "https://github.com/djosh34/cnpg_backup",
 		License: "All rights reserved", LicenseUrl: "https://github.com/djosh34/cnpg_backup/blob/main/LICENSE", Maturity: "alpha",
 	}, nil
@@ -55,20 +55,19 @@ func (s Identity) GetPluginCapabilities(context.Context, *identity.GetPluginCapa
 func (s Identity) Probe(context.Context, *identity.ProbeRequest) (*identity.ProbeResponse, error) {
 	info, err := os.Stat(recoveryguard.HelperPath)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0555 {
-		// CNPG v1.30 ignores ready=false; failure MUST be a gRPC error.
+		// CNPG v1.30 ignores ready=false, so return a gRPC error.
 		return nil, status.Error(codes.Unavailable, "helper not installed")
 	}
 	return &identity.ProbeResponse{Ready: true}, nil
 }
 
-// Serve uses a real listener also shared by the private guard control stream.
-// Stopping is uncertainty, not a clean Drain acknowledgment.
-func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.Admission, revision string, wal ...*WALService) error {
+// Serve runs instance services, or recovery services when admission is supplied.
+// Stopping closes recovery admission without acknowledging a clean drain.
+func Serve(ctx context.Context, listener net.Listener, admission *recoveryguard.Admission, revision string) error {
 	server := grpc.NewServer(grpc.MaxRecvMsgSize((2<<20)+(64<<10)), grpc.MaxSendMsgSize(256<<10), grpc.MaxConcurrentStreams(16), grpc.WaitForHandlers(true))
-	enabled := len(wal) == 1 && wal[0] != nil && admission == nil
-	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: enabled || admission != nil, Backup: enabled, Restore: admission != nil})
-	if enabled {
-		wirewal.RegisterWALServer(server, wal[0])
+	identity.RegisterIdentityServer(server, Identity{Revision: revision, WAL: true, Backup: admission == nil, Restore: admission != nil})
+	if admission == nil {
+		wirewal.RegisterWALServer(server, &WALService{})
 		wirebackup.RegisterBackupServer(server, &BackupService{})
 	}
 	if admission != nil {
@@ -191,9 +190,6 @@ func RunSidecar(ctx context.Context, recovery bool, revision string) error {
 	defer listener.Close()
 	if err = os.Chmod(recoveryguard.SocketPath, 0600); err != nil {
 		return err
-	}
-	if !recovery {
-		return Serve(ctx, listener, admission, revision, &WALService{})
 	}
 	return Serve(ctx, listener, admission, revision)
 }

@@ -105,10 +105,10 @@ func (m *backupMetrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(labels, func(i, j int) bool { return labels[i].text() < labels[j].text() })
 	for _, metric := range []struct{ name, kind, help string }{
-		{"cnpg_backup_failures_total", "counter", "Observed terminal failed Backup UID transitions in this manager lifetime; initial failures are baseline."},
-		{"cnpg_backup_success_history_known", "gauge", "One only after a recent complete valid permanent commit history scan."},
-		{"cnpg_backup_last_success_timestamp_seconds", "gauge", "Latest durable commit S3 publication time, including retired history; absent when unknown or never successful."},
-		{"cnpg_backup_freshness_max_age_seconds", "gauge", "Explicit per-type schedule freshness budget; absent when not configured."},
+		{"cnpg_backup_failures_total", "counter", "Backup failures observed since manager startup, excluding failures already present at startup."},
+		{"cnpg_backup_success_history_known", "gauge", "Whether backup history was read successfully within the last five minutes."},
+		{"cnpg_backup_last_success_timestamp_seconds", "gauge", "Last backup publication time in Unix seconds, including retired backups. Omitted when unknown or never successful."},
+		{"cnpg_backup_freshness_max_age_seconds", "gauge", "Configured maximum backup age in seconds. Omitted when not configured."},
 	} {
 		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s %s\n", metric.name, metric.help, metric.name, metric.kind)
 		for _, l := range labels {

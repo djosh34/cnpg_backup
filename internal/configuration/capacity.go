@@ -14,12 +14,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// FilesystemBudget is an internal operation plan, not user assertions about a
-// StorageClass. LimitBytes comes from the target PVC/workspace declaration;
-// RequiredBytes includes the phase's allocation and free-space margin. Native
-// writers must pass this check immediately before launch while owning the target
-// and workspace. Polling is supplemental: the dedicated filesystem is the stop.
-// Quota-only subdirectories/NFS are not initially supported without a verifier.
+// FilesystemBudget pairs a declared volume limit with an operation's required
+// space, including its free-space margin. CheckCapacity verifies the mounted
+// filesystem before native tools can write.
 type FilesystemBudget struct {
 	Mount         string `json:"mount"`
 	LimitBytes    int64  `json:"limitBytes"`

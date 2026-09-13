@@ -10,9 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// A restart may finish a DURABLY recorded terminal release, but never recreate
-// its predecessor's active observer or clear a process-reader from API status.
-// One Cluster per turn bounds API/storage work and namespace memory.
+// After restart, resume completed lifetime releases. Active operations become
+// uncertain because the new manager has no uninterrupted termination watch.
 func (a *API) runRecoveryOperations(ctx context.Context, metrics *backupMetrics) {
 	if len(a.Namespaces) == 0 {
 		return
@@ -47,8 +46,6 @@ func (a *API) runRecoveryOperations(ctx context.Context, metrics *backupMetrics)
 	}
 }
 
-// Observe only validated durable state. Failed reads/persistence become Unknown;
-// diagnostics cannot supply the uninterrupted observer's termination evidence.
 func (a *API) reconcileRecoveryOperation(ctx context.Context, c Cluster, metrics *backupMetrics, now time.Time) {
 	owned := false
 	if recovery := c.Spec.Bootstrap.Recovery; recovery != nil {
@@ -60,8 +57,7 @@ func (a *API) reconcileRecoveryOperation(ctx context.Context, c Cluster, metrics
 		}
 	}
 	if !owned {
-		// Destination archival or an unused external declaration does not make
-		// another plugin's restore ours. Evict stale labels on Cluster-name reuse.
+		// A different plugin's restore may reuse this Cluster name.
 		metrics.forgetRestore(c)
 		return
 	}
@@ -105,7 +101,7 @@ func (a *API) recoveryWarning(ctx context.Context, c Cluster, reason string) {
 	event := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1", "kind": "Event", "metadata": map[string]any{"generateName": c.Metadata.Name + "-recovery-", "namespace": c.Metadata.Namespace},
 		"involvedObject": map[string]any{"apiVersion": c.APIVersion, "kind": "Cluster", "name": c.Metadata.Name, "namespace": c.Metadata.Namespace, "uid": string(c.Metadata.UID)},
-		"type":           "Warning", "reason": reason, "message": "Recovery admission or termination is uncertain; source deletion protection is retained without expiry. Retry poisoned targets with a fresh Cluster and all fresh target PVCs.",
+		"type":           "Warning", "reason": reason, "message": "Recovery state is uncertain. Source backups remain protected from deletion. Retry with a fresh Cluster and fresh target PVCs.",
 		"source": map[string]any{"component": "cnpg-backup"}, "firstTimestamp": now, "lastTimestamp": now, "count": int64(1),
 	}}
 	_, _ = a.Client.Resource(coreResource("events")).Namespace(c.Metadata.Namespace).Create(ctx, event, meta.CreateOptions{})
