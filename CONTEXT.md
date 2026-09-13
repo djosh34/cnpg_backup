@@ -1,39 +1,51 @@
 # PostgreSQL backup and recovery
 
-Language for physical backups of CloudNativePG-managed PostgreSQL clusters stored in S3-compatible object storage.
+Terms for physical backups of CloudNativePG-managed PostgreSQL clusters stored in S3-compatible object storage.
 
 ## Language
 
 **Full backup**:
-A physical base backup containing the complete backed-up database cluster rather than references to data omitted in favor of another backup.
+A physical base backup containing the complete backed-up database cluster without a dependency on another backup.
 
 **Differential backup**:
-A physical backup whose reference is a full backup; recovering it requires that full backup and the selected differential, not intervening differentials.
-_Avoid_: Diff (ambiguous between filesystem comparison and a backup type)
+A physical backup whose reference is a full backup. Recovery requires that full and the selected differential, not intervening differentials.
+_Avoid_: Diff, incremental chain
 
 **Incremental backup**:
-A physical backup whose omitted data depends on an earlier backup, which may itself be full or incremental. Differential is the special case whose reference is full.
-
-**WAL archive**:
-The remotely preserved PostgreSQL write-ahead log segments and relevant history files used for recovery.
-_Avoid_: Backup (when referring only to WAL)
-
-**Recovery target**:
-The PostgreSQL state to which recovery should proceed, identified by supported target criteria such as time, LSN or a named restore point.
-
-**Recovery window**:
-The interval of recovery targets supported by available usable backups and the required continuous WAL along the relevant timeline history.
-_Avoid_: Object age (not a measure of recoverability)
+A physical backup whose omitted data depends on an earlier backup, which may itself be full or incremental. A differential is the special case whose reference is full.
 
 **Backup chain**:
-A full backup and the dependent backups required to reconstruct a selected backup.
+The full backup and any dependent backup needed to reconstruct a selected backup. In this product, a chain is one full or one full plus one differential.
 
 **Repository lineage**:
-An independently owned history of physical backups and archived WAL. A restored clone has its own lineage even when its PostgreSQL system identifier matches its source.
-_Avoid_: Cluster name (names can be reused)
+An independently owned history of physical backups and archived WAL. A restored cluster has its own lineage even when its PostgreSQL system identifier matches its source.
+_Avoid_: Cluster name, system identifier alone
+
+**WAL archive**:
+Remotely preserved PostgreSQL write-ahead log files used for recovery, with the timeline history needed to interpret them.
+_Avoid_: Backup, when referring only to WAL
 
 **Bundled WAL**:
-WAL preserved with a physical backup to make that backup consistent. It is distinct from later archived WAL needed to reach a recovery target beyond the backup.
+WAL preserved with a physical backup to make that backup consistent. It is distinct from archived WAL needed to recover beyond the backup.
+
+**Archive frontier**:
+The end of the known archived WAL considered for a recovery plan. It does not include unarchived source transactions or prove that all preceding WAL is present.
+
+**Recovery target**:
+The PostgreSQL state to which recovery proceeds, identified by a supported time, LSN, transaction ID, named restore point, or consistency boundary.
+
+**Recovery window**:
+The interval of recovery targets supported by usable backups and continuous WAL along the relevant timeline history.
+_Avoid_: Object age, configured retention period alone
 
 **Backup retirement**:
-The permanent withdrawal of a backup from available recovery selections, distinct from removal of its stored bytes.
+The permanent withdrawal of a backup from recovery selection, distinct from removal of its stored bytes.
+
+**Restore lifetime holder**:
+Repository-wide deletion protection for an entire restore operation, including replay after materialization.
+
+**Process-reader holder**:
+Repository-wide deletion protection for one restore reader's admitted work. It is separate from the restore lifetime holder.
+
+**Poisoned target**:
+A recovery volume whose previous writer's termination or write completion is uncertain. It is not safe for another recovery attempt to reuse.
