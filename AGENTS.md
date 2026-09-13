@@ -1,9 +1,9 @@
 # Working on cnpg_backup
 
-- Start/resume delivery: read `docs/EXECUTE.md` and the READY design resolution. Finish all technical decisions and the owner's design grill before handoff; afterwards implement, review, test and merge autonomously with no routine human steps.
-- Subagents: read `docs/agents/paseo.md` before dispatch/cleanup. **Paseo only; agent managers/coordinators Astra/medium, implementers/reviewers Astra/high, explicit separate Luna/xhigh cleanup exception per lifecycle doc; 1800-second event-driven waits; at most five concurrent children total enforced by instruction. Immediately archive every finished/failed/canceled child and verify archival before reusing its slot.** Unarchived idle children can OOM Paseo; no recursive worker delegation.
-- Implement a feature: read its delivery issue, prerequisite decision comments and the relevant section of `docs/design.md`. Prefer the smallest correct Go implementation; no CGO in production Go code. PostgreSQL tools are the only permitted native runtime exception when justified.
-- Change tests, CI or qualification: read `docs/testing.md`. MinIO is the integration target; additional platform access/testing is never a gate.
-- Review/adjudicate/merge a PR: read `docs/agents/review.md`. Require fresh independent review contexts and evidence tied once to the current subject; justified review findings may be rejected with recorded reasons.
-- Use `docs/agents/issue-tracker.md` for GitHub issue/PR and native dependency operations. `CONTEXT.md` is the domain glossary. Keep authoritative decisions in issue resolution comments, not contradictory copies.
-- KISS runtime, strong tests: prefer concrete modules with small interfaces, bounded I/O/concurrency and explicit error ownership. Put simulation/fault orchestration in test code; add abstractions only for an actual caller or I/O seam.
+- For implementation, read the task issue and relevant sections of `docs/design.md`. Use `CONTEXT.md` for domain terms. Record changed decisions in the issue and update affected product docs.
+- Keep production Go CGO-free. PostgreSQL tools are the only permitted native runtime exception. Prefer concrete modules, small interfaces, bounded I/O and concurrency, and explicit error ownership. Keep fault orchestration in tests.
+- For tests, CI, or qualification, read `docs/testing.md`. Use the existing `hack/test` profiles. MinIO is the required integration target; additional platforms are not a gate.
+- Before creating, waiting for, resuming, or cleaning up subagents, read `docs/agents/paseo.md`.
+- For PR review, adjudication, or merge, read `docs/agents/review.md`, including autonomous delivery authority and evidence requirements.
+- For GitHub issue, PR, or dependency operations, read `docs/agents/issue-tracker.md`.
+- For releases or dependency changes, read `docs/release-policy.md`. Preserve the project's all-rights-reserved license and third-party notices. Tests and delivery do not authorize production database or bucket operations.
