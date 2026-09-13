@@ -1,15 +1,14 @@
-name: premerge-exact-candidate
+name: exact-candidate
 on:
-  push:
-    branches: [implementation/pr-g, implementation/pr-h, implementation/pr-i, implementation/pr-j]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: pr-g-candidate-${{ github.sha }}
+  group: candidate-${{ github.sha }}
   cancel-in-progress: false
 jobs:
   subject:
-    if: github.repository == 'djosh34/cnpg_backup' && github.event_name == 'push' && (github.ref == 'refs/heads/implementation/pr-g' || github.ref == 'refs/heads/implementation/pr-h' || github.ref == 'refs/heads/implementation/pr-i' || github.ref == 'refs/heads/implementation/pr-j')
+    if: github.repository == 'djosh34/cnpg_backup' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
@@ -20,8 +19,8 @@ jobs:
       GOMAXPROCS: '2'
     outputs:
       sha: ${{ steps.subject.outputs.sha }}
-      manager: ${{ steps.subject.outputs.manager || steps.publish.outputs.manager }}
-      pg18: ${{ steps.subject.outputs.pg18 || steps.publish.outputs.pg18 }}
+      manager: ${{ steps.publish.outputs.manager }}
+      pg18: ${{ steps.publish.outputs.pg18 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -31,29 +30,25 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14.3'
-      - name: Verify trusted push and unchanged product; reuse only recorded exact digests
-        id: subject
-        run: python3 hack/premerge_candidate.py reuse
-      - name: Private ephemeral package authentication for changed product only
-        if: steps.subject.outputs.reuse == 'false'
+      - name: Check publication safety before downloading build inputs
+        run: ./hack/test harness test_candidate
+      - name: Private ephemeral package authentication
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p "$DOCKER_CONFIG"
           chmod 700 "$DOCKER_CONFIG"
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Refuse existing or ambiguous immutable candidate tags
-        if: steps.subject.outputs.reuse == 'false'
-        run: python3 hack/premerge_candidate.py preflight
-      - name: Build exact changed source and audit actual images once
-        if: steps.subject.outputs.reuse == 'false'
+      - name: Verify trusted main checkout and refuse existing candidate tags
+        id: subject
+        run: python3 hack/candidate.py preflight
+      - name: Build exact source and audit actual images
         run: |
           ./hack/test fast
           python3 hack/images.py
-      - name: Publish audited image IDs and record canonical manifest digests
-        if: steps.subject.outputs.reuse == 'false'
+      - name: Publish audited images and record canonical manifest digests
         id: publish
-        run: python3 hack/premerge_candidate.py publish
+        run: python3 hack/candidate.py publish
       - name: Remove ephemeral registry login
         if: always()
         run: rm -rf -- "$DOCKER_CONFIG"
@@ -73,7 +68,6 @@ jobs:
           if-no-files-found: error
   security:
     needs: subject
-    if: github.ref == 'refs/heads/implementation/pr-j'
     permissions:
       contents: read
       packages: read
@@ -82,7 +76,7 @@ jobs:
       subject_sha: ${{ needs.subject.outputs.sha }}
       manager_image: ${{ needs.subject.outputs.manager }}
       data_image: ${{ needs.subject.outputs.pg18 }}
-      trusted_ref: ${{ github.ref_name }}
+      trusted_ref: main
   recovery:
     needs: subject
     permissions:
@@ -93,5 +87,5 @@ jobs:
       subject_sha: ${{ needs.subject.outputs.sha }}
       manager_image: ${{ needs.subject.outputs.manager }}
       data_image: ${{ needs.subject.outputs.pg18 }}
-      trusted_ref: ${{ github.ref_name }}
+      trusted_ref: main
       seeds: '[1806]'

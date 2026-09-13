@@ -4,14 +4,9 @@ manifest/source WAL remain unchanged; the only fault input is post-EndLSN paddin
 """
 import hashlib,json,os,re,shutil,subprocess,tarfile,tempfile,time
 from pathlib import Path
-B=Path(os.environ['PG_BIN']).resolve()
-WORK=Path(__file__).resolve().parents[1]/'.work'
-WORK.mkdir(exist_ok=True)
-ROOT=Path(tempfile.mkdtemp(prefix='s1-switch-',dir=WORK))
+B=None; ROOT=None
 ENV=dict(os.environ,LANG='C',LC_ALL='C')
-os.sched_setaffinity(0,sorted(os.sched_getaffinity(0))[:2])
 COMMANDS=[]; SERVERS=[]; PORT='65435'; SEG=16<<20
-TRIALS=int(os.environ.get('S1_TRIALS','3')); assert 1<=TRIALS<=3
 
 def run(tool,*args,check=True,timeout=60):
  argv=[str(B/tool),*map(str,args)]
@@ -68,10 +63,10 @@ def verify(data,wal):
  run('pg_verifybackup','--exit-on-error','--no-parse-wal',data)
  for r in json.loads((data/'backup_manifest').read_text())['WAL-Ranges']:
   run('pg_waldump','--quiet','--path='+str(wal),'--timeline='+str(r['Timeline']),'--start='+r['Start-LSN'],'--end='+r['End-LSN'])
-results=[];primary_error=None
-try:
- print(json.dumps({'root':str(ROOT),'trials':TRIALS,'version':run('postgres','--version').stdout.strip()}),flush=True)
- for trial in range(1,TRIALS+1):
+def run_trials(trials):
+ results=[]
+ print(json.dumps({'root':str(ROOT),'trials':trials,'version':run('postgres','--version').stdout.strip()}),flush=True)
+ for trial in range(1,trials+1):
   d=ROOT/str(trial);d.mkdir(); source=d/'source'
   run('initdb','-D',source,'-L',os.environ['PG_SHARE'],'-U','probe','-A','trust','--no-locale')
   with (source/'postgresql.conf').open('a') as f:
@@ -154,15 +149,34 @@ try:
   (d/'result.json').write_text(json.dumps(result,indent=2)+'\n');results.append(result)
   print(json.dumps(result),flush=True)
  print(json.dumps({'distinguishing_trials':len(results),'product_acceptance':False}),flush=True)
-except BaseException as error:
- primary_error=f'{type(error).__name__}: {error}'
- raise
-finally:
+
+def execute(trials):
+ primary_error=None
  try:
-  unresolved=cleanup(primary_error)
- except Exception as error:
-  if primary_error is None: raise
-  print(json.dumps({'cleanup_error':str(error),'primary_error':primary_error}),flush=True)
- else:
-  if unresolved and primary_error is None:
-   raise RuntimeError('owned PostgreSQL cleanup unresolved; see cleanup.json and commands.json')
+  run_trials(trials)
+ except BaseException as error:
+  primary_error=f'{type(error).__name__}: {error}'
+  raise
+ finally:
+  try:
+   unresolved=cleanup(primary_error)
+  except Exception as error:
+   if primary_error is None: raise
+   print(json.dumps({'cleanup_error':str(error),'primary_error':primary_error}),flush=True)
+  else:
+   if unresolved and primary_error is None:
+    raise RuntimeError('owned PostgreSQL cleanup unresolved; see cleanup.json and commands.json')
+
+def main():
+ global B,ROOT,COMMANDS,SERVERS
+ B=Path(os.environ['PG_BIN']).resolve()
+ trials=int(os.environ.get('S1_TRIALS','3')); assert 1<=trials<=3
+ work=Path(__file__).resolve().parents[1]/'.work'
+ work.mkdir(exist_ok=True)
+ ROOT=Path(tempfile.mkdtemp(prefix='s1-switch-',dir=work))
+ os.sched_setaffinity(0,sorted(os.sched_getaffinity(0))[:2])
+ COMMANDS=[]; SERVERS=[]
+ execute(trials)
+
+if __name__=='__main__':
+ main()

@@ -16,7 +16,7 @@ on:
         type: string
       trusted_ref:
         type: choice
-        options: [main, implementation/pr-g, implementation/pr-h, implementation/pr-i, implementation/pr-j, implementation/ci-reliability]
+        options: [main]
         default: main
       prior_release:
         description: Optional recorded version tag from trusted main; blank for candidates
@@ -42,7 +42,7 @@ on:
         type: string
       trusted_ref:
         type: string
-        default: implementation/pr-g
+        default: main
       prior_release:
         type: string
         default: ''
@@ -57,7 +57,7 @@ permissions:
   packages: read
 jobs:
   bundle:
-    if: github.repository == 'djosh34/cnpg_backup' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.repository == 'djosh34/cnpg_backup' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     outputs:
@@ -86,15 +86,15 @@ jobs:
           ./hack/test race
           ./hack/test fuzz-smoke
           ./hack/test campaign-focused
-          ./hack/test campaign-bundle --out .work/repair-bundle
+          ./hack/test campaign-bundle --out .work/campaign-bundle
           python3 hack/campaign_ci.py plans
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: immutable-harness-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            .work/repair-bundle/
-            artifacts/repair-inputs/
+            .work/campaign-bundle/
+            artifacts/campaign-inputs/
             artifacts/fast/
           include-hidden-files: true
           retention-days: 14
@@ -121,7 +121,7 @@ jobs:
         with:
           name: immutable-harness-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Restore only executable permissions lost by artifact transport
-        run: chmod 555 .work/repair-bundle/{actor,minio,wal-proxy,wal-client,verify}
+        run: chmod 555 .work/campaign-bundle/{actor,minio,wal-proxy,wal-client,verify}
       - name: Ephemeral read-only package authentication
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -129,10 +129,10 @@ jobs:
           mkdir -p "$DOCKER_CONFIG"
           chmod 700 "$DOCKER_CONFIG"
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: SAME local digest-only recipe; fresh fixtures; no subject build or publish
+      - name: Run the local digest-only recipe with fresh fixtures
         run: |
-          ./hack/test recovery-campaign --plan "artifacts/repair-inputs/plan-$ATTEMPT.json" \
-            --bundle .work/repair-bundle --run-dir ".work/repair-run-$ATTEMPT" --duration-minutes 120
+          ./hack/test recovery-campaign --plan "artifacts/campaign-inputs/plan-$ATTEMPT.json" \
+            --bundle .work/campaign-bundle --run-dir ".work/campaign-run-$ATTEMPT" --duration-minutes 120
       - name: Publish only bounded evidence, never private runtime inputs
         if: always()
         run: |
@@ -143,8 +143,8 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: repair-attempt-${{ matrix.attempt }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/repair-results/
+          name: campaign-attempt-${{ matrix.attempt }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/campaign-results/
           retention-days: 14
           if-no-files-found: error
   aggregate:
@@ -158,7 +158,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          pattern: repair-attempt-*
+          pattern: campaign-attempt-*
           path: .work/results
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
@@ -169,7 +169,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: repair-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/repair-aggregate.json
+          name: campaign-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/campaign-aggregate.json
           retention-days: 14
           if-no-files-found: error

@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Real pinned kind/CNPG lifecycle smoke; NOT complete PR D qualification.
-
-No model, production endpoint, mocked lifecycle or fabricated artifact pin.
-Additional mandatory private-CA/operator-wire recovery scenarios remain explicit.
-"""
+"""Real pinned kind/CNPG lifecycle smoke against disposable local fixtures."""
 import hashlib
 import base64
 import importlib.util

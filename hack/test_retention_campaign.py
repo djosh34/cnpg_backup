@@ -1,40 +1,14 @@
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-import campaign_ci
 from campaign_plan import selected
 from backup_metrics_smoke import samples
-from premerge_candidate import trust, REPO
 
 
 class RetentionCampaignTests(unittest.TestCase):
-    def test_I_trusted_subject_uses_same_shared_recipe(self):
-        # Regression for the observed first hosted failure: the caller admitted
-        # I, but the shared adapter rejected its branch before provisioning.
-        branch = 'refs/heads/implementation/pr-i'
-        env = {'GITHUB_REPOSITORY': REPO, 'GITHUB_REF': branch, 'GITHUB_EVENT_NAME': 'push',
-               'GITHUB_SHA': 'c' * 40, 'GITHUB_WORKFLOW_SHA': 'c' * 40,
-               'GITHUB_WORKFLOW_REF': REPO + '/.github/workflows/pr-g-candidate.yml@' + branch,
-               'TRUSTED_REF': 'implementation/pr-i', 'SUBJECT_SHA': 'c' * 40,
-               'MANAGER_IMAGE': 'ghcr.io/djosh34/cnpg-backup-manager@sha256:' + 'a' * 64,
-               'DATA_IMAGE': 'ghcr.io/djosh34/cnpg-backup-pg18@sha256:' + 'b' * 64,
-               'GITHUB_RUN_ID': '1', 'SEEDS': '[1806]', 'PROFILE': 'recovery'}
-        trust(env, 'c' * 40, 'https://github.com/' + REPO)
-        with tempfile.TemporaryDirectory() as d:
-            env['GITHUB_OUTPUT'] = str(Path(d) / 'outputs')
-            inputs = Path(d) / 'inputs'
-            with patch.dict(os.environ, env), patch.object(campaign_ci, 'INPUTS', inputs), patch.object(campaign_ci.subprocess, 'run') as git:
-                campaign_ci.prepare()
-                git.assert_called_once_with(['git', 'merge-base', '--is-ancestor', 'c' * 40, 'refs/remotes/origin/implementation/pr-i'], check=True)
-            self.assertEqual(json.loads((inputs / 'series.json').read_text())['attempts'], [{'attempt': 1, 'seed': 1806, 'layout': 'monolithic'}])
-        bad = dict(env, GITHUB_WORKFLOW_SHA='d' * 40)
-        with self.assertRaises(RuntimeError):
-            trust(bad, 'c' * 40, 'https://github.com/' + REPO)
-
     def test_retention_metrics_coexist_without_unbounded_labels(self):
         text = 'cnpg_backup_repository_holders{repository_id="r",namespace="n",cluster="c"} 2\n'
         self.assertEqual(samples(text)[('cnpg_backup_repository_holders', 'r', 'n', 'c')], 2)
@@ -89,18 +63,28 @@ class RetentionCampaignTests(unittest.TestCase):
     def test_repeated_actor_install_keeps_verified_executable_bytes(self):
         # Actual non-root POSIX regression for local I failure3: the first
         # install chmod0555 made the second direct truncation fail EACCES.
-        import base64
+        import hashlib
         import subprocess
-        from recovery_cases import RETENTION_ACTOR_INSTALL
+        from types import SimpleNamespace
+        from recovery_cases import Campaign
         with tempfile.TemporaryDirectory() as d:
-            target = Path(d) / 'actor'
+            root = Path(d)
+            bundle = root / 'bundle'
+            bundle.mkdir()
+            target = root / 'installed-actor'
+            def kube(*args, **kwargs):
+                result = subprocess.run(args[args.index('--') + 1:], input=kwargs.get('input'),
+                                        text=True, capture_output=True, timeout=5, check=True)
+                return result.stdout
+            fixture = SimpleNamespace(bundle={'directory': bundle, 'files': {}}, kube=kube)
+            campaign = Campaign(None, None, fixture)
             for body in (b'first verified actor', b'next verified actor'):
-                result = subprocess.run(['sh', '-ec', RETENTION_ACTOR_INSTALL, 'retention-install', str(target)],
-                                        input=base64.b64encode(body), capture_output=True, timeout=5)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                (bundle / 'actor').write_bytes(body)
+                fixture.bundle['files']['actor'] = hashlib.sha256(body).hexdigest()
+                campaign.install_actor('source-pod', str(target))
                 self.assertEqual(target.read_bytes(), body)
                 self.assertEqual(target.stat().st_mode & 0o777, 0o555)
-            self.assertFalse(target.with_name('actor.next').exists())
+            self.assertFalse(target.with_name('installed-actor.next').exists())
 
     def test_archive_boundary_writes_wal_before_switching_idle_segment(self):
         # Observed after I's independent full. Pinned PG18 probe: idle switch

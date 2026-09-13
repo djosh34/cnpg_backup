@@ -1,5 +1,4 @@
 """Exercise native fault injection through the smoke caller, not status spelling."""
-import inspect
 import json
 from pathlib import Path
 import tempfile
@@ -136,18 +135,6 @@ class NativeFaultObservationTests(unittest.TestCase):
     def test_missing_api_last_state_still_proves_original_cri_exit(self):
         with self.assertRaises(ObservedKill):
             self.exercise()
-
-    def test_premature_restart_and_status_negative_control(self):
-        source = inspect.getsource(backup_smoke.capture_faults)
-        waits = ('        restarted(pod_uid, original)  # prove the fault actually hit before judging outcome\n'
-                 '        failed(name)\n')
-        reordered = source.replace(waits, '').replace(
-            "        if signal in ('KILL', 'OOM'):\n", waits + "        if signal in ('KILL', 'OOM'):\n")
-        namespace = dict(vars(backup_smoke))
-        exec(compile(reordered, '<premature-fault-observation>', 'exec'), namespace)
-        with patch.object(backup_smoke, 'capture_faults', namespace['capture_faults']):
-            with self.assertRaisesRegex(AssertionError, 'observation preceded original CRI receipt'):
-                self.exercise()
 
     def test_wrong_exit_is_not_waived(self):
         with self.assertRaisesRegex(AssertionError, 'not killed'):

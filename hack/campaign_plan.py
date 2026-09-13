@@ -131,7 +131,7 @@ def image_config_digest(archive, tag):
 
 
 def content_hash():
-    inputs = ['hack', 'config', 'build', 'go.mod', 'go.sum', 'internal', 'docs/campaign-assertion-audit.json', '.github/workflows']
+    inputs = ['hack', 'config', 'build', 'go.mod', 'go.sum', 'internal', '.github/workflows']
     files = subprocess.check_output(['git', 'ls-files', '-z', *inputs], cwd=ROOT).decode().split('\0')
     # Include untracked implementation files so diagnostics cannot masquerade as
     # the committed harness. Qualification separately rejects any dirty tree.

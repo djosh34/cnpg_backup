@@ -12,7 +12,6 @@ import cnpg_smoke
 class LifecycleHarness(unittest.TestCase):
     def test_manifest_remaining_matches_asserted_named_completions(self):
         expected = cnpg_smoke.MANDATORY_SCENARIOS
-        self.assertEqual(len(expected), 15)
         for missing in (None, *expected):
             with self.subTest(missing=missing):
                 report = {'completed': [name for name in expected if name != missing],

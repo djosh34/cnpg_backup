@@ -82,10 +82,9 @@ def tools():
 def subject(sha, manager, data, ref):
     if os.environ.get('GITHUB_REPOSITORY') != 'djosh34/cnpg_backup':
         raise ValueError('repository-owned execution required')
-    trusted = ('main', 'implementation/pr-j', 'implementation/pr-i')
-    if os.environ.get('GITHUB_EVENT_NAME') not in ('push', 'workflow_dispatch') or os.environ.get('GITHUB_REF') not in tuple('refs/heads/' + r for r in trusted):
+    if os.environ.get('GITHUB_EVENT_NAME') not in ('push', 'workflow_dispatch') or os.environ.get('GITHUB_REF') != 'refs/heads/main':
         raise ValueError('untrusted scanner workflow')
-    if ref not in trusted or not re.fullmatch('[a-f0-9]{40}', sha):
+    if ref != 'main' or not re.fullmatch('[a-f0-9]{40}', sha):
         raise ValueError('untrusted subject revision/ref')
     run('git', 'merge-base', '--is-ancestor', sha, 'refs/remotes/origin/' + ref)
     images = dict(zip(FLAVORS, (manager, data)))

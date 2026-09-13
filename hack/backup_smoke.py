@@ -1,7 +1,6 @@
-"""F's real CNPG Backup/ScheduledBackup and downloaded-full SQL oracle.
+"""Real CNPG Backup/ScheduledBackup and downloaded-full SQL oracle.
 
-Only disposable test inputs are used. This is not G materialization/PITR, and a
-successful short profile is never release qualification.
+Uses disposable inputs. Full recovery campaigns qualify materialization and PITR.
 """
 import gzip
 import datetime

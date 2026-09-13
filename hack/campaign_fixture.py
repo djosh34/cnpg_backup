@@ -271,10 +271,8 @@ class Fixture:
                 # backupverify's precise native rejection, not Docker 125/126/
                 # 127, SIGKILL, or a verifier invocation/manifest failure.
                 if result.returncode != 2 or result.stdout.strip() != 'WAL rejected':
-                    error = CommandFailure('shell-free-verifier: expected exit=2 and WAL rejected; observed exit='
-                                           + str(result.returncode) + ': ' + (result.stdout + result.stderr)[-4000:])
-                    error.campaign_oracle = 'shell-free-native-rejection'
-                    raise error
+                    raise CommandFailure('shell-free-verifier: expected exit=2 and WAL rejected; observed exit='
+                                         + str(result.returncode) + ': ' + (result.stdout + result.stderr)[-4000:])
             else:
                 result.require()
             return result.stdout + result.stderr

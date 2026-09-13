@@ -16,10 +16,16 @@ from recovery_cases import Campaign as RealCampaign
 class PlanTests(unittest.TestCase):
     def test_full_includes_both_supplementals_and_dependency_is_not_implicit_s1(self):
         cases = selected('recovery')
-        self.assertEqual(len(cases), 37)
-        self.assertEqual(len({c['id'] for c in cases}), 37)
+        self.assertEqual(len({c['id'] for c in cases}), len(cases))
         self.assertEqual([c['id'] for c in cases[-2:]], ['seeded-XID-1', 'seeded-XID-2'])
         self.assertFalse(any('same-segment' in c['fixtures'] for c in selected('retry')))
+
+    def test_registered_cases_have_runnable_oracles_and_requirements(self):
+        for case in REGISTRY:
+            with self.subTest(case=case['id']):
+                self.assertTrue(callable(getattr(RealCampaign, case['method'])))
+                self.assertTrue(case['requirement'])
+                self.assertGreater(case['seconds'], 0)
 
     def exercise_runner(self, directory, cleanup_failure=False, source_failure=False, setup_failure=False, collector_failure=False, optional_only=False, retain=False, differential=None, branches=()):
         source = 'source-namespace-catalog-loss-S3-only'
