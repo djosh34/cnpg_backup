@@ -10,6 +10,14 @@ func schemaFixture() Commit {
 	h := strings.Repeat("a", 64)
 	return Commit{Schema: 1, RepositoryID: repoID, BackupUID: backupID, AttemptID: destID, RequestSHA256: h, Kind: "full", RootBackupUID: backupID, SystemIdentifier: identity().SystemIdentifier, PostgresMajor: 18, ToolVersion: "18.6", Timeline: 1, ChecksumVersion: 1, CaptureInstanceUID: capturedID, PostmasterStartedAt: "2026-09-07T00:00:00Z", StartedAt: "2026-09-07T01:00:00Z", StoppedAt: "2026-09-07T01:01:00Z", StartLSN: "0/1000028", StopLSN: "0/1000100", RedoLSN: "0/1000028", BundledWALStartLSN: "0/1000028", BundledWALEndLSN: "0/1000100", WALRanges: []WALRange{{1, "0/1000028", "0/1000100"}}, BackupLabel: "START WAL LOCATION: 0/1000028\n", Tablespaces: []Tablespace{}, ManifestBytes: 1024, ManifestSHA256: h, Artifacts: []Artifact{{0, "base", nil, "none", 1024, 1024, h, h}, {1, "wal", nil, "none", 1024, 1024, h, h}}}
 }
+func decodeCommitFixture(b []byte) (Commit, error) {
+	var c Commit
+	if e := strict(b, commitLimit, &c); e != nil {
+		return c, e
+	}
+	return c, c.validate(identity())
+}
+
 func FuzzCommitMetadata(f *testing.F) {
 	b, _ := json.Marshal(schemaFixture())
 	f.Add(b)
@@ -19,7 +27,7 @@ func FuzzCommitMetadata(f *testing.F) {
 		if len(b) > int(commitLimit)+1 {
 			return
 		}
-		c, e := DecodeCommit(b, identity())
+		c, e := decodeCommitFixture(b)
 		if e != nil {
 			return
 		}
@@ -27,7 +35,7 @@ func FuzzCommitMetadata(f *testing.F) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = DecodeCommit(encoded, identity()); e != nil {
+		if _, e = decodeCommitFixture(encoded); e != nil {
 			t.Fatal("accepted metadata not stable", e)
 		}
 		if len(c.Artifacts) > 66 || len(c.Tablespaces) > 64 || c.ManifestBytes > 64<<20 {
@@ -79,8 +87,8 @@ func FuzzParentGraph(f *testing.F) {
 		if len(child) > int(commitLimit) || len(parent) > int(commitLimit) {
 			return
 		}
-		c, ce := DecodeCommit(child, identity())
-		p, pe := DecodeCommit(parent, identity())
+		c, ce := decodeCommitFixture(child)
+		p, pe := decodeCommitFixture(parent)
 		if ce != nil || pe != nil {
 			return
 		}

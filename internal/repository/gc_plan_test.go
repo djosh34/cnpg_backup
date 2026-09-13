@@ -368,7 +368,7 @@ func TestPlanForkAndTargetRules(t *testing.T) {
 	}
 }
 func TestStrictSchemasAndGzipBounds(t *testing.T) {
-	r, _ := setup(t)
+	r, s := setup(t)
 	_, res := publish(t, r, backupID, "data")
 	valid := res.Bytes
 	cases := [][]byte{append(bytes.Clone(valid), []byte(" {}")...), bytes.Replace(valid, []byte(`"schema":1`), []byte(`"schema":2`), 1), bytes.Replace(valid, []byte(`"schema":1`), []byte(`"schema":1,"schema":1`), 1), bytes.Replace(valid, []byte(`"schema":1`), []byte(`"Schema":1`), 1), bytes.Replace(valid, []byte(`"schema":1,`), nil, 1), bytes.Replace(valid, []byte(`"tablespaces":[]`), []byte(`"tablespaces":null`), 1), bytes.Replace(valid, []byte(`native label fixture`), []byte(`\ud800`), 1), bytes.Replace(valid, []byte(`"manifest_bytes":32`), []byte(`"manifest_bytes":67108865`), 1)}
@@ -376,7 +376,9 @@ func TestStrictSchemasAndGzipBounds(t *testing.T) {
 		if bytes.Equal(b, valid) {
 			continue
 		}
-		if _, e := DecodeCommit(b, r.id); e == nil {
+		key := r.backup(backupID) + "commit.json"
+		s.objects[key] = object{b, s.objects[key].info}
+		if _, _, _, e := r.readCommit(ctx, backupID); e == nil {
 			t.Fatalf("strict case %d accepted", i)
 		}
 	}
