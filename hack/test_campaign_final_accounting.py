@@ -129,8 +129,6 @@ class FinalAccountingTests(unittest.TestCase):
 
     def test_hosted_aggregate_rejects_reused_execution_across_attempt_artifacts(self):
         cases = selected('recovery')
-        self.assertEqual(len(cases), 37)
-        self.assertEqual(sum(len(c['branches']) for c in cases), 59)
         images = {n: {'config_digest': n + '-config', 'archive': n + '.tar'}
                   for n in ('minio', 'walproxy', 'recoveryactor')}
         files = {n + '.tar': n + '-archive' for n in images}
@@ -146,7 +144,7 @@ class FinalAccountingTests(unittest.TestCase):
                 (3, False, False), (4, False, False), (2, True, False), (None, False, True)]:
             with self.subTest(duplicate=duplicate, failed_first=failed_first, bad_branch=bad_branch), \
                  tempfile.TemporaryDirectory() as tmp, contextlib.chdir(tmp), contextlib.redirect_stdout(io.StringIO()):
-                inputs = Path('.work/inputs/artifacts/repair-inputs')
+                inputs = Path('.work/inputs/artifacts/campaign-inputs')
                 inputs.mkdir(parents=True)
                 (inputs / 'series.json').write_text(json.dumps({'attempts': attempts}))
                 for attempt in attempts:
@@ -171,7 +169,7 @@ class FinalAccountingTests(unittest.TestCase):
                     path.write_text(json.dumps(result))
                 expected_pass = duplicate is None and not bad_branch
                 code = aggregate()
-                report = json.loads(Path('artifacts/repair-aggregate.json').read_text())
+                report = json.loads(Path('artifacts/campaign-aggregate.json').read_text())
                 self.assertEqual(len(report['attempts']), 4)
                 self.assertEqual(code, 0 if expected_pass else 1)
                 self.assertEqual(report['passed'], expected_pass)

@@ -11,7 +11,7 @@ import sys
 from recovery_campaign import atomic_json, subject_image, load_bundle
 from campaign_plan import make_plan, validate_results
 
-INPUTS = Path('artifacts/repair-inputs')
+INPUTS = Path('artifacts/campaign-inputs')
 
 
 def prior_release_subject(tag, sha, images, ref):
@@ -34,10 +34,11 @@ def prior_release_subject(tag, sha, images, ref):
 def prepare():
     if os.environ.get('GITHUB_REPOSITORY') != 'djosh34/cnpg_backup':
         raise ValueError('repository-owned execution required')
-    if os.environ.get('GITHUB_REF') not in ('refs/heads/main', 'refs/heads/implementation/pr-g', 'refs/heads/implementation/pr-h', 'refs/heads/implementation/pr-i', 'refs/heads/implementation/pr-j', 'refs/heads/implementation/ci-reliability'):
-        raise ValueError('untrusted harness branch')
+    if (os.environ.get('GITHUB_REF') != 'refs/heads/main'
+            or os.environ.get('GITHUB_EVENT_NAME') not in ('push', 'workflow_dispatch')):
+        raise ValueError('untrusted harness workflow')
     ref = os.environ['TRUSTED_REF']
-    if ref not in ('main', 'implementation/pr-g', 'implementation/pr-h', 'implementation/pr-i', 'implementation/pr-j', 'implementation/ci-reliability'):
+    if ref != 'main':
         raise ValueError('untrusted subject branch')
     sha = os.environ['SUBJECT_SHA']
     if not re.fullmatch('[a-f0-9]{40}', sha):
@@ -49,30 +50,21 @@ def prepare():
                'publication': {'run': 'https://github.com/djosh34/cnpg_backup/actions/runs/' + os.environ['GITHUB_RUN_ID']}}
     if os.environ.get('PRIOR_RELEASE'):
         subject = prior_release_subject(os.environ['PRIOR_RELEASE'], sha, images, ref)
-    if os.environ.get('GITHUB_REF') == 'refs/heads/implementation/ci-reliability':
-        frozen = json.loads(Path('.github/ci-repair-subject.json').read_text())
-        if frozen['revision'] != sha or frozen['images'] != images:
-            raise ValueError('CI REPAIR product subject is frozen; no alternate image/build')
-        subject = frozen
     seeds = json.loads(os.environ['SEEDS'])
-    if not isinstance(seeds, list) or not 1 <= len(seeds) <= 4 or any(type(s) is not int or not 0 <= s < 2**32 for s in seeds):
+    if not isinstance(seeds, list) or not 1 <= len(seeds) <= 4 or any(type(s) is not int or not 0 <= s < 2**31 for s in seeds):
         raise ValueError('bounded explicit seed list required')
-    if os.environ.get('GITHUB_REF') == 'refs/heads/implementation/ci-reliability' and seeds != [1806, 1806, 1807]:
-        raise ValueError('CI REPAIR requires the exact repeat series plus grouped control')
     if os.environ['PROFILE'] != 'recovery':
         raise ValueError('shared full-fresh workflow requires recovery; use local focused diagnostics for partial scope')
     INPUTS.mkdir(parents=True, exist_ok=False)
     atomic_json(INPUTS / 'subject.json', subject)
     attempts = [{'attempt': n, 'seed': seed, 'layout': 'monolithic'} for n, seed in enumerate(seeds, 1)]
-    if os.environ.get('GITHUB_REF') == 'refs/heads/implementation/ci-reliability':
-        attempts.append({'attempt': len(attempts) + 1, 'seed': seeds[0], 'layout': 'grouped'})
     atomic_json(INPUTS / 'series.json', {'attempts': attempts})
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('matrix=' + json.dumps({'include': [{'attempt': a['attempt']} for a in attempts]}) + '\n')
 
 
 def plans():
-    bundle = load_bundle(Path('.work/repair-bundle'))
+    bundle = load_bundle(Path('.work/campaign-bundle'))
     bundle.pop('directory')
     subject = json.loads((INPUTS / 'subject.json').read_text())
     series = json.loads((INPUTS / 'series.json').read_text())
@@ -84,8 +76,8 @@ def collect():
     attempt = os.environ['ATTEMPT']
     if not re.fullmatch('[1-4]', attempt):
         raise ValueError('invalid attempt identity')
-    root = Path('.work') / ('repair-run-' + attempt)
-    target = Path('artifacts/repair-results') / ('attempt-' + attempt)
+    root = Path('.work') / ('campaign-run-' + attempt)
+    target = Path('artifacts/campaign-results') / ('attempt-' + attempt)
     target.mkdir(parents=True, exist_ok=False)
     copied, dropped, size = [], [], 0
     roots = [(root / 'evidence', target)] + [(p, target / p.parent.name) for p in sorted(root.glob('fixture-*/evidence'))]
@@ -113,7 +105,7 @@ def collect():
 
 
 def aggregate():
-    inputs = Path('.work/inputs/artifacts/repair-inputs')
+    inputs = Path('.work/inputs/artifacts/campaign-inputs')
     series = json.loads((inputs / 'series.json').read_text())
     report = {'attempts': [], 'passed': False, 'release_qualified': False}
     executions = set()
@@ -139,7 +131,7 @@ def aggregate():
         report['attempts'].append(record)
     report['passed'] = all(a['passed'] for a in report['attempts'])
     Path('artifacts').mkdir(exist_ok=True)
-    atomic_json(Path('artifacts/repair-aggregate.json'), report)
+    atomic_json(Path('artifacts/campaign-aggregate.json'), report)
     print(json.dumps(report, indent=2))
     return 0 if report['passed'] else 1
 
