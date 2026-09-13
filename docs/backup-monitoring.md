@@ -1,138 +1,83 @@
-# Backup monitoring (manager-owned)
+# Monitoring reference
 
-The one-replica manager exposes `GET /metrics` on internal HTTP port **9091**,
-through `Service/cnpg-backup-metrics`. CNPG's mTLS discovery remains on 9090;
-there is no sidecar TCP service or backup-byte proxy. Restrict 9091 to your
-monitoring workloads with your installation's NetworkPolicy; it is not an
-Internet-facing authenticated endpoint. `config/backup-monitoring.yaml` is an
-optional Prometheus Operator ServiceMonitor. Adapt its namespaces/selectors to
-your stack. Preserve `honorLabels: true`: metric `namespace` means the managed
-Cluster namespace, not the manager Service namespace. Monitor scrape `up`
-separately; a missing manager target cannot emit an unknown-history gauge.
+The one-replica manager exposes HTTP `GET /metrics` on port 9091 through `Service/cnpg-backup-metrics`. CNPG discovery uses mTLS on 9090. There is no sidecar metrics TCP service or backup-byte proxy. Restrict the unauthenticated metrics port to monitoring workloads.
 
-All four metrics use only `{repository_id,namespace,cluster,backup_type}`. Type
-is exactly `full` or `differential`, never a UID, backup name, key, error or secret.
-Full capture ships in F; differential execution is H's responsibility. Merely
-exporting its series/threshold does not advertise differential Backup capability.
+## Installation files
+
+| File | Purpose |
+|---|---|
+| [backup-monitoring.yaml](../config/backup-monitoring.yaml) | Optional Prometheus Operator ServiceMonitor |
+| [backup-alerts.yaml](../config/backup-alerts.yaml) | Separate full and differential freshness, failure, never-successful, and unknown-history alerts |
+| [wal-monitoring.yaml](../config/wal-monitoring.yaml) | CNPG custom queries for pending `.ready` files and oldest pending age |
+| [wal-alerts.yaml](../config/wal-alerts.yaml) | Archive failure, backlog age, and filesystem-pressure alerts |
+| [operational-alerts.yaml](../config/operational-alerts.yaml) | Restore, admission, retention, and workspace alerts |
+
+The ServiceMonitor uses `honorLabels: true`. Metric `namespace` identifies the managed Cluster namespace, not the manager Service namespace. Selectors and namespaces need to match the consuming Prometheus installation. Scrape `up` alerts are separate because a dead target cannot emit an unknown-state gauge. The WAL query file documents its `Cluster.spec.monitoring.customQueriesConfigMap` reference.
+
+## Backup metrics
+
+These metrics use only `{repository_id,namespace,cluster,backup_type}`. `backup_type` is `full` or `differential`, never a UID, key, backup name, or error string.
 
 | Metric | Meaning |
-| --- | --- |
-| `cnpg_backup_last_success_timestamp_seconds` | Latest immutable commit object's **S3 LastModified** per requested type. Includes retired commits. Omitted for unknown or never-successful history. |
-| `cnpg_backup_success_history_known` | 1 after a complete validated metadata scan; 0 on scan/configuration failure, before first scan, or if the last successful scan is over five minutes old. |
-| `cnpg_backup_failures_total` | Each observed terminal failed Backup UID once per manager lifetime. |
-| `cnpg_backup_freshness_max_age_seconds` | Explicit per-type configured schedule budget; omitted when that type is not configured. |
+|---|---|
+| `cnpg_backup_last_success_timestamp_seconds` | Latest immutable commit's S3 LastModified per type, including retired commits. Omitted for unknown or never-successful history |
+| `cnpg_backup_success_history_known` | 1 after a complete validated metadata scan. 0 before the first scan, after a scan/configuration failure, or when the successful scan is over five minutes old |
+| `cnpg_backup_failures_total` | Each observed terminal failed Backup UID once per manager process lifetime |
+| `cnpg_backup_freshness_max_age_seconds` | Explicit configured per-type schedule budget. Omitted when unset |
 
-The success scan reads only permanent repository identity, request, claim,
-commit and retirement metadata. Repository code owns key derivation/validation.
-It retains two maxima, not a catalog in RAM; reads no tar/manifest payloads and
-never creates a deletion hold or writes S3. Retention can delete payloads without
-erasing historical success. **Freshness is not current recoverability or WAL
-coverage evidence.** Uninitialized/missing repository identity is unknown, not a
-known-empty success history. An initialized, complete empty history is known=1
-with no timestamp sample. Wrong writer identity, malformed metadata, missing
-LastModified or a failed/partial list produces unknown, not partial maxima.
+Success history reads permanent identity, request, claim, commit, and retirement metadata, not tar or manifest payloads. It uses no deletion hold or S3 writes. A complete initialized empty history is known with no success timestamp. Missing identity, malformed records, missing LastModified, or partial lists produce unknown, never partial maxima. The serial sweep has a 60-second API-plus-S3 deadline per Cluster turn and five-second pacing. Large or slow histories can remain unknown.
 
-One serial sweep processes one Cluster per API page/turn, with five-second pacing
-and a **60-second total API+S3 deadline** per turn. Scrapes, lifecycle reconciliation
-and failure observation are independent of S3. Large/slow histories may exceed
-that budget and stay unknown; increasing backup capacity is not permission to
-block metrics indefinitely. Kubernetes configuration is resolved afresh; Secrets
-are uncached get-only and allowlisted, with a single read per referenced Secret
-within a snapshot. No native replication credentials are needed for history.
+Freshness is not proof of current recoverability or continuous WAL coverage. Retention can delete payloads without erasing historical success.
 
-## Invocation failure is a different fact from durable success
+### Invocation failures
 
-The Backup informer establishes its initial list as a baseline: preexisting
-terminal failures do not replay into a restarted counter. A known nonterminal UID
-that later becomes failed counts once, including a transition discovered on relist
-after a watch interruption. Requeues/resync/relist, API/S3 retries and pathological
-phase regression do not count that UID again. A newly observed failed object after
-initial synchronization counts once. Deletion evicts UID observation state, not
-already aggregated failures. Transitions wholly missed across downtime are not
-invented. Ordinary Prometheus counter-reset semantics apply. This is monitoring,
-not a durable exactly-once audit ledger. Cluster deletion/repository reassignment
-removes obsolete label sets after a completed configuration sweep.
+The Backup informer treats its initial list as a baseline, so old failures do not reappear in a restarted counter. An observed transition to failed counts once, including one found after relist. Requeues and storage retries do not count again. Transitions entirely missed during downtime are not invented. Counter resets have ordinary Prometheus semantics; this is not a durable audit ledger.
 
-If a commit was durable but CNPG lost the invocation response, the same operation
-can correctly yield **fresh committed success AND one failed invocation**. Failed
-uncommitted attempts never advance success. The manager does not infer success
-from CNPG phase `completed`, and does not relabel terminal failed Backups.
+A durable commit with a lost callback response can produce both fresh committed success and a failed invocation. Uncommitted failures never advance success. CNPG owns `Backup.status`; the manager does not relabel it to match S3.
 
-CNPG exclusively owns `Backup.status`; its failure details remain the primary
-invocation diagnosis. The manager supplements CNPG's Normal event with best-effort
-Warning **`BackupFailed`**, using constant redacted text identifying only the
-requested type. Warnings are rate-limited to one per label set per five minutes;
-all recognized failures still increment the counter. Event delivery failure is
-not retried into a warning storm. Existing Repository configuration/retention
-conditions remain untouched: the current CRD does not admit per-type success
-status fields, and a separate status writer must not overwrite other conditions.
+The supplemental Warning `BackupFailed` uses redacted per-type text and is limited to one event per label set per five minutes. All recognized failures still increment the counter. Event-delivery failure does not alter repository authority or status.
 
-## Configure schedules and alerts independently by requested type
+### Schedule budgets
 
-Use native CNPG ScheduledBackup, with explicit `target: primary`, plugin method
-and required `pluginConfiguration.parameters.backupType`. There is no plugin cron
-loop. Set a freshness budget **only for a type you schedule**:
+`Repository.spec.backupFreshness.fullMaxAge` and `differentialMaxAge` enable alerts independently. A weekly full can use `192h`, and a daily differential can use `26h`, with adjustments for measured duration and expected delay. The manager does not infer cron schedules from CNPG resources. Removing or suspending a schedule requires removing its budget to disable its schedule alerts.
 
-```yaml
-# Repository.spec fragment, merged with required repository/storage configuration
-backupFreshness:
-  fullMaxAge: 192h       # example weekly full + capture/queue/outage allowance
-  # differentialMaxAge: 26h  # enable with a daily differential schedule in H
-```
+No budget means no never-successful, stale, failure, or history-unknown alert for that type. Metrics and events remain available. Never-successful alerts require known history and absence of a timestamp, not a fabricated timestamp zero. Unknown history is distinct from never successful. Failure alerts use counter increase over 15 minutes and can coexist with fresh success.
 
-Thresholds opt a type into monitoring; the manager does not parse cron or infer a
-schedule from an on-demand Backup. Disable the corresponding threshold if you
-remove/suspend that schedule. Choose budgets above the actual schedule interval
-plus capture duration and expected jitter. No threshold means no never/stale/
-failure/history-unknown alert for that type. It does not disable metrics/events.
+## WAL metrics
 
-Install `config/backup-alerts.yaml` where your stack selects PrometheusRules. Each
-type has separate never-successful, stale-success, invocation-failing and
-history-unknown alerts. Never-successful uses known history **and absence** of a
-timestamp, never a fabricated timestamp zero. Unknown does not pretend never
-successful. Stale checks known history and the matching type's budget. Failure
-uses counter increase over 15 minutes and does not erase fresh committed success.
-WAL alerts in `config/wal-alerts.yaml` remain separate.
+PostgreSQL's synchronous callback outcome feeds CNPG's existing `cnpg_pg_stat_archiver_*` metrics, including archived count, failed count, and last archive/failure times. Custom queries add pending count and oldest-pending age. Idle clusters do not become lagging solely because they generate no new WAL.
 
-## Evidence and native harness integration
+Archive latency includes queue and upload time beyond `archive_timeout=60s`. Current-segment and backlog loss remain possible. Outages have no fixed RPO. Last archive success does not establish a continuous PITR frontier.
 
-Go tests execute the actual informer, fake Kubernetes API, metrics handler and
-repository metadata reader. Repository tests publish synthetic commits with the
-real publication protocol, retire/delete payloads under GC, and check history
-without admission/mutation/payload reads. These are **module tests, not real PG
-backups or MinIO/CNPG acceptance**.
+Filesystem-pressure alerts depend on kubelet PVC volume metrics. A CSI driver that omits these metrics leaves capacity unobserved, not healthy. Structured callback logs contain elapsed time and bounded status codes, not object keys, paths, credentials, or SDK messages.
 
-Actual alert-engine controls (16 cases / 128 alert assertions, including absent
-threshold, opposite-type threshold, unknown, healthy and counter reset):
+## Restore and retention metrics
+
+| Metric | Meaning |
+|---|---|
+| `cnpg_backup_restore_observation_known` | Whether the manager has a current observation of this Cluster's selected plugin restore |
+| `cnpg_backup_restore_active` | An observed active restore |
+| `cnpg_backup_restore_uncertain` | An observed uncertain restore |
+| `cnpg_backup_restore_lifetime_release_pending` | Completed observation whose stable lifetime release is still pending |
+| `cnpg_backup_retention_blocked` | Observed retention blockage |
+| `cnpg_backup_repository_admission_blocked` | Observed exclusive repository owner blocks admission |
+| `cnpg_backup_repository_holders` | Observed holder count |
+| `cnpg_backup_retention_workspace_available` | Last reservation outcome, not live disk free space |
+| `cnpg_backup_retention_checked_timestamp_seconds` | Time of the periodic retention observation |
+
+Restore metrics use only namespace and Cluster labels. They describe the selected external source using this plugin, not unused source declarations or unrelated restores. Observations older than five minutes become unknown and state gauges disappear. A missing operation is not completed. Completed lifetime release does not prove that every process-reader holder is gone.
+
+Repository metrics use bounded repository, namespace, and Cluster labels. Unobserved holder/admission gauges are omitted rather than set to healthy zero. The workspace outcome is omitted when unobserved and corresponds to the `RetentionWorkspaceAvailable` Repository condition. Retention observations follow the configured interval, which can be 24 hours, and expire after 48 hours.
+
+Warnings and conditions help diagnose `RetentionBlocked` and `RepositoryAdmissionBlocked`. Durable gate state remains authoritative. [Uncertain-operation handling](operations.md#handle-uncertain-recovery-or-retention) never uses metric values, Pod deletion, or elapsed time to clear protection.
+
+## Alert validation
+
+The normal `./hack/test unit` profile installs the pinned Promtool and tests the actual rule files. A targeted invocation is:
 
 ```sh
 CNPG_PROMTOOL=/path/to/promtool CGO_ENABLED=0 go test ./internal/cnpgi -run TestBackupAlertsPromtool -v
 python3 hack/backup_metrics_smoke.py --self-test
 ```
 
-Promtool is a test-only executable, not a runtime Go dependency. The alert test
-explicitly skips without `CNPG_PROMTOOL`; a skipped test is not alert qualification.
-
-F's native harness author imports `hack/backup_metrics_smoke.py` and uses:
-
-```python
-metrics = BackupMetricsSmoke(h, report, repository_id).start()
-try:
-    # Take a REAL backup; independently obtain its S3 commit LastModified epoch.
-    before = metrics.assert_committed(commit_last_modified)
-    # Trigger a REAL isolated failed invocation and wait for CNPG phase failed.
-    metrics.assert_failed(failed_backup_name, before)
-    # For durable-commit/lost-response injection, additionally supply:
-    # committed_after_loss=independently_observed_commit_last_modified
-finally:
-    metrics.close()
-```
-
-Start the helper before triggering Backup transitions. Its assertions read the
-actual manager HTTP endpoint, CNPG failed status and supplemental Warning Event;
-it neither manufactures Backup resources nor commits. Use an isolated first
-failure per type when asserting Warning delivery, because later same-type failures
-within five minutes are intentionally throttled. Manager restarts break the
-port-forward: close/restart the helper and establish a new reset-counter baseline.
-Real CNPG/PG18/MinIO on-demand/scheduled capture, native faults, restart and
-lost-response acceptance remain the native F author's integration gate.
+The Go alert test skips without `CNPG_PROMTOOL`. A skipped test is not alert-engine coverage. Real recovery campaigns compare manager metrics with S3 commit timestamps, actual CNPG failures, and Warning events.
