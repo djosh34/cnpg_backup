@@ -43,12 +43,12 @@ var processArtifacts = make(chan struct{}, 2)
 var processHTTP = make(chan struct{}, 8)
 
 type Store struct {
-	core                                                       *minio.Core
-	transport                                                  *http.Transport
-	bucket, prefix                                             string
-	metadataTimeout, dataTimeout, operationTimeout, walTimeout time.Duration
-	artifacts, wal                                             chan struct{}
-	workers                                                    int
+	core                                          *minio.Core
+	transport                                     *http.Transport
+	bucket, prefix                                string
+	metadataTimeout, operationTimeout, walTimeout time.Duration
+	artifacts, wal                                chan struct{}
+	workers                                       int
 }
 
 func New(c Config) (*Store, error) {
@@ -127,7 +127,7 @@ func New(c Config) (*Store, error) {
 		return nil, failure(Invalid)
 	}
 	core.SetS3EnableDualstack(false) // Do not silently change the administrator's endpoint.
-	return &Store{core: core, transport: tr, bucket: c.Bucket, prefix: c.Prefix, metadataTimeout: c.MetadataTimeout, dataTimeout: c.DataRequestTimeout, operationTimeout: c.OperationTimeout, walTimeout: c.WALUploadTimeout, artifacts: make(chan struct{}, c.ArtifactUploads), wal: make(chan struct{}, c.WALUploads), workers: c.PartWorkers}, nil
+	return &Store{core: core, transport: tr, bucket: c.Bucket, prefix: c.Prefix, metadataTimeout: c.MetadataTimeout, operationTimeout: c.OperationTimeout, walTimeout: c.WALUploadTimeout, artifacts: make(chan struct{}, c.ArtifactUploads), wal: make(chan struct{}, c.WALUploads), workers: c.PartWorkers}, nil
 }
 
 func (s *Store) Close() { s.transport.CloseIdleConnections() }

@@ -164,7 +164,7 @@ func (w Files) Archive(ctx context.Context, name string, source *os.File) error 
 		return ErrLocal
 	}
 	defer verified.Close()
-	got, e := w.retrieve(ctx, name, verified)
+	got, e := w.Retrieve(ctx, name, verified)
 	if e != nil {
 		if putErr != nil && s3store.Is(e, s3store.NotFound) {
 			return putErr
@@ -200,9 +200,6 @@ func (w Files) metadata(name string, info s3store.Info) (s3store.Integrity, erro
 // Retrieve verifies one exact source file into an owned private spool. Recovery
 // callers must keep their repository reader admitted through this whole call.
 func (w Files) Retrieve(ctx context.Context, name string, out *os.File) (s3store.Integrity, error) {
-	return w.retrieve(ctx, name, out)
-}
-func (w Files) retrieve(ctx context.Context, name string, out *os.File) (s3store.Integrity, error) {
 	key, _, e := w.Limits(name)
 	if e != nil {
 		return s3store.Integrity{}, e
@@ -320,7 +317,7 @@ func (w Files) Restore(ctx context.Context, name string, root *os.Root, destinat
 		return ErrLocal
 	}
 	defer func() { f.Close(); root.Remove(tmp) }()
-	if _, e = w.retrieve(ctx, name, f); e != nil {
+	if _, e = w.Retrieve(ctx, name, f); e != nil {
 		return e
 	}
 	if e = f.Close(); e != nil {
