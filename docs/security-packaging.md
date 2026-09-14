@@ -42,7 +42,15 @@ A disposition identifies the vulnerability, affected component/version, exact su
 
 Raw secret matches, registry credentials, image exports, and tool caches stay in private `.work` storage. Uploaded secret findings omit matching snippets. Collection is bounded, including 512 MiB for each export and the native source bundle. Failure collection remains separate from credential cleanup. Ordinary artifacts expire after 14 days; release assets retain the required evidence.
 
-Checkmarx is unavailable. No Checkmarx scan is claimed or required. No artifact/image signing or attestation job is required.
+## Build a release candidate
+
+From `main`, start the candidate workflow:
+
+```sh
+gh workflow run candidate.yml --ref main
+```
+
+The workflow builds and audits both images, publishes immutable candidate tags, and runs security and recovery checks against their digests. It refuses existing tags rather than replacing previously built bytes. Candidate images are not releases. Promote them only after the checks in [release policy](release-policy.md) pass.
 
 ## Run scans
 

@@ -47,4 +47,4 @@ These are sampled observations on finite disposable filesystems, not an unlimite
 
 ## Distribution limits
 
-Artifacts are unsigned. Exact tested manifests, binary checksums, traceability, and third-party notices/sources remain mandatory. Checkmarx was unavailable and no scan is claimed. Qualification did not deploy the product into production. See the [support matrix](README.md#compatibility) and [release policy](../../release-policy.md).
+Artifacts are unsigned. Exact tested manifests, binary checksums, traceability, and third-party notices/sources remain mandatory. Qualification did not deploy the product into production. See the [support matrix](README.md#compatibility) and [release policy](../../release-policy.md).
