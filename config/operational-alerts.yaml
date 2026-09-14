@@ -1,4 +1,4 @@
-# Same manager scrape as backup-monitoring.yaml. No operation/Pod/backup IDs.
+# Uses the manager scrape configured in backup-monitoring.yaml.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -13,39 +13,42 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: Deletion is paused; inspect Repository conditions and durable holds, never force-clear them
+            summary: Retention is blocked
+            description: Inspect Repository conditions and holders. Do not remove uncertain holders.
         - alert: CNPGBackupRepositoryAdmissionBlocked
           expr: cnpg_backup_repository_admission_blocked == 1
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: A destructive owner blocks new protected work; uncertainty does not expire
+            summary: A GC owner blocks new backups and restores
         - alert: CNPGBackupRetentionWorkspacePressure
           expr: cnpg_backup_retention_workspace_available == 0
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: The last manager retention workspace reservation failed; deletion remains stopped
+            summary: Retention workspace reservation failed
         - alert: CNPGBackupRestoreUncertain
           expr: cnpg_backup_restore_uncertain == 1
           for: 1m
           labels:
             severity: warning
           annotations:
-            summary: Restore termination is uncertain; source protection remains and poisoned targets require all fresh PVCs
+            summary: Restore termination is uncertain
+            description: Source backups remain protected. Retry with a fresh Cluster and fresh target PVCs.
         - alert: CNPGBackupRestoreObservationUnknown
           expr: cnpg_backup_restore_observation_known == 0
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: Restore state is unobserved or stale; do not infer completion or released protection
+            summary: Restore state is unknown or stale
         - alert: CNPGBackupRestoreLifetimeReleasePending
           expr: cnpg_backup_restore_lifetime_release_pending == 1
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: Completed restore still awaits stable lifetime release; inspect source credentials and admission
+            summary: Completed restore still holds source deletion protection
+            description: Inspect source credentials and Repository admission.

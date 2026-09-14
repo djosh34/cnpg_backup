@@ -25,7 +25,7 @@ func TestRecoveryMetricsOwnOnlyTheSelectedSourcePlugin(t *testing.T) {
 		m.ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
 		return w.Body.String()
 	}
-	// OUR selected source, but no durable operation yet: Unknown is important.
+	// The source uses this plugin, but recovery has not started.
 	a.reconcileRecoveryOperation(ctx, c, m, time.Now())
 	if !strings.Contains(scrape(), `cnpg_backup_restore_observation_known{namespace="test",cluster="database"} 0`) {
 		t.Fatal(scrape())
@@ -54,8 +54,6 @@ func TestRecoveryMetricsOwnOnlyTheSelectedSourcePlugin(t *testing.T) {
 	}
 }
 
-// Exercise the existing durable-operation reconciliation and public scrape,
-// not a second recovery-state model. No metric may release source protection.
 func TestRecoveryReconcileMetrics(t *testing.T) {
 	a, c, _ := fixture(t, true)
 	source, err := a.Repository(context.Background(), "test", "source")

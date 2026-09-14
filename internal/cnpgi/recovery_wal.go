@@ -90,7 +90,7 @@ func (w *recoveryWAL) Restore(ctx context.Context, r *wire.WALRestoreRequest) (*
 		called = true
 		return restoreSourceWAL(ctx, source, p, r.SourceWalName, root, destination)
 	})
-	// Missing identity/gate/lifetime is NEVER archive exhaustion.
+	// Admission failure must not become an optional WAL miss.
 	if !called && e != nil {
 		return nil, status.Error(codes.FailedPrecondition, "source reader admission failed")
 	}
@@ -100,9 +100,8 @@ func (w *recoveryWAL) Restore(ctx context.Context, r *wire.WALRestoreRequest) (*
 	return &wire.WALRestoreResult{}, nil
 }
 
-// This actual I/O path always tries the archive first. Only authenticated
-// NoSuchKey is classifiable as an ordinary miss. A local bundle is never sent
-// as archive success and never masks required post-EndLSN bytes in its filename.
+// Try the archive first. A bundled segment may lack post-backup WAL bytes, so
+// local fallback is allowed only when no required remote interval overlaps it.
 func restoreSourceWAL(ctx context.Context, source files.Files, p RecoveryPlan, name string, root *os.Root, destination string) error {
 	bundle, remote, e := p.Plan.Coverage(name)
 	if e != nil {

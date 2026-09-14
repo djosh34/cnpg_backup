@@ -84,7 +84,7 @@ func backupResult(r *repository.Result, segment int64) *wire.BackupResult {
 		raw += a.RawBytes
 		stored += a.StoredBytes
 	}
-	return &wire.BackupResult{BackupId: c.BackupUID, StartedAt: start.Unix(), StoppedAt: stop.Unix(), BeginWal: postgres.WALFilename(c.Timeline, a, segment), EndWal: postgres.WALFilename(c.Timeline, b-1, segment), BeginLsn: c.StartLSN, EndLsn: c.StopLSN, BackupLabelFile: []byte(c.BackupLabel), TablespaceMapFile: []byte(c.TablespaceMap), InstanceId: c.CaptureInstanceUID, Online: true, Metadata: map[string]string{"backupType": c.Kind, "repositoryID": c.RepositoryID, "rootBackupID": c.RootBackupUID, "rawBytes": strconv.FormatInt(raw, 10), "storedBytes": strconv.FormatInt(stored, 10), "formatVersion": "1", "publishedAt": r.PublishedAt.UTC().Format(time.RFC3339Nano), "bootstrapWAL": "bundled-verified; no post-backup coverage claim"}}
+	return &wire.BackupResult{BackupId: c.BackupUID, StartedAt: start.Unix(), StoppedAt: stop.Unix(), BeginWal: postgres.WALFilename(c.Timeline, a, segment), EndWal: postgres.WALFilename(c.Timeline, b-1, segment), BeginLsn: c.StartLSN, EndLsn: c.StopLSN, BackupLabelFile: []byte(c.BackupLabel), TablespaceMapFile: []byte(c.TablespaceMap), InstanceId: c.CaptureInstanceUID, Online: true, Metadata: map[string]string{"backupType": c.Kind, "repositoryID": c.RepositoryID, "rootBackupID": c.RootBackupUID, "rawBytes": strconv.FormatInt(raw, 10), "storedBytes": strconv.FormatInt(stored, 10), "formatVersion": "1", "publishedAt": r.PublishedAt.UTC().Format(time.RFC3339Nano), "bootstrapWAL": "bundled-verified"}}
 }
 func (*BackupService) Backup(ctx context.Context, r *wire.BackupRequest) (result *wire.BackupResult, err error) {
 	start := time.Now()
@@ -306,5 +306,5 @@ func backupError(e error) error {
 		return nil
 	}
 	code := status.Code(walError(e))
-	return status.Error(code, "requested backup failed; no full fallback or incomplete publication")
+	return status.Error(code, "requested backup failed")
 }

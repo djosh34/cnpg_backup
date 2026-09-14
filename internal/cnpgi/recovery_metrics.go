@@ -14,8 +14,7 @@ type restoreSeries struct {
 	Checked                 time.Time
 }
 
-// One bounded entry per target Cluster, not per attempt/Pod/operation. Missing
-// or stale observations are Unknown, never an assertion that a hold is absent.
+// Keep one observation per target Cluster. Missing or stale state is unknown.
 func (m *backupMetrics) restore(c Cluster, state recoveryOperation, known bool, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -59,9 +58,15 @@ func (m *backupMetrics) writeRestore(w io.Writer) {
 		}
 		return labels[i].Cluster < labels[j].Cluster
 	})
-	for _, name := range []string{"observation_known", "active", "uncertain", "lifetime_release_pending"} {
+	for _, description := range []struct{ name, help string }{
+		{"observation_known", "Whether recovery state was read successfully within the last five minutes."},
+		{"active", "Whether the observed recovery operation is active."},
+		{"uncertain", "Whether recovery lost its uninterrupted termination watch."},
+		{"lifetime_release_pending", "Whether a completed restore still holds source deletion protection."},
+	} {
+		name := description.name
 		metric := "cnpg_backup_restore_" + name
-		fmt.Fprintf(w, "# HELP %s Recent durable recovery operation observation; never authorizes source deletion or target reuse.\n# TYPE %s gauge\n", metric, metric)
+		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n", metric, description.help, metric)
 		for _, l := range labels {
 			s := values[l]
 			known := s.Known && time.Since(s.Checked) <= backupHistoryTTL

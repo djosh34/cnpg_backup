@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// The actual post-recovery instance needs its own CNPG certificates, not source
-// credentials and not a wildcard Secret grant. Regression from G-SPEC-2.
+// The recovered instance uses its own replication certificates and CA.
 func TestRecoveryThenInstanceRequiresExactNativeSecrets(t *testing.T) {
 	api, c, pod := fixture(t, true)
 	api.SecretNames[c.Metadata.Namespace] = []string{"auth"}

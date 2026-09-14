@@ -22,9 +22,8 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// Immutable Placement+Targets and monotonic terminal state share ONE owned CM.
-// Only this manager writes it using resourceVersion updates. A lost observer
-// cannot adopt its predecessor's termination knowledge: retain source protection.
+// recoveryOperation persists immutable placement and terminal state in a
+// Cluster-owned ConfigMap. A replacement manager cannot inherit watch evidence.
 type recoveryOperation struct {
 	Placement         RecoveryPlacement    `json:"placement"`
 	Targets           recoveryguard.Config `json:"targets"`
@@ -174,7 +173,7 @@ func (a *API) changeRecoveryLifetime(ctx context.Context, c Cluster, source conf
 	if lifetime != nil {
 		return lifetime(ctx, c, source, release)
 	}
-	snap, e := a.backupSnapshot(ctx, c.Metadata.Namespace, source)
+	snap, e := a.repositorySnapshot(ctx, c.Metadata.Namespace, source)
 	if e != nil {
 		return e
 	}
@@ -274,8 +273,7 @@ func (a *API) observeRecovery(ctx context.Context, c Cluster, source configurati
 			if phase != string(core.PodSucceeded) && phase != string(core.PodFailed) {
 				continue
 			}
-			// Delivered terminal updates are an immediate opportunity to run the
-			// SAME predicate. Work stays serial/bounded; no second controller.
+			// Check completion immediately after a terminal Pod update.
 		case <-ticker.C:
 			// Fallback is required when Job Complete follows the final Pod event.
 		}
@@ -351,10 +349,9 @@ func (a *API) releaseCompletedRecovery(ctx context.Context, c Cluster, source co
 	}
 }
 
-// Require an observed successful Job AND every retry Pod's latest terminal
-// status, including restartable init/ephemeral containers. Matching the final
-// LIST's Pod resourceVersions to this uninterrupted ordered watch prevents
-// certifying a snapshot before earlier deletion/replacement events were seen.
+// recoveryTermination requires a successful Job and terminal status for every
+// retry Pod and container. Match LIST resourceVersions to the uninterrupted watch
+// so earlier deletion or replacement events cannot be missed.
 func (a *API) recoveryTermination(ctx context.Context, c Cluster, observed map[string]string) (string, []string, error) {
 	var job *batch.Job
 	e := a.visitRecoveryObjects(ctx, jobsResource, c, func(o *unstructured.Unstructured) error {
